@@ -26,6 +26,40 @@
         </p>
       </header>
 
+      <section class="panel reveal" aria-labelledby="sync-title">
+        <div class="panel-head">
+          <h2 id="sync-title">Family Cloud Sync</h2>
+          <p class="panel-caption">
+            Optional: connect Supabase so all family devices share one live medicine list.
+          </p>
+        </div>
+
+        <div class="sync-grid">
+          <label class="switch-row" for="sync-enabled">
+            <input id="sync-enabled" type="checkbox" />
+            <span>Enable shared cloud sync</span>
+          </label>
+
+          <label for="sync-url">Supabase Project URL</label>
+          <input id="sync-url" type="url" placeholder="https://your-project.supabase.co" />
+
+          <label for="sync-anon-key">Supabase Anon Key</label>
+          <input id="sync-anon-key" type="password" placeholder="Paste anon public key" />
+
+          <label for="sync-table">Table Name</label>
+          <input id="sync-table" type="text" value="medicines" maxlength="64" />
+
+          <div class="form-actions">
+            <button id="sync-save-button" type="button" class="btn btn-primary">Save Sync Settings</button>
+            <button id="sync-disable-button" type="button" class="btn btn-ghost">Disable Sync</button>
+          </div>
+
+          <p id="sync-status" class="sync-status" aria-live="polite">
+            Sync mode: Local browser storage.
+          </p>
+        </div>
+      </section>
+
       <section class="panel reveal" aria-labelledby="entry-title">
         <div class="panel-head">
           <h2 id="entry-title">Add or Edit Medicine</h2>
@@ -142,6 +176,7 @@
       </article>
     </template>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
   </body>
 </html>

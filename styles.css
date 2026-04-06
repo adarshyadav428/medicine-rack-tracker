@@ -139,6 +139,47 @@ h2 {
   gap: 0.6rem;
 }
 
+.sync-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.2rem;
+}
+
+.switch-row input {
+  width: auto;
+}
+
+.sync-status {
+  margin: 0.15rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(21, 20, 24, 0.14);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sync-status.is-ok {
+  color: #0d5f56;
+  border-color: rgba(19, 111, 99, 0.35);
+}
+
+.sync-status.is-warn {
+  color: #8a4f11;
+  border-color: rgba(240, 138, 93, 0.45);
+}
+
+.sync-status.is-error {
+  color: #8f2222;
+  border-color: rgba(179, 58, 58, 0.45);
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

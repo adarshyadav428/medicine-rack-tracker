@@ -1,10 +1,18 @@
 const STORAGE_KEY = "medicineRackTracker.v1";
+const SYNC_CONFIG_KEY = "medicineRackTracker.sync.v1";
 
 const state = {
   items: [],
   searchTerm: "",
   sortBy: "recent",
   editingId: null,
+  sync: {
+    enabled: false,
+    projectUrl: "",
+    anonKey: "",
+    tableName: "medicines",
+    client: null,
+  },
 };
 
 const elements = {
@@ -25,6 +33,13 @@ const elements = {
   summary: document.getElementById("summary"),
   listContainer: document.getElementById("list-container"),
   rowTemplate: document.getElementById("medicine-row-template"),
+  syncEnabled: document.getElementById("sync-enabled"),
+  syncUrl: document.getElementById("sync-url"),
+  syncAnonKey: document.getElementById("sync-anon-key"),
+  syncTable: document.getElementById("sync-table"),
+  syncSaveButton: document.getElementById("sync-save-button"),
+  syncDisableButton: document.getElementById("sync-disable-button"),
+  syncStatus: document.getElementById("sync-status"),
 };
 
 function createId() {
@@ -32,7 +47,11 @@ function createId() {
     return crypto.randomUUID();
   }
 
-  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const rand = Math.floor(Math.random() * 16);
+    const val = ch === "x" ? rand : (rand & 0x3) | 0x8;
+    return val.toString(16);
+  });
 }
 
 function formatTimestamp(ts) {
@@ -253,7 +272,7 @@ function getExpiryStatus(expiryDate) {
   };
 }
 
-function loadItems() {
+function loadLocalItems() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     return [];
@@ -271,12 +290,68 @@ function loadItems() {
   }
 }
 
-function saveItems() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.items));
+function saveLocalItems(items = state.items) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+}
+
+function loadSyncConfig() {
+  const raw = localStorage.getItem(SYNC_CONFIG_KEY);
+  if (!raw) {
+    return {
+      enabled: false,
+      projectUrl: "",
+      anonKey: "",
+      tableName: "medicines",
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: Boolean(parsed.enabled),
+      projectUrl: normalizeString(parsed.projectUrl),
+      anonKey: normalizeString(parsed.anonKey),
+      tableName: normalizeString(parsed.tableName) || "medicines",
+    };
+  } catch {
+    return {
+      enabled: false,
+      projectUrl: "",
+      anonKey: "",
+      tableName: "medicines",
+    };
+  }
+}
+
+function saveSyncConfig() {
+  localStorage.setItem(
+    SYNC_CONFIG_KEY,
+    JSON.stringify({
+      enabled: state.sync.enabled,
+      projectUrl: state.sync.projectUrl,
+      anonKey: state.sync.anonKey,
+      tableName: state.sync.tableName,
+    })
+  );
 }
 
 function showFormError(message = "") {
   elements.formError.textContent = message;
+}
+
+function setSyncStatus(message, tone = "") {
+  elements.syncStatus.textContent = message;
+  elements.syncStatus.classList.remove("is-ok", "is-warn", "is-error");
+  if (tone) {
+    elements.syncStatus.classList.add(tone);
+  }
+}
+
+function hydrateSyncInputsFromState() {
+  elements.syncEnabled.checked = state.sync.enabled;
+  elements.syncUrl.value = state.sync.projectUrl;
+  elements.syncAnonKey.value = state.sync.anonKey;
+  elements.syncTable.value = state.sync.tableName || "medicines";
 }
 
 function resetForm() {
@@ -305,25 +380,108 @@ function beginEdit(itemId) {
   elements.medicineName.focus();
 }
 
-function removeItem(itemId) {
-  const item = state.items.find((entry) => entry.id === itemId);
-  if (!item) {
-    return;
+function isCloudSyncActive() {
+  return Boolean(state.sync.enabled && state.sync.client);
+}
+
+function ensureSupabaseAvailable() {
+  return Boolean(window.supabase && typeof window.supabase.createClient === "function");
+}
+
+function toCloudRow(item) {
+  return {
+    id: item.id,
+    medicine_name: item.medicineName,
+    location: item.location,
+    quantity: item.quantity,
+    expiry_date: item.expiryDate || null,
+    created_at: item.createdAt,
+    updated_at: item.updatedAt,
+  };
+}
+
+function fromCloudRow(row) {
+  return {
+    id: row.id,
+    medicineName: row.medicine_name,
+    location: row.location,
+    quantity: row.quantity,
+    expiryDate: row.expiry_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function testCloudConnection() {
+  const { error } = await state.sync.client.from(state.sync.tableName).select("id").limit(1);
+  if (error) {
+    throw error;
+  }
+}
+
+async function fetchCloudItems() {
+  const { data, error } = await state.sync.client
+    .from(state.sync.tableName)
+    .select("*")
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw error;
   }
 
-  const confirmed = window.confirm(`Delete \"${item.medicineName}\" from the list?`);
-  if (!confirmed) {
-    return;
+  return data
+    .map(fromCloudRow)
+    .map(normalizeItem)
+    .filter((item) => item.medicineName && item.location);
+}
+
+async function upsertCloudItem(item) {
+  const row = toCloudRow(item);
+  const { data, error } = await state.sync.client
+    .from(state.sync.tableName)
+    .upsert(row)
+    .select("*")
+    .single();
+
+  if (error) {
+    throw error;
   }
 
-  state.items = state.items.filter((entry) => entry.id !== itemId);
-  saveItems();
+  return normalizeItem(fromCloudRow(data));
+}
 
-  if (state.editingId === itemId) {
-    resetForm();
+async function deleteCloudItem(itemId) {
+  const { error } = await state.sync.client.from(state.sync.tableName).delete().eq("id", itemId);
+  if (error) {
+    throw error;
+  }
+}
+
+async function replaceAllCloudItems(newItems) {
+  const existingRows = await fetchCloudItems();
+  if (existingRows.length) {
+    const existingIds = existingRows.map((item) => item.id);
+    const { error: deleteError } = await state.sync.client
+      .from(state.sync.tableName)
+      .delete()
+      .in("id", existingIds);
+
+    if (deleteError) {
+      throw deleteError;
+    }
   }
 
-  render();
+  if (newItems.length) {
+    const rows = newItems.map(toCloudRow);
+    const { error: insertError } = await state.sync.client.from(state.sync.tableName).insert(rows);
+    if (insertError) {
+      throw insertError;
+    }
+  }
+}
+
+function syncStateToLocalCache() {
+  saveLocalItems(state.items);
 }
 
 function getFilteredAndSortedItems() {
@@ -416,7 +574,9 @@ function renderList(itemsToRender) {
     }
 
     row.querySelector(".action-edit").addEventListener("click", () => beginEdit(item.id));
-    row.querySelector(".action-delete").addEventListener("click", () => removeItem(item.id));
+    row.querySelector(".action-delete").addEventListener("click", () => {
+      handleDeleteItem(item.id);
+    });
 
     if (state.editingId === item.id) {
       card.style.borderColor = "rgba(19, 111, 99, 0.8)";
@@ -435,7 +595,36 @@ function render() {
   renderList(itemsToRender);
 }
 
-function handleFormSubmit(event) {
+async function handleDeleteItem(itemId) {
+  const item = state.items.find((entry) => entry.id === itemId);
+  if (!item) {
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete \"${item.medicineName}\" from the list?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    if (isCloudSyncActive()) {
+      await deleteCloudItem(itemId);
+    }
+
+    state.items = state.items.filter((entry) => entry.id !== itemId);
+    syncStateToLocalCache();
+
+    if (state.editingId === itemId) {
+      resetForm();
+    }
+
+    render();
+  } catch (error) {
+    window.alert(`Delete failed: ${error.message || "Unknown error"}`);
+  }
+}
+
+async function handleFormSubmit(event) {
   event.preventDefault();
 
   const medicineName = normalizeString(elements.medicineName.value);
@@ -456,42 +645,52 @@ function handleFormSubmit(event) {
 
   const now = new Date().toISOString();
 
-  if (state.editingId) {
-    state.items = state.items.map((item) => {
-      if (item.id !== state.editingId) {
-        return item;
+  try {
+    if (state.editingId) {
+      const existing = state.items.find((item) => item.id === state.editingId);
+      if (!existing) {
+        showFormError("The selected medicine no longer exists.");
+        return;
       }
 
-      return {
-        ...item,
+      const updated = normalizeItem({
+        ...existing,
         medicineName,
         location,
         quantity: parsedQuantity,
         expiryDate,
         updatedAt: now,
-      };
-    });
-  } else {
-    state.items.unshift({
-      id: createId(),
-      medicineName,
-      location,
-      quantity: parsedQuantity,
-      expiryDate,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
+      });
 
-  saveItems();
-  resetForm();
-  render();
+      const finalItem = isCloudSyncActive() ? await upsertCloudItem(updated) : updated;
+      state.items = state.items.map((item) => (item.id === finalItem.id ? finalItem : item));
+    } else {
+      const newItem = normalizeItem({
+        id: createId(),
+        medicineName,
+        location,
+        quantity: parsedQuantity,
+        expiryDate,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const finalItem = isCloudSyncActive() ? await upsertCloudItem(newItem) : newItem;
+      state.items.unshift(finalItem);
+    }
+
+    syncStateToLocalCache();
+    resetForm();
+    render();
+  } catch (error) {
+    showFormError(`Save failed: ${error.message || "Unknown error"}`);
+  }
 }
 
 function handleExport() {
   const payload = {
     exportedAt: new Date().toISOString(),
-    schema: 1,
+    schema: 2,
     items: state.items,
   };
 
@@ -509,6 +708,17 @@ function handleExport() {
   URL.revokeObjectURL(url);
 }
 
+async function replaceAllItems(newItems) {
+  if (isCloudSyncActive()) {
+    await replaceAllCloudItems(newItems);
+  }
+
+  state.items = [...newItems];
+  syncStateToLocalCache();
+  resetForm();
+  render();
+}
+
 function handleImportFile(file) {
   if (!file) {
     return;
@@ -516,7 +726,7 @@ function handleImportFile(file) {
 
   const reader = new FileReader();
 
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(String(reader.result || ""));
 
@@ -533,10 +743,7 @@ function handleImportFile(file) {
         return;
       }
 
-      state.items = normalized;
-      saveItems();
-      resetForm();
-      render();
+      await replaceAllItems(normalized);
       window.alert(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`);
     } catch {
       window.alert("Could not import file. Please choose a valid JSON export.");
@@ -548,7 +755,7 @@ function handleImportFile(file) {
   reader.readAsText(file);
 }
 
-function handleClearAll() {
+async function handleClearAll() {
   if (!state.items.length) {
     return;
   }
@@ -561,14 +768,143 @@ function handleClearAll() {
     return;
   }
 
-  state.items = [];
-  saveItems();
-  resetForm();
+  try {
+    await replaceAllItems([]);
+  } catch (error) {
+    window.alert(`Could not clear records: ${error.message || "Unknown error"}`);
+  }
+}
+
+function createCloudClient(projectUrl, anonKey) {
+  if (!ensureSupabaseAvailable()) {
+    throw new Error("Supabase SDK not loaded.");
+  }
+
+  return window.supabase.createClient(projectUrl, anonKey);
+}
+
+function parseSyncInputs() {
+  return {
+    enabled: elements.syncEnabled.checked,
+    projectUrl: normalizeString(elements.syncUrl.value),
+    anonKey: normalizeString(elements.syncAnonKey.value),
+    tableName: normalizeString(elements.syncTable.value) || "medicines",
+  };
+}
+
+async function enableCloudSyncFromInputs() {
+  const config = parseSyncInputs();
+
+  if (!config.enabled) {
+    state.sync.enabled = false;
+    state.sync.client = null;
+    saveSyncConfig();
+    state.items = loadLocalItems();
+    setSyncStatus("Sync mode: Local browser storage.", "is-warn");
+    render();
+    return;
+  }
+
+  if (!config.projectUrl || !config.anonKey) {
+    setSyncStatus("Enter Supabase Project URL and Anon Key first.", "is-error");
+    return;
+  }
+
+  try {
+    state.sync = {
+      ...state.sync,
+      ...config,
+      client: createCloudClient(config.projectUrl, config.anonKey),
+    };
+
+    await testCloudConnection();
+    const cloudItems = await fetchCloudItems();
+    const localItems = loadLocalItems();
+
+    if (!cloudItems.length && localItems.length) {
+      const uploadConfirmed = window.confirm(
+        "Cloud table is empty. Upload your current local medicines to cloud so family can share them?"
+      );
+      if (uploadConfirmed) {
+        await replaceAllCloudItems(localItems);
+        state.items = [...localItems];
+      } else {
+        state.items = [];
+      }
+    } else {
+      state.items = cloudItems;
+    }
+
+    state.sync.enabled = true;
+    saveSyncConfig();
+    syncStateToLocalCache();
+    setSyncStatus("Cloud sync is active. All devices using this config will share one list.", "is-ok");
+    render();
+  } catch (error) {
+    state.sync.client = null;
+    state.sync.enabled = false;
+    saveSyncConfig();
+
+    const msg = String(error.message || "");
+    if (msg.toLowerCase().includes("relation") && msg.toLowerCase().includes("does not exist")) {
+      setSyncStatus(
+        "Table not found. Create table 'medicines' in Supabase first, then save sync settings again.",
+        "is-error"
+      );
+    } else {
+      setSyncStatus(`Cloud sync failed: ${msg || "Unknown error"}`, "is-error");
+    }
+  }
+}
+
+function disableCloudSync() {
+  state.sync.enabled = false;
+  state.sync.client = null;
+  elements.syncEnabled.checked = false;
+  saveSyncConfig();
+  state.items = loadLocalItems();
+  setSyncStatus("Cloud sync disabled. Running in local browser storage mode.", "is-warn");
   render();
 }
 
+async function restoreSyncOnStartup() {
+  const persisted = loadSyncConfig();
+  state.sync = {
+    ...state.sync,
+    ...persisted,
+    client: null,
+  };
+  hydrateSyncInputsFromState();
+
+  if (!state.sync.enabled) {
+    state.items = loadLocalItems();
+    setSyncStatus("Sync mode: Local browser storage.", "is-warn");
+    return;
+  }
+
+  try {
+    state.sync.client = createCloudClient(state.sync.projectUrl, state.sync.anonKey);
+    await testCloudConnection();
+    state.items = await fetchCloudItems();
+    syncStateToLocalCache();
+    setSyncStatus("Cloud sync is active. Shared records loaded.", "is-ok");
+  } catch (error) {
+    state.sync.client = null;
+    state.sync.enabled = false;
+    saveSyncConfig();
+    state.items = loadLocalItems();
+    setSyncStatus(
+      `Cloud sync could not start (${error.message || "Unknown error"}). Using local mode.`,
+      "is-warn"
+    );
+  }
+}
+
 function wireEvents() {
-  elements.form.addEventListener("submit", handleFormSubmit);
+  elements.form.addEventListener("submit", (event) => {
+    handleFormSubmit(event);
+  });
+
   elements.cancelEditButton.addEventListener("click", resetForm);
 
   elements.searchInput.addEventListener("input", (event) => {
@@ -586,13 +922,21 @@ function wireEvents() {
   elements.importInput.addEventListener("change", (event) => {
     handleImportFile(event.target.files?.[0]);
   });
-  elements.clearAllButton.addEventListener("click", handleClearAll);
+  elements.clearAllButton.addEventListener("click", () => {
+    handleClearAll();
+  });
+
+  elements.syncSaveButton.addEventListener("click", () => {
+    enableCloudSyncFromInputs();
+  });
+
+  elements.syncDisableButton.addEventListener("click", disableCloudSync);
 }
 
-function init() {
-  state.items = loadItems();
+async function init() {
   state.sortBy = elements.sortSelect.value;
   wireEvents();
+  await restoreSyncOnStartup();
   render();
 }
 
