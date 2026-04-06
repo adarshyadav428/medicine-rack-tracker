@@ -139,6 +139,29 @@ h2 {
   gap: 0.6rem;
 }
 
+.auth-grid,
+.admin-panel {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.admin-panel {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px dashed rgba(21, 20, 24, 0.2);
+}
+
+.admin-panel h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.current-user {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
 .sync-grid {
   display: grid;
   gap: 0.6rem;
@@ -178,6 +201,11 @@ h2 {
 .sync-status.is-error {
   color: #8f2222;
   border-color: rgba(179, 58, 58, 0.45);
+}
+
+.sync-status.is-info {
+  color: #214e8e;
+  border-color: rgba(33, 78, 142, 0.35);
 }
 
 .field-grid {
