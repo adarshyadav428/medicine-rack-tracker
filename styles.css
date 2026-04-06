@@ -1,0 +1,409 @@
+:root {
+  --bg: #f4efe7;
+  --panel: rgba(255, 255, 255, 0.8);
+  --text: #151418;
+  --muted: #5c5a66;
+  --line: rgba(21, 20, 24, 0.12);
+  --primary: #136f63;
+  --primary-strong: #0f5c53;
+  --accent: #f08a5d;
+  --danger: #b33a3a;
+  --radius: 16px;
+  --shadow: 0 20px 45px rgba(21, 20, 24, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% 20%, #f7d8bb 0%, transparent 40%),
+    radial-gradient(circle at 90% 90%, #b9dfdb 0%, transparent 38%),
+    linear-gradient(160deg, #ece5da, #f8f3ea 60%, #ece7df);
+  position: relative;
+  overflow-x: hidden;
+}
+
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bg-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(3px);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.orb-1 {
+  width: 340px;
+  height: 340px;
+  left: -110px;
+  top: 120px;
+  background: #f08a5d;
+  animation: driftA 16s ease-in-out infinite;
+}
+
+.orb-2 {
+  width: 260px;
+  height: 260px;
+  right: -70px;
+  bottom: 90px;
+  background: #136f63;
+  animation: driftB 14s ease-in-out infinite;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  width: min(980px, calc(100% - 2rem));
+  margin: 2rem auto 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero,
+.panel {
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  padding: 1.4rem 1.25rem;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0.2rem 0 0.5rem;
+  font-size: clamp(1.55rem, 4vw, 2.5rem);
+  line-height: 1.1;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+.panel {
+  padding: 1rem;
+}
+
+.panel-head {
+  margin-bottom: 0.75rem;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.panel-caption {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.medicine-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.field-grid > div {
+  display: grid;
+  gap: 0.35rem;
+}
+
+label {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.72rem 0.76rem;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid rgba(19, 111, 99, 0.45);
+  outline-offset: 2px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.btn {
+  border: none;
+  border-radius: 12px;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-strong);
+}
+
+.btn-secondary {
+  background: #f6eee4;
+  color: var(--text);
+  border: 1px solid rgba(21, 20, 24, 0.15);
+}
+
+.btn-secondary:hover {
+  background: #f1e4d4;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #a13131;
+}
+
+.btn-small {
+  padding: 0.48rem 0.72rem;
+  font-size: 0.88rem;
+}
+
+.form-error {
+  min-height: 1.25rem;
+  margin: 0;
+  color: #9c2323;
+  font-size: 0.9rem;
+}
+
+.toolbar {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.control-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.utility-actions {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.summary {
+  margin: 0.85rem 0 0.4rem;
+  color: var(--muted);
+}
+
+.list-container {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.medicine-card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(21, 20, 24, 0.1);
+  border-left: 5px solid rgba(21, 20, 24, 0.18);
+  border-radius: 14px;
+  padding: 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+}
+
+.medicine-card.is-expiring {
+  border-left-color: #f08a5d;
+  background: rgba(255, 247, 238, 0.95);
+}
+
+.medicine-card.is-expired {
+  border-left-color: #b33a3a;
+  background: rgba(255, 241, 241, 0.95);
+}
+
+.medicine-card.is-safe {
+  border-left-color: #136f63;
+}
+
+.medicine-name {
+  margin: 0;
+  font-size: 1.07rem;
+}
+
+.medicine-location {
+  margin: 0.2rem 0;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.medicine-extra {
+  margin: 0.05rem 0 0.28rem;
+  color: #332f3e;
+  font-size: 0.9rem;
+}
+
+.medicine-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.card-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.empty-state {
+  margin: 0;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px dashed rgba(21, 20, 24, 0.25);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: reveal 0.6s ease forwards;
+}
+
+.reveal:nth-of-type(2) {
+  animation-delay: 0.08s;
+}
+
+.reveal:nth-of-type(3) {
+  animation-delay: 0.16s;
+}
+
+@keyframes reveal {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes driftA {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(15px, -18px) scale(1.05);
+  }
+}
+
+@keyframes driftB {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-14px, 12px) scale(0.96);
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    width: calc(100% - 1rem);
+    margin-top: 1rem;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel,
+  .hero {
+    border-radius: 13px;
+  }
+
+  .medicine-card {
+    flex-direction: column;
+  }
+
+  .card-actions {
+    width: 100%;
+  }
+
+  .card-actions .btn {
+    flex: 1;
+  }
+}

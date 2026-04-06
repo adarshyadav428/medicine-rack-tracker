@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Medicine Rack Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1" aria-hidden="true"></div>
+    <div class="bg-orb orb-2" aria-hidden="true"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <header class="hero reveal">
+        <p class="eyebrow">Household Inventory</p>
+        <h1>Medicine Rack Tracker</h1>
+        <p class="subtitle">
+          Save each medicine with the exact rack or place so everyone at home can find it quickly.
+        </p>
+      </header>
+
+      <section class="panel reveal" aria-labelledby="entry-title">
+        <div class="panel-head">
+          <h2 id="entry-title">Add or Edit Medicine</h2>
+          <p class="panel-caption">Required: medicine name and rack/place. Optional: quantity and expiry date.</p>
+        </div>
+
+        <form id="medicine-form" class="medicine-form" novalidate>
+          <label for="medicine-name">Medicine Name</label>
+          <input
+            id="medicine-name"
+            name="medicineName"
+            type="text"
+            placeholder="Example: Paracetamol 500mg"
+            required
+            maxlength="120"
+          />
+
+          <label for="medicine-location">Rack / Place</label>
+          <input
+            id="medicine-location"
+            name="location"
+            type="text"
+            placeholder="Example: Kitchen Rack A - Shelf 2"
+            required
+            maxlength="160"
+          />
+
+          <div class="field-grid">
+            <div>
+              <label for="medicine-quantity">Quantity</label>
+              <input
+                id="medicine-quantity"
+                name="quantity"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Example: 12"
+              />
+            </div>
+
+            <div>
+              <label for="medicine-expiry">Expiry Date</label>
+              <input
+                id="medicine-expiry"
+                name="expiryDate"
+                type="date"
+              />
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button id="save-button" type="submit" class="btn btn-primary">Save Medicine</button>
+            <button id="cancel-edit-button" type="button" class="btn btn-ghost hidden">Cancel Edit</button>
+          </div>
+
+          <p id="form-error" class="form-error" role="alert" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="panel reveal" aria-labelledby="list-title">
+        <div class="panel-head">
+          <h2 id="list-title">Medicine List</h2>
+          <p class="panel-caption">Search by medicine or location and keep everything organized.</p>
+        </div>
+
+        <div class="toolbar">
+          <div class="control-group">
+            <label for="search-input">Search</label>
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Type medicine name or location..."
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="control-group">
+            <label for="sort-select">Sort</label>
+            <select id="sort-select">
+              <option value="recent">Recently Updated</option>
+              <option value="name-asc">Medicine A to Z</option>
+              <option value="name-desc">Medicine Z to A</option>
+              <option value="location-asc">Location A to Z</option>
+              <option value="location-desc">Location Z to A</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="utility-actions">
+          <button id="export-button" type="button" class="btn btn-secondary">Export JSON</button>
+          <button id="import-button" type="button" class="btn btn-secondary">Import JSON</button>
+          <button id="clear-all-button" type="button" class="btn btn-danger">Clear All</button>
+          <input id="import-input" type="file" accept="application/json" class="hidden" />
+        </div>
+
+        <p id="summary" class="summary" aria-live="polite"></p>
+
+        <div id="list-container" class="list-container" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <template id="medicine-row-template">
+      <article class="medicine-card">
+        <div class="medicine-main">
+          <h3 class="medicine-name"></h3>
+          <p class="medicine-location"></p>
+          <p class="medicine-extra"></p>
+          <p class="medicine-meta"></p>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="btn btn-small btn-ghost action-edit">Edit</button>
+          <button type="button" class="btn btn-small btn-danger action-delete">Delete</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
