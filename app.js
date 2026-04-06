@@ -294,32 +294,36 @@ function saveLocalItems(items = state.items) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
+function getDefaultSyncConfig() {
+  const defaultConfig = window.APP_SYNC_CONFIG || {};
+  return {
+    enabled: Boolean(defaultConfig.enabled),
+    projectUrl: normalizeString(defaultConfig.projectUrl),
+    anonKey: normalizeString(defaultConfig.anonKey),
+    tableName: normalizeString(defaultConfig.tableName) || "medicines",
+  };
+}
+
 function loadSyncConfig() {
+  const fallback = getDefaultSyncConfig();
   const raw = localStorage.getItem(SYNC_CONFIG_KEY);
   if (!raw) {
-    return {
-      enabled: false,
-      projectUrl: "",
-      anonKey: "",
-      tableName: "medicines",
-    };
+    return fallback;
   }
 
   try {
     const parsed = JSON.parse(raw);
+    const parsedEnabled = parsed.enabled;
+    const hasExplicitEnabled = typeof parsedEnabled === "boolean";
+
     return {
-      enabled: Boolean(parsed.enabled),
-      projectUrl: normalizeString(parsed.projectUrl),
-      anonKey: normalizeString(parsed.anonKey),
-      tableName: normalizeString(parsed.tableName) || "medicines",
+      enabled: hasExplicitEnabled ? parsedEnabled : fallback.enabled,
+      projectUrl: normalizeString(parsed.projectUrl) || fallback.projectUrl,
+      anonKey: normalizeString(parsed.anonKey) || fallback.anonKey,
+      tableName: normalizeString(parsed.tableName) || fallback.tableName,
     };
   } catch {
-    return {
-      enabled: false,
-      projectUrl: "",
-      anonKey: "",
-      tableName: "medicines",
-    };
+    return fallback;
   }
 }
 
