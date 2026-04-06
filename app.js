@@ -55,11 +55,14 @@ const elements = {
   authLogoutButton: document.getElementById("auth-logout-button"),
   authStatus: document.getElementById("auth-status"),
   currentUser: document.getElementById("current-user"),
+  protectedContent: document.getElementById("protected-content"),
+  syncPanel: document.getElementById("sync-panel"),
   adminAccessPanel: document.getElementById("admin-access-panel"),
   accessEmail: document.getElementById("access-email"),
   accessRole: document.getElementById("access-role"),
+  accessStatusSelect: document.getElementById("access-status"),
   accessSaveButton: document.getElementById("access-save-button"),
-  accessStatus: document.getElementById("access-status"),
+  accessFeedback: document.getElementById("access-feedback"),
 };
 
 function createId() {
@@ -390,10 +393,10 @@ function setAuthStatus(message, tone = "") {
 }
 
 function setAccessStatus(message, tone = "") {
-  elements.accessStatus.textContent = message;
-  elements.accessStatus.classList.remove("is-ok", "is-warn", "is-error", "is-info");
+  elements.accessFeedback.textContent = message;
+  elements.accessFeedback.classList.remove("is-ok", "is-warn", "is-error", "is-info");
   if (tone) {
-    elements.accessStatus.classList.add(tone);
+    elements.accessFeedback.classList.add(tone);
   }
 }
 
@@ -447,6 +450,10 @@ function canDeleteRecords() {
 }
 
 function canImportClearRecords() {
+  return !isCloudSyncActive() || isAdmin();
+}
+
+function canWriteRecords() {
   return !isCloudSyncActive() || isAdmin();
 }
 
@@ -638,9 +645,11 @@ function renderSummary(visibleCount) {
 
 function applyRoleBasedUi() {
   const cloudWithoutAuth = isCloudSyncActive() && !isAuthenticated();
-  const disableWrite = cloudWithoutAuth;
+  const disableWrite = cloudWithoutAuth || !canWriteRecords();
   const disableDanger = cloudWithoutAuth || !canDeleteRecords();
   const disableImportClear = cloudWithoutAuth || !canImportClearRecords();
+
+  elements.protectedContent.classList.toggle("hidden", cloudWithoutAuth);
 
   elements.saveButton.disabled = disableWrite;
   elements.cancelEditButton.disabled = disableWrite;
@@ -648,6 +657,7 @@ function applyRoleBasedUi() {
   elements.clearAllButton.disabled = disableImportClear;
 
   elements.adminAccessPanel.classList.toggle("hidden", !isAdmin());
+  elements.syncPanel.classList.toggle("hidden", !isAdmin());
 
   if (isCloudSyncActive() && !isAuthenticated()) {
     setAuthStatus("Cloud mode is active. Please login to access data.", "is-warn");
@@ -659,6 +669,10 @@ function applyRoleBasedUi() {
       : "Only admin can clear all records.";
   } else {
     elements.clearAllButton.title = "";
+  }
+
+  if (disableWrite && isAuthenticated() && isCloudSyncActive() && !isAdmin()) {
+    showFormError("Employee mode: view/search access only.");
   }
 }
 
@@ -697,7 +711,13 @@ function renderList(itemsToRender) {
       card.classList.add("is-safe");
     }
 
-    row.querySelector(".action-edit").addEventListener("click", () => beginEdit(item.id));
+    const editButton = row.querySelector(".action-edit");
+    if (!canWriteRecords()) {
+      editButton.disabled = true;
+      editButton.title = "Only admin can edit records.";
+    } else {
+      editButton.addEventListener("click", () => beginEdit(item.id));
+    }
 
     const deleteButton = row.querySelector(".action-delete");
     if (!canDeleteRecords()) {
@@ -766,6 +786,11 @@ async function handleFormSubmit(event) {
 
   if (isCloudSyncActive() && !isAuthenticated()) {
     showFormError("Please login to add or edit records in cloud mode.");
+    return;
+  }
+
+  if (!canWriteRecords()) {
+    showFormError("Employee mode: view/search access only.");
     return;
   }
 
@@ -944,12 +969,16 @@ async function getRoleForCurrentUser() {
 
   const { data, error } = await state.sync.client
     .from(state.sync.roleTable)
-    .select("role")
+    .select("role, is_active")
     .eq("email", email)
     .maybeSingle();
 
   if (error) {
     throw error;
+  }
+
+  if (data && data.is_active === false) {
+    return "inactive";
   }
 
   if (data && normalizeString(data.role)) {
@@ -994,6 +1023,13 @@ async function handleAuthSession(session) {
 
   try {
     state.auth.role = await getRoleForCurrentUser();
+
+    if (state.auth.role === "inactive") {
+      setAuthStatus("Account is inactive. Contact admin.", "is-error");
+      await state.sync.client.auth.signOut();
+      return;
+    }
+
     elements.currentUser.textContent = `Signed in as ${state.auth.user.email} (${state.auth.role})`;
     setAuthStatus("Login successful.", "is-ok");
     await refreshItemsFromCloud();
@@ -1093,22 +1129,27 @@ async function saveUserRoleByAdmin() {
 
   const email = normalizeString(elements.accessEmail.value).toLowerCase();
   const role = normalizeString(elements.accessRole.value).toLowerCase();
+  const status = normalizeString(elements.accessStatusSelect.value).toLowerCase();
 
-  if (!email || (role !== "admin" && role !== "employee")) {
-    setAccessStatus("Provide a valid email and role.", "is-error");
+  if (
+    !email ||
+    (role !== "admin" && role !== "employee") ||
+    (status !== "active" && status !== "inactive")
+  ) {
+    setAccessStatus("Provide a valid email, role, and status.", "is-error");
     return;
   }
 
   const { error } = await state.sync.client
     .from(state.sync.roleTable)
-    .upsert({ email, role }, { onConflict: "email" });
+    .upsert({ email, role, is_active: status === "active" }, { onConflict: "email" });
 
   if (error) {
     setAccessStatus(`Could not save role: ${error.message}`, "is-error");
     return;
   }
 
-  setAccessStatus(`Saved role ${role} for ${email}.`, "is-ok");
+  setAccessStatus(`Saved ${email} as ${role} (${status}).`, "is-ok");
 }
 
 async function enableCloudSyncFromInputs() {
