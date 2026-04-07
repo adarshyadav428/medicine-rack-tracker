@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adarsh Medicals | Access Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="access">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" data-nav>Home</a>
+        <a href="dashboard.html" data-nav>Medicine Database</a>
+        <a href="access.html" class="active" data-nav>Access Control</a>
+      </nav>
+
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="panel fade-up">
+        <div class="panel-headline">
+          <h1 class="page-title">Access Control</h1>
+          <p>Admin can assign employee roles, activate/deactivate users, and manage cloud sync.</p>
+        </div>
+      </section>
+
+      <section class="layout-two fade-up delay-1">
+        <article class="panel">
+          <div class="panel-headline">
+            <h2>Admin Login</h2>
+            <p>Login with admin credentials to manage employees.</p>
+          </div>
+
+          <div class="form-grid">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" placeholder="admin@company.com" autocomplete="email" />
+
+            <label for="auth-password">Password</label>
+            <input id="auth-password" type="password" placeholder="Enter password" autocomplete="current-password" />
+
+            <div class="actions-row">
+              <button id="auth-login-button" class="btn btn-primary" type="button">Login</button>
+              <button id="auth-signup-button" class="btn btn-secondary" type="button">Create Account</button>
+              <button id="auth-logout-button" class="btn btn-ghost" type="button">Logout</button>
+            </div>
+
+            <p id="auth-status" class="status-message"></p>
+            <p id="current-user" class="user-note"></p>
+          </div>
+        </article>
+
+        <article id="admin-access-panel" class="panel">
+          <div class="panel-headline">
+            <h2>Employee Permissions</h2>
+            <p>Set account role and activation status.</p>
+          </div>
+
+          <div class="form-grid">
+            <label for="access-email">Employee Email</label>
+            <input id="access-email" type="email" placeholder="employee@company.com" />
+
+            <label for="access-role">Role</label>
+            <select id="access-role">
+              <option value="employee">Employee</option>
+              <option value="admin">Admin</option>
+            </select>
+
+            <label for="access-status">Account Status</label>
+            <select id="access-status">
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+
+            <div class="actions-row">
+              <button id="access-save-button" class="btn btn-primary" type="button">Save Access</button>
+            </div>
+
+            <p id="access-feedback" class="status-message"></p>
+          </div>
+        </article>
+      </section>
+
+      <section id="sync-panel" class="panel fade-up delay-2">
+        <div class="panel-headline">
+          <h2>Cloud Sync Settings</h2>
+          <p>Supabase connection for shared multi-device inventory.</p>
+        </div>
+
+        <div class="form-grid">
+          <label class="switch-row" for="sync-enabled">
+            <input id="sync-enabled" type="checkbox" />
+            <span>Enable shared cloud sync</span>
+          </label>
+
+          <label for="sync-url">Supabase Project URL</label>
+          <input id="sync-url" type="url" placeholder="https://your-project.supabase.co" />
+
+          <label for="sync-anon-key">Supabase Anon Key</label>
+          <input id="sync-anon-key" type="password" placeholder="Paste anon key" />
+
+          <label for="sync-table">Table Name</label>
+          <input id="sync-table" type="text" value="medicines" maxlength="64" />
+
+          <div class="actions-row">
+            <button id="sync-save-button" class="btn btn-primary" type="button">Save Sync Settings</button>
+            <button id="sync-disable-button" class="btn btn-ghost" type="button">Disable Sync</button>
+          </div>
+
+          <p id="sync-status" class="status-message"></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="sync-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

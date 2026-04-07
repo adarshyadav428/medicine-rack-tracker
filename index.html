@@ -3,244 +3,105 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Adarsh Medicals - Medicine Rack Tracker</title>
+    <title>Adarsh Medicals | Login</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
-    <div class="bg-orb orb-1" aria-hidden="true"></div>
-    <div class="bg-orb orb-2" aria-hidden="true"></div>
-    <div class="bg-grid" aria-hidden="true"></div>
+  <body data-page="home">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
 
-    <main class="app-shell">
-      <header class="hero reveal">
-        <p class="eyebrow">Adarsh Medicals</p>
-        <h1>Medicine Rack Tracker</h1>
-        <p class="subtitle">
-          Medical store inventory access for admin and employees to quickly find where medicines are kept.
-        </p>
-      </header>
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
 
-      <section class="panel reveal" aria-labelledby="home-title">
-        <div class="panel-head">
-          <h2 id="home-title">Store Information</h2>
-          <p class="panel-caption">Thekma, Azamgarh | Contact: 8470900910</p>
-        </div>
-        <p class="notice-banner">
-          Login is required to access the medicine database. Employees can view/search locations. Admin manages access and full inventory actions.
-        </p>
-      </section>
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" class="active" data-nav>Home</a>
+        <a href="dashboard.html" data-nav>Medicine Database</a>
+        <a href="access.html" data-nav>Access Control</a>
+      </nav>
 
-      <section class="panel reveal" aria-labelledby="auth-title">
-        <div class="panel-head">
-          <h2 id="auth-title">Account Access</h2>
-          <p class="panel-caption">
-            Sign in to use role-based access. Admin can manage employee access levels.
-          </p>
-        </div>
-
-        <div class="auth-grid">
-          <label for="auth-email">Email</label>
-          <input id="auth-email" type="email" placeholder="name@company.com" autocomplete="email" />
-
-          <label for="auth-password">Password</label>
-          <input id="auth-password" type="password" placeholder="Enter password" autocomplete="current-password" />
-
-          <div class="form-actions">
-            <button id="auth-login-button" type="button" class="btn btn-primary">Login</button>
-            <button id="auth-signup-button" type="button" class="btn btn-secondary">Create Account</button>
-            <button id="auth-logout-button" type="button" class="btn btn-ghost">Logout</button>
-          </div>
-
-          <p id="auth-status" class="sync-status" aria-live="polite">Not signed in.</p>
-          <p id="current-user" class="current-user" aria-live="polite"></p>
-        </div>
-
-        <div id="admin-access-panel" class="admin-panel hidden">
-          <h3>Admin: Employee Access</h3>
-          <p class="panel-caption">Assign role and activation status for employee accounts.</p>
-
-          <label for="access-email">Employee Email</label>
-          <input id="access-email" type="email" placeholder="employee@company.com" />
-
-          <label for="access-role">Role</label>
-          <select id="access-role">
-            <option value="employee">Employee</option>
-            <option value="admin">Admin</option>
-          </select>
-
-          <label for="access-status">Account Status</label>
-          <select id="access-status">
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-
-          <div class="form-actions">
-            <button id="access-save-button" type="button" class="btn btn-primary">Save Role</button>
-          </div>
-
-          <p id="access-feedback" class="sync-status" aria-live="polite"></p>
-        </div>
-      </section>
-
-      <div id="protected-content" class="hidden">
-
-      <section id="sync-panel" class="panel reveal" aria-labelledby="sync-title">
-        <div class="panel-head">
-          <h2 id="sync-title">Cloud Sync</h2>
-          <p class="panel-caption">
-            Connected Supabase settings for shared store access.
-          </p>
-        </div>
-
-        <div class="sync-grid">
-          <label class="switch-row" for="sync-enabled">
-            <input id="sync-enabled" type="checkbox" />
-            <span>Enable shared cloud sync</span>
-          </label>
-
-          <label for="sync-url">Supabase Project URL</label>
-          <input id="sync-url" type="url" placeholder="https://your-project.supabase.co" />
-
-          <label for="sync-anon-key">Supabase Anon Key</label>
-          <input id="sync-anon-key" type="password" placeholder="Paste anon public key" />
-
-          <label for="sync-table">Table Name</label>
-          <input id="sync-table" type="text" value="medicines" maxlength="64" />
-
-          <div class="form-actions">
-            <button id="sync-save-button" type="button" class="btn btn-primary">Save Sync Settings</button>
-            <button id="sync-disable-button" type="button" class="btn btn-ghost">Disable Sync</button>
-          </div>
-
-          <p id="sync-status" class="sync-status" aria-live="polite">
-            Sync mode: Local browser storage.
-          </p>
-        </div>
-      </section>
-
-      <section class="panel reveal" aria-labelledby="entry-title">
-        <div class="panel-head">
-          <h2 id="entry-title">Add or Edit Medicine</h2>
-          <p class="panel-caption">Required: medicine name and rack/place. Optional: quantity and expiry date.</p>
-        </div>
-
-        <form id="medicine-form" class="medicine-form" novalidate>
-          <label for="medicine-name">Medicine Name</label>
-          <input
-            id="medicine-name"
-            name="medicineName"
-            type="text"
-            placeholder="Example: Paracetamol 500mg"
-            required
-            maxlength="120"
-          />
-
-          <label for="medicine-location">Rack / Place</label>
-          <input
-            id="medicine-location"
-            name="location"
-            type="text"
-            placeholder="Example: Kitchen Rack A - Shelf 2"
-            required
-            maxlength="160"
-          />
-
-          <div class="field-grid">
-            <div>
-              <label for="medicine-quantity">Quantity</label>
-              <input
-                id="medicine-quantity"
-                name="quantity"
-                type="number"
-                min="0"
-                step="1"
-                placeholder="Example: 12"
-              />
-            </div>
-
-            <div>
-              <label for="medicine-expiry">Expiry Date</label>
-              <input
-                id="medicine-expiry"
-                name="expiryDate"
-                type="date"
-              />
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <button id="save-button" type="submit" class="btn btn-primary">Save Medicine</button>
-            <button id="cancel-edit-button" type="button" class="btn btn-ghost hidden">Cancel Edit</button>
-          </div>
-
-          <p id="form-error" class="form-error" role="alert" aria-live="polite"></p>
-        </form>
-      </section>
-
-      <section class="panel reveal" aria-labelledby="list-title">
-        <div class="panel-head">
-          <h2 id="list-title">Medicine List</h2>
-          <p class="panel-caption">Search by medicine or location and keep everything organized.</p>
-        </div>
-
-        <div class="toolbar">
-          <div class="control-group">
-            <label for="search-input">Search</label>
-            <input
-              id="search-input"
-              type="search"
-              placeholder="Type medicine name or location..."
-              autocomplete="off"
-            />
-          </div>
-
-          <div class="control-group">
-            <label for="sort-select">Sort</label>
-            <select id="sort-select">
-              <option value="recent">Recently Updated</option>
-              <option value="name-asc">Medicine A to Z</option>
-              <option value="name-desc">Medicine Z to A</option>
-              <option value="location-asc">Location A to Z</option>
-              <option value="location-desc">Location Z to A</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="utility-actions">
-          <button id="export-button" type="button" class="btn btn-secondary">Export JSON</button>
-          <button id="import-button" type="button" class="btn btn-secondary">Import JSON</button>
-          <button id="clear-all-button" type="button" class="btn btn-danger">Clear All</button>
-          <input id="import-input" type="file" accept="application/json" class="hidden" />
-        </div>
-
-        <p id="summary" class="summary" aria-live="polite"></p>
-
-        <div id="list-container" class="list-container" aria-live="polite"></div>
-      </section>
-
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
       </div>
-    </main>
+    </header>
 
-    <template id="medicine-row-template">
-      <article class="medicine-card">
-        <div class="medicine-main">
-          <h3 class="medicine-name"></h3>
-          <p class="medicine-location"></p>
-          <p class="medicine-extra"></p>
-          <p class="medicine-meta"></p>
+    <main class="page-shell">
+      <section class="hero-card fade-up">
+        <p class="hero-kicker">Adarsh Medicals Inventory Portal</p>
+        <h1>Fast medicine location lookup for admin and staff.</h1>
+        <p>
+          Staff can instantly find where medicines are kept. Admin controls access,
+          account status, and data quality from one place.
+        </p>
+        <div class="hero-meta">
+          <span>Contact: 8470900910</span>
+          <span>Medical Store Workflow Ready</span>
         </div>
-        <div class="card-actions">
-          <button type="button" class="btn btn-small btn-ghost action-edit">Edit</button>
-          <button type="button" class="btn btn-small btn-danger action-delete">Delete</button>
-        </div>
-      </article>
-    </template>
+      </section>
+
+      <section class="layout-two fade-up delay-1">
+        <article class="panel">
+          <div class="panel-headline">
+            <h2>Login</h2>
+            <p>Use your staff account to access the medicine database.</p>
+          </div>
+
+          <div class="form-grid">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" placeholder="name@company.com" autocomplete="email" />
+
+            <label for="auth-password">Password</label>
+            <input
+              id="auth-password"
+              type="password"
+              placeholder="Enter password"
+              autocomplete="current-password"
+            />
+
+            <div class="actions-row">
+              <button id="auth-login-button" class="btn btn-primary" type="button">Login</button>
+              <button id="auth-signup-button" class="btn btn-secondary" type="button">Create Account</button>
+            </div>
+
+            <p id="auth-status" class="status-message">Not signed in.</p>
+            <p id="current-user" class="user-note"></p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-headline">
+            <h2>How This Works</h2>
+            <p>Simple role-based flow for your medical store team.</p>
+          </div>
+
+          <ol class="steps-list">
+            <li>Admin logs in and manages user access.</li>
+            <li>Employees login and search medicine locations quickly.</li>
+            <li>Database updates sync live across browsers.</li>
+            <li>Inactive users are blocked automatically.</li>
+          </ol>
+
+          <div class="notice-box">
+            <strong>Store Notice</strong>
+            <p>
+              If your account is not active, contact admin to enable it from Access Control.
+            </p>
+          </div>
+        </article>
+      </section>
+    </main>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="sync-config.js"></script>

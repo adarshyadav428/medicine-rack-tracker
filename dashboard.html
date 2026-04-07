@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adarsh Medicals | Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="dashboard">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" data-nav>Home</a>
+        <a href="dashboard.html" class="active" data-nav>Medicine Database</a>
+        <a href="access.html" data-nav>Access Control</a>
+      </nav>
+
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="panel fade-up">
+        <div class="panel-headline">
+          <h1 class="page-title">Medicine Database</h1>
+          <p>Track rack locations, quantity, and expiry with role-aware controls.</p>
+        </div>
+        <p id="dashboard-status" class="status-message is-info"></p>
+      </section>
+
+      <section class="metrics-grid fade-up delay-1">
+        <article class="metric-card">
+          <p>Total Medicines</p>
+          <h3 id="metric-total">0</h3>
+        </article>
+        <article class="metric-card">
+          <p>Expiring Soon</p>
+          <h3 id="metric-expiring">0</h3>
+        </article>
+        <article class="metric-card">
+          <p>Expired</p>
+          <h3 id="metric-expired">0</h3>
+        </article>
+      </section>
+
+      <section id="medicine-form-panel" class="panel fade-up delay-2">
+        <div class="panel-headline">
+          <h2>Add or Edit Medicine</h2>
+          <p>Admin can update medicine records and location details.</p>
+        </div>
+
+        <form id="medicine-form" class="form-grid" novalidate>
+          <label for="medicine-name">Medicine Name</label>
+          <input
+            id="medicine-name"
+            name="medicineName"
+            type="text"
+            placeholder="Example: Paracetamol 500mg"
+            required
+            maxlength="120"
+          />
+
+          <label for="medicine-location">Rack / Place</label>
+          <input
+            id="medicine-location"
+            name="location"
+            type="text"
+            placeholder="Example: Rack B - Shelf 2"
+            required
+            maxlength="160"
+          />
+
+          <div class="two-col-fields">
+            <div>
+              <label for="medicine-quantity">Quantity</label>
+              <input id="medicine-quantity" name="quantity" type="number" min="0" step="1" placeholder="12" />
+            </div>
+            <div>
+              <label for="medicine-expiry">Expiry Date</label>
+              <input id="medicine-expiry" name="expiryDate" type="date" />
+            </div>
+          </div>
+
+          <div class="actions-row">
+            <button id="save-button" class="btn btn-primary" type="submit">Save Medicine</button>
+            <button id="cancel-edit-button" class="btn btn-ghost hidden" type="button">Cancel Edit</button>
+          </div>
+
+          <p id="form-error" class="status-message"></p>
+        </form>
+      </section>
+
+      <section class="panel fade-up delay-3">
+        <div class="panel-headline">
+          <h2>Medicine List</h2>
+          <p>Search quickly by medicine name or location rack.</p>
+        </div>
+
+        <div class="toolbar-grid">
+          <div>
+            <label for="search-input">Search</label>
+            <input id="search-input" type="search" placeholder="Type medicine name or location..." autocomplete="off" />
+          </div>
+          <div>
+            <label for="sort-select">Sort</label>
+            <select id="sort-select">
+              <option value="recent">Recently Updated</option>
+              <option value="name-asc">Medicine A to Z</option>
+              <option value="name-desc">Medicine Z to A</option>
+              <option value="location-asc">Location A to Z</option>
+              <option value="location-desc">Location Z to A</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button id="export-button" class="btn btn-secondary" type="button">Export JSON</button>
+          <button id="import-button" class="btn btn-secondary" type="button">Import JSON</button>
+          <button id="clear-all-button" class="btn btn-danger" type="button">Clear All</button>
+          <input id="import-input" type="file" accept="application/json" class="hidden" />
+        </div>
+
+        <p id="summary" class="summary-text"></p>
+        <div id="list-container" class="list-wrap" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <template id="medicine-row-template">
+      <article class="medicine-card">
+        <div>
+          <h3 class="medicine-name"></h3>
+          <p class="medicine-location"></p>
+          <p class="medicine-extra"></p>
+          <p class="medicine-meta"></p>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="btn btn-ghost btn-xs action-edit">Edit</button>
+          <button type="button" class="btn btn-danger btn-xs action-delete">Delete</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="sync-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

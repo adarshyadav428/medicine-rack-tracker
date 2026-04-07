@@ -1,6 +1,9 @@
 const STORAGE_KEY = "medicineRackTracker.v1";
 const SYNC_CONFIG_KEY = "medicineRackTracker.sync.v1";
 
+const currentPage = document.body.dataset.page || "home";
+const allowedPages = new Set(["index.html", "dashboard.html", "access.html"]);
+
 const state = {
   items: [],
   searchTerm: "",
@@ -19,11 +22,29 @@ const state = {
   auth: {
     user: null,
     role: "guest",
-    subscription: null,
+    authSubscription: null,
+    pendingRedirectAfterLogin: false,
   },
 };
 
 const elements = {
+  headerUser: document.getElementById("header-user"),
+  headerLogout: document.getElementById("header-logout"),
+
+  authEmail: document.getElementById("auth-email"),
+  authPassword: document.getElementById("auth-password"),
+  authLoginButton: document.getElementById("auth-login-button"),
+  authSignupButton: document.getElementById("auth-signup-button"),
+  authLogoutButton: document.getElementById("auth-logout-button"),
+  authStatus: document.getElementById("auth-status"),
+  currentUser: document.getElementById("current-user"),
+
+  dashboardStatus: document.getElementById("dashboard-status"),
+  metricTotal: document.getElementById("metric-total"),
+  metricExpiring: document.getElementById("metric-expiring"),
+  metricExpired: document.getElementById("metric-expired"),
+
+  formPanel: document.getElementById("medicine-form-panel"),
   form: document.getElementById("medicine-form"),
   medicineName: document.getElementById("medicine-name"),
   location: document.getElementById("medicine-location"),
@@ -32,15 +53,25 @@ const elements = {
   saveButton: document.getElementById("save-button"),
   cancelEditButton: document.getElementById("cancel-edit-button"),
   formError: document.getElementById("form-error"),
+
   searchInput: document.getElementById("search-input"),
   sortSelect: document.getElementById("sort-select"),
   exportButton: document.getElementById("export-button"),
   importButton: document.getElementById("import-button"),
-  importInput: document.getElementById("import-input"),
   clearAllButton: document.getElementById("clear-all-button"),
+  importInput: document.getElementById("import-input"),
   summary: document.getElementById("summary"),
   listContainer: document.getElementById("list-container"),
   rowTemplate: document.getElementById("medicine-row-template"),
+
+  adminAccessPanel: document.getElementById("admin-access-panel"),
+  accessEmail: document.getElementById("access-email"),
+  accessRole: document.getElementById("access-role"),
+  accessStatusSelect: document.getElementById("access-status"),
+  accessSaveButton: document.getElementById("access-save-button"),
+  accessFeedback: document.getElementById("access-feedback"),
+
+  syncPanel: document.getElementById("sync-panel"),
   syncEnabled: document.getElementById("sync-enabled"),
   syncUrl: document.getElementById("sync-url"),
   syncAnonKey: document.getElementById("sync-anon-key"),
@@ -48,40 +79,11 @@ const elements = {
   syncSaveButton: document.getElementById("sync-save-button"),
   syncDisableButton: document.getElementById("sync-disable-button"),
   syncStatus: document.getElementById("sync-status"),
-  authEmail: document.getElementById("auth-email"),
-  authPassword: document.getElementById("auth-password"),
-  authLoginButton: document.getElementById("auth-login-button"),
-  authSignupButton: document.getElementById("auth-signup-button"),
-  authLogoutButton: document.getElementById("auth-logout-button"),
-  authStatus: document.getElementById("auth-status"),
-  currentUser: document.getElementById("current-user"),
-  protectedContent: document.getElementById("protected-content"),
-  syncPanel: document.getElementById("sync-panel"),
-  adminAccessPanel: document.getElementById("admin-access-panel"),
-  accessEmail: document.getElementById("access-email"),
-  accessRole: document.getElementById("access-role"),
-  accessStatusSelect: document.getElementById("access-status"),
-  accessSaveButton: document.getElementById("access-save-button"),
-  accessFeedback: document.getElementById("access-feedback"),
 };
 
-function createId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
-    const rand = Math.floor(Math.random() * 16);
-    const val = ch === "x" ? rand : (rand & 0x3) | 0x8;
-    return val.toString(16);
-  });
-}
-
-function formatTimestamp(ts) {
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return "Unknown time";
+function safeListen(element, eventName, handler) {
+  if (element) {
+    element.addEventListener(eventName, handler);
   }
 }
 
@@ -117,6 +119,18 @@ function normalizeDateOnly(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function createId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const rand = Math.floor(Math.random() * 16);
+    const val = ch === "x" ? rand : (rand & 0x3) | 0x8;
+    return val.toString(16);
+  });
+}
+
 function normalizeItem(item) {
   return {
     id: normalizeString(item.id) || createId(),
@@ -129,170 +143,135 @@ function normalizeItem(item) {
   };
 }
 
-function normalizeKey(value) {
-  return normalizeString(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+function formatTimestamp(ts) {
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return "Unknown time";
+  }
 }
 
-function pickValueByKnownKeys(record, keyCandidates) {
-  if (!record || typeof record !== "object") {
-    return "";
+function setStatus(element, message, tone = "") {
+  if (!element) {
+    return;
   }
 
-  const normalizedCandidates = keyCandidates.map(normalizeKey);
-
-  for (const [key, value] of Object.entries(record)) {
-    if (normalizedCandidates.includes(normalizeKey(key))) {
-      return normalizeString(value);
-    }
+  element.textContent = message || "";
+  element.classList.remove("is-ok", "is-warn", "is-error", "is-info");
+  if (tone) {
+    element.classList.add(tone);
   }
-
-  return "";
 }
 
-function arrayRowsToObjects(rows) {
-  if (!Array.isArray(rows) || !rows.length || !Array.isArray(rows[0])) {
-    return [];
+function setAuthStatus(message, tone = "") {
+  setStatus(elements.authStatus, message, tone);
+}
+
+function setSyncStatus(message, tone = "") {
+  setStatus(elements.syncStatus, message, tone);
+}
+
+function setAccessStatus(message, tone = "") {
+  setStatus(elements.accessFeedback, message, tone);
+}
+
+function setDashboardStatus(message, tone = "") {
+  setStatus(elements.dashboardStatus, message, tone);
+}
+
+function resolvePageTarget(rawTarget) {
+  const target = normalizeString(rawTarget);
+  if (!target) {
+    return null;
   }
 
-  const header = rows[0].map((cell) => normalizeString(cell));
-  if (!header.some(Boolean)) {
-    return [];
+  const pathOnly = target.split("?")[0];
+  if (!allowedPages.has(pathOnly)) {
+    return null;
   }
 
-  return rows.slice(1).map((row) => {
-    const obj = {};
-    header.forEach((columnName, index) => {
-      if (columnName) {
-        obj[columnName] = row[index];
+  return target;
+}
+
+function getCurrentFileName() {
+  const pathname = window.location.pathname || "/index.html";
+  const fileName = pathname.split("/").pop();
+  return fileName || "index.html";
+}
+
+function getNextDestination() {
+  const params = new URLSearchParams(window.location.search);
+  const target = resolvePageTarget(params.get("next"));
+  return target || "dashboard.html";
+}
+
+function goTo(targetPath) {
+  const target = resolvePageTarget(targetPath);
+  if (!target) {
+    return;
+  }
+
+  const currentFile = getCurrentFileName();
+  const targetFile = target.split("?")[0];
+  if (currentFile === targetFile && !target.includes("?")) {
+    return;
+  }
+
+  document.body.classList.add("is-leaving");
+  window.setTimeout(() => {
+    window.location.href = target;
+  }, 220);
+}
+
+function setupPageTransitions() {
+  requestAnimationFrame(() => {
+    document.body.classList.add("is-ready");
+  });
+
+  document.querySelectorAll("a[data-nav]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.button !== 0) {
+        return;
       }
+
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      const href = link.getAttribute("href");
+      const target = resolvePageTarget(href);
+      if (!target) {
+        return;
+      }
+
+      event.preventDefault();
+      goTo(target);
     });
-    return obj;
   });
 }
 
-function extractImportRows(parsed) {
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return [];
-  }
-
-  const candidateArrays = [parsed.items, parsed.data, parsed.rows, parsed.values, parsed.records];
-  for (const candidate of candidateArrays) {
-    if (Array.isArray(candidate)) {
-      return candidate;
-    }
-  }
-
-  return [];
+function isCloudSyncActive() {
+  return Boolean(state.sync.enabled && state.sync.client);
 }
 
-function convertImportRowsToItems(rows) {
-  const medicineKeys = [
-    "medicineName",
-    "medicine",
-    "name",
-    "medicine_name",
-    "drug",
-    "tablet",
-    "item",
-  ];
-
-  const locationKeys = [
-    "location",
-    "rack",
-    "place",
-    "rackPlace",
-    "rack_place",
-    "storage",
-    "position",
-    "shelf",
-  ];
-
-  const quantityKeys = ["quantity", "qty", "count", "stock", "units", "balance"];
-  const expiryKeys = [
-    "expiryDate",
-    "expiry",
-    "expire",
-    "expdate",
-    "expiry_date",
-    "expireson",
-    "bestbefore",
-  ];
-
-  let objectRows = rows;
-
-  if (rows.length && Array.isArray(rows[0])) {
-    objectRows = arrayRowsToObjects(rows);
-  }
-
-  return objectRows
-    .map((row) => {
-      if (!row || typeof row !== "object") {
-        return null;
-      }
-
-      if (row.medicineName && row.location) {
-        return normalizeItem(row);
-      }
-
-      const medicineName = pickValueByKnownKeys(row, medicineKeys);
-      const location = pickValueByKnownKeys(row, locationKeys);
-      const quantity = pickValueByKnownKeys(row, quantityKeys);
-      const expiryDate = pickValueByKnownKeys(row, expiryKeys);
-
-      if (!medicineName || !location) {
-        return null;
-      }
-
-      return normalizeItem({
-        medicineName,
-        location,
-        quantity,
-        expiryDate,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-      });
-    })
-    .filter(Boolean);
+function isAuthenticated() {
+  return Boolean(state.auth.user);
 }
 
-function getExpiryStatus(expiryDate) {
-  const normalizedDate = normalizeDateOnly(expiryDate);
-  if (!normalizedDate) {
-    return {
-      kind: "none",
-      label: "No expiry date set",
-    };
-  }
+function isAdmin() {
+  return state.auth.role === "admin";
+}
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+function canViewRecords() {
+  return !isCloudSyncActive() || isAuthenticated();
+}
 
-  const target = new Date(`${normalizedDate}T00:00:00`);
-  const diffMs = target.getTime() - today.getTime();
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+function canWriteRecords() {
+  return !isCloudSyncActive() || isAdmin();
+}
 
-  if (days < 0) {
-    return {
-      kind: "expired",
-      label: `Expired ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`,
-    };
-  }
-
-  if (days <= 30) {
-    return {
-      kind: "expiring",
-      label: `Expiring in ${days} day${days === 1 ? "" : "s"}`,
-    };
-  }
-
-  return {
-    kind: "safe",
-    label: `Expiry: ${normalizedDate}`,
-  };
+function canManageAccess() {
+  return !isCloudSyncActive() || isAdmin();
 }
 
 function loadLocalItems() {
@@ -318,15 +297,15 @@ function saveLocalItems(items = state.items) {
 }
 
 function getDefaultSyncConfig() {
-  const defaultConfig = window.APP_SYNC_CONFIG || {};
+  const defaults = window.APP_SYNC_CONFIG || {};
   return {
-    enabled: Boolean(defaultConfig.enabled),
-    projectUrl: normalizeString(defaultConfig.projectUrl),
-    anonKey: normalizeString(defaultConfig.anonKey),
-    tableName: normalizeString(defaultConfig.tableName) || "medicines",
-    roleTable: normalizeString(defaultConfig.roleTable) || "user_roles",
-    adminEmails: Array.isArray(defaultConfig.adminEmails)
-      ? defaultConfig.adminEmails.map((e) => normalizeString(e).toLowerCase()).filter(Boolean)
+    enabled: Boolean(defaults.enabled),
+    projectUrl: normalizeString(defaults.projectUrl),
+    anonKey: normalizeString(defaults.anonKey),
+    tableName: normalizeString(defaults.tableName) || "medicines",
+    roleTable: normalizeString(defaults.roleTable) || "user_roles",
+    adminEmails: Array.isArray(defaults.adminEmails)
+      ? defaults.adminEmails.map((entry) => normalizeString(entry).toLowerCase()).filter(Boolean)
       : [],
   };
 }
@@ -340,17 +319,15 @@ function loadSyncConfig() {
 
   try {
     const parsed = JSON.parse(raw);
-    const parsedEnabled = parsed.enabled;
-    const hasExplicitEnabled = typeof parsedEnabled === "boolean";
-
+    const hasEnabled = typeof parsed.enabled === "boolean";
     return {
-      enabled: hasExplicitEnabled ? parsedEnabled : fallback.enabled,
+      enabled: hasEnabled ? parsed.enabled : fallback.enabled,
       projectUrl: normalizeString(parsed.projectUrl) || fallback.projectUrl,
       anonKey: normalizeString(parsed.anonKey) || fallback.anonKey,
       tableName: normalizeString(parsed.tableName) || fallback.tableName,
       roleTable: normalizeString(parsed.roleTable) || fallback.roleTable,
       adminEmails: Array.isArray(parsed.adminEmails)
-        ? parsed.adminEmails.map((e) => normalizeString(e).toLowerCase()).filter(Boolean)
+        ? parsed.adminEmails.map((entry) => normalizeString(entry).toLowerCase()).filter(Boolean)
         : fallback.adminEmails,
     };
   } catch {
@@ -372,89 +349,19 @@ function saveSyncConfig() {
   );
 }
 
-function showFormError(message = "") {
-  elements.formError.textContent = message;
-}
-
-function setSyncStatus(message, tone = "") {
-  elements.syncStatus.textContent = message;
-  elements.syncStatus.classList.remove("is-ok", "is-warn", "is-error", "is-info");
-  if (tone) {
-    elements.syncStatus.classList.add(tone);
+function hydrateSyncInputs() {
+  if (elements.syncEnabled) {
+    elements.syncEnabled.checked = state.sync.enabled;
   }
-}
-
-function setAuthStatus(message, tone = "") {
-  elements.authStatus.textContent = message;
-  elements.authStatus.classList.remove("is-ok", "is-warn", "is-error", "is-info");
-  if (tone) {
-    elements.authStatus.classList.add(tone);
+  if (elements.syncUrl) {
+    elements.syncUrl.value = state.sync.projectUrl;
   }
-}
-
-function setAccessStatus(message, tone = "") {
-  elements.accessFeedback.textContent = message;
-  elements.accessFeedback.classList.remove("is-ok", "is-warn", "is-error", "is-info");
-  if (tone) {
-    elements.accessFeedback.classList.add(tone);
+  if (elements.syncAnonKey) {
+    elements.syncAnonKey.value = state.sync.anonKey;
   }
-}
-
-function hydrateSyncInputsFromState() {
-  elements.syncEnabled.checked = state.sync.enabled;
-  elements.syncUrl.value = state.sync.projectUrl;
-  elements.syncAnonKey.value = state.sync.anonKey;
-  elements.syncTable.value = state.sync.tableName || "medicines";
-}
-
-function resetForm() {
-  elements.form.reset();
-  state.editingId = null;
-  elements.cancelEditButton.classList.add("hidden");
-  elements.saveButton.textContent = "Save Medicine";
-  showFormError();
-  elements.medicineName.focus();
-}
-
-function beginEdit(itemId) {
-  const item = state.items.find((entry) => entry.id === itemId);
-  if (!item) {
-    return;
+  if (elements.syncTable) {
+    elements.syncTable.value = state.sync.tableName || "medicines";
   }
-
-  state.editingId = itemId;
-  elements.medicineName.value = item.medicineName;
-  elements.location.value = item.location;
-  elements.quantity.value = item.quantity ?? "";
-  elements.expiryDate.value = item.expiryDate || "";
-  elements.cancelEditButton.classList.remove("hidden");
-  elements.saveButton.textContent = "Update Medicine";
-  showFormError();
-  elements.medicineName.focus();
-}
-
-function isCloudSyncActive() {
-  return Boolean(state.sync.enabled && state.sync.client);
-}
-
-function isAuthenticated() {
-  return Boolean(state.auth.user);
-}
-
-function isAdmin() {
-  return state.auth.role === "admin";
-}
-
-function canDeleteRecords() {
-  return !isCloudSyncActive() || isAdmin();
-}
-
-function canImportClearRecords() {
-  return !isCloudSyncActive() || isAdmin();
-}
-
-function canWriteRecords() {
-  return !isCloudSyncActive() || isAdmin();
 }
 
 function ensureSupabaseAvailable() {
@@ -467,6 +374,30 @@ function createCloudClient(projectUrl, anonKey) {
   }
 
   return window.supabase.createClient(projectUrl, anonKey);
+}
+
+function toCloudRow(item) {
+  return {
+    id: item.id,
+    medicine_name: item.medicineName,
+    location: item.location,
+    quantity: item.quantity,
+    expiry_date: item.expiryDate || null,
+    created_at: item.createdAt,
+    updated_at: item.updatedAt,
+  };
+}
+
+function fromCloudRow(row) {
+  return {
+    id: row.id,
+    medicineName: row.medicine_name,
+    location: row.location,
+    quantity: row.quantity,
+    expiryDate: row.expiry_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function stopRealtimeSync() {
@@ -498,30 +429,6 @@ function startRealtimeSync() {
       }
     )
     .subscribe();
-}
-
-function toCloudRow(item) {
-  return {
-    id: item.id,
-    medicine_name: item.medicineName,
-    location: item.location,
-    quantity: item.quantity,
-    expiry_date: item.expiryDate || null,
-    created_at: item.createdAt,
-    updated_at: item.updatedAt,
-  };
-}
-
-function fromCloudRow(row) {
-  return {
-    id: row.id,
-    medicineName: row.medicine_name,
-    location: row.location,
-    quantity: row.quantity,
-    expiryDate: row.expiry_date,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
 }
 
 async function fetchCloudItems() {
@@ -563,13 +470,13 @@ async function deleteCloudItem(itemId) {
 }
 
 async function replaceAllCloudItems(newItems) {
-  const existingRows = await fetchCloudItems();
-  if (existingRows.length) {
-    const existingIds = existingRows.map((item) => item.id);
+  const existing = await fetchCloudItems();
+  if (existing.length) {
+    const ids = existing.map((item) => item.id);
     const { error: deleteError } = await state.sync.client
       .from(state.sync.tableName)
       .delete()
-      .in("id", existingIds);
+      .in("id", ids);
 
     if (deleteError) {
       throw deleteError;
@@ -585,12 +492,342 @@ async function replaceAllCloudItems(newItems) {
   }
 }
 
-function syncStateToLocalCache() {
-  saveLocalItems(state.items);
+async function getRoleForCurrentUser() {
+  if (!isAuthenticated()) {
+    return "guest";
+  }
+
+  const email = normalizeString(state.auth.user.email).toLowerCase();
+
+  if (state.sync.adminEmails.includes(email)) {
+    return "admin";
+  }
+
+  const { data, error } = await state.sync.client
+    .from(state.sync.roleTable)
+    .select("role, is_active")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (data && data.is_active === false) {
+    return "inactive";
+  }
+
+  if (data && normalizeString(data.role)) {
+    return normalizeString(data.role).toLowerCase();
+  }
+
+  return "employee";
+}
+
+async function refreshItemsFromCloud() {
+  if (!isCloudSyncActive() || !isAuthenticated()) {
+    state.items = isCloudSyncActive() ? [] : loadLocalItems();
+    renderPage();
+    return;
+  }
+
+  try {
+    state.items = await fetchCloudItems();
+    saveLocalItems(state.items);
+    renderPage();
+  } catch (error) {
+    setSyncStatus(`Could not load cloud data: ${error.message || "Unknown error"}`, "is-error");
+  }
+}
+
+function renderHeaderSession() {
+  if (elements.headerUser) {
+    if (isAuthenticated()) {
+      elements.headerUser.textContent = `${state.auth.user.email} (${state.auth.role})`;
+    } else {
+      elements.headerUser.textContent = "Not signed in";
+    }
+  }
+
+  if (elements.headerLogout) {
+    elements.headerLogout.classList.toggle("hidden", !isAuthenticated());
+  }
+
+  if (elements.currentUser) {
+    if (isAuthenticated()) {
+      elements.currentUser.textContent = `Signed in as ${state.auth.user.email} (${state.auth.role})`;
+    } else {
+      elements.currentUser.textContent = "";
+    }
+  }
+}
+
+function enforcePageGuard() {
+  if (currentPage === "dashboard" && !canViewRecords()) {
+    goTo("index.html?next=dashboard.html");
+    return false;
+  }
+
+  if (currentPage === "access" && isCloudSyncActive()) {
+    if (!isAuthenticated()) {
+      goTo("index.html?next=access.html");
+      return false;
+    }
+
+    if (!isAdmin()) {
+      goTo("dashboard.html");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function handleAuthSession(session, source = "session") {
+  state.auth.user = session?.user || null;
+
+  if (!state.auth.user) {
+    state.auth.role = "guest";
+    stopRealtimeSync();
+    state.items = isCloudSyncActive() ? [] : loadLocalItems();
+    renderHeaderSession();
+
+    if (isCloudSyncActive()) {
+      setAuthStatus("Login required to access cloud data.", "is-warn");
+    } else {
+      setAuthStatus("Not signed in. Local mode active.", "is-info");
+    }
+
+    if (!enforcePageGuard()) {
+      return;
+    }
+
+    renderPage();
+    return;
+  }
+
+  try {
+    state.auth.role = await getRoleForCurrentUser();
+
+    if (state.auth.role === "inactive") {
+      setAuthStatus("Account is inactive. Contact admin.", "is-error");
+      await state.sync.client.auth.signOut();
+      return;
+    }
+
+    renderHeaderSession();
+    setAuthStatus("Login successful.", "is-ok");
+
+    if (currentPage === "home") {
+      const shouldRedirect = source === "signed-in" || source === "startup" || state.auth.pendingRedirectAfterLogin;
+      if (shouldRedirect) {
+        state.auth.pendingRedirectAfterLogin = false;
+        goTo(getNextDestination());
+        return;
+      }
+    }
+
+    if (isCloudSyncActive()) {
+      await refreshItemsFromCloud();
+      startRealtimeSync();
+    }
+
+    if (!enforcePageGuard()) {
+      return;
+    }
+
+    renderPage();
+  } catch (error) {
+    state.auth.role = "employee";
+    renderHeaderSession();
+    setAuthStatus(`Role lookup warning: ${error.message || "Unknown error"}`, "is-warn");
+    if (!enforcePageGuard()) {
+      return;
+    }
+    renderPage();
+  }
+}
+
+function ensureAuthListener() {
+  if (!isCloudSyncActive() || state.auth.authSubscription) {
+    return;
+  }
+
+  const { data } = state.sync.client.auth.onAuthStateChange((event, session) => {
+    const source = event === "SIGNED_IN" ? "signed-in" : "session";
+    handleAuthSession(session, source);
+  });
+
+  state.auth.authSubscription = data.subscription;
+}
+
+function disableCloudSync() {
+  state.sync.enabled = false;
+  state.sync.client = null;
+
+  if (state.auth.authSubscription) {
+    state.auth.authSubscription.unsubscribe();
+    state.auth.authSubscription = null;
+  }
+
+  stopRealtimeSync();
+
+  state.auth.user = null;
+  state.auth.role = "guest";
+  state.items = loadLocalItems();
+
+  saveSyncConfig();
+  hydrateSyncInputs();
+  renderHeaderSession();
+  setSyncStatus("Cloud sync disabled. Local storage mode active.", "is-warn");
+  setAuthStatus("Not signed in. Local mode active.", "is-info");
+
+  if (!enforcePageGuard()) {
+    return;
+  }
+
+  renderPage();
+}
+
+function parseSyncInputs() {
+  return {
+    enabled: elements.syncEnabled ? elements.syncEnabled.checked : false,
+    projectUrl: normalizeString(elements.syncUrl?.value),
+    anonKey: normalizeString(elements.syncAnonKey?.value),
+    tableName: normalizeString(elements.syncTable?.value) || "medicines",
+  };
+}
+
+async function enableCloudSyncFromInputs() {
+  const config = parseSyncInputs();
+
+  if (!config.enabled) {
+    disableCloudSync();
+    return;
+  }
+
+  if (!config.projectUrl || !config.anonKey) {
+    setSyncStatus("Supabase URL and Anon Key are required.", "is-error");
+    return;
+  }
+
+  try {
+    const defaults = getDefaultSyncConfig();
+    state.sync = {
+      ...state.sync,
+      ...config,
+      roleTable: defaults.roleTable,
+      adminEmails: defaults.adminEmails,
+      client: createCloudClient(config.projectUrl, config.anonKey),
+      enabled: true,
+    };
+
+    saveSyncConfig();
+    hydrateSyncInputs();
+    setSyncStatus("Cloud sync enabled. Login required.", "is-ok");
+
+    ensureAuthListener();
+    const { data, error } = await state.sync.client.auth.getSession();
+    if (error) {
+      throw error;
+    }
+
+    await handleAuthSession(data.session, "startup");
+  } catch (error) {
+    state.sync.enabled = false;
+    state.sync.client = null;
+    saveSyncConfig();
+    setSyncStatus(`Cloud sync failed: ${error.message || "Unknown error"}`, "is-error");
+  }
+}
+
+async function restoreSyncOnStartup() {
+  const persisted = loadSyncConfig();
+  state.sync = {
+    ...state.sync,
+    ...persisted,
+    client: null,
+  };
+
+  hydrateSyncInputs();
+
+  if (!state.sync.enabled || !state.sync.projectUrl || !state.sync.anonKey) {
+    state.items = loadLocalItems();
+    setSyncStatus("Local mode active.", "is-info");
+    renderHeaderSession();
+
+    if (!enforcePageGuard()) {
+      return;
+    }
+
+    renderPage();
+    return;
+  }
+
+  try {
+    state.sync.client = createCloudClient(state.sync.projectUrl, state.sync.anonKey);
+    ensureAuthListener();
+
+    const { data, error } = await state.sync.client.auth.getSession();
+    if (error) {
+      throw error;
+    }
+
+    setSyncStatus("Cloud sync connected.", "is-ok");
+    await handleAuthSession(data.session, "startup");
+  } catch (error) {
+    state.sync.enabled = false;
+    state.sync.client = null;
+    saveSyncConfig();
+    state.items = loadLocalItems();
+    setSyncStatus(
+      `Cloud sync startup failed (${error.message || "Unknown"}). Local mode active.`,
+      "is-warn"
+    );
+
+    if (!enforcePageGuard()) {
+      return;
+    }
+
+    renderPage();
+  }
+}
+
+function getExpiryStatus(expiryDate) {
+  const normalized = normalizeDateOnly(expiryDate);
+  if (!normalized) {
+    return { kind: "none", label: "No expiry date set" };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const target = new Date(`${normalized}T00:00:00`);
+  const diffMs = target.getTime() - today.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (days < 0) {
+    return {
+      kind: "expired",
+      label: `Expired ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago`,
+    };
+  }
+
+  if (days <= 30) {
+    return {
+      kind: "expiring",
+      label: `Expiring in ${days} day${days === 1 ? "" : "s"}`,
+    };
+  }
+
+  return {
+    kind: "safe",
+    label: `Expiry: ${normalized}`,
+  };
 }
 
 function getFilteredAndSortedItems() {
-  const search = state.searchTerm.toLowerCase();
+  const search = normalizeString(state.searchTerm).toLowerCase();
 
   const filtered = state.items.filter((item) => {
     if (!search) {
@@ -604,7 +841,6 @@ function getFilteredAndSortedItems() {
   });
 
   const sorted = [...filtered];
-
   switch (state.sortBy) {
     case "name-asc":
       sorted.sort((a, b) => a.medicineName.localeCompare(b.medicineName));
@@ -628,8 +864,11 @@ function getFilteredAndSortedItems() {
 }
 
 function renderSummary(visibleCount) {
-  const totalCount = state.items.length;
+  if (!elements.summary) {
+    return;
+  }
 
+  const totalCount = state.items.length;
   if (!totalCount) {
     elements.summary.textContent = "No medicines saved yet.";
     return;
@@ -643,55 +882,47 @@ function renderSummary(visibleCount) {
   elements.summary.textContent = `Showing ${visibleCount} of ${totalCount} medicine${totalCount > 1 ? "s" : ""}.`;
 }
 
-function applyRoleBasedUi() {
-  const cloudWithoutAuth = isCloudSyncActive() && !isAuthenticated();
-  const disableWrite = cloudWithoutAuth || !canWriteRecords();
-  const disableDanger = cloudWithoutAuth || !canDeleteRecords();
-  const disableImportClear = cloudWithoutAuth || !canImportClearRecords();
-
-  elements.protectedContent.classList.toggle("hidden", cloudWithoutAuth);
-
-  elements.saveButton.disabled = disableWrite;
-  elements.cancelEditButton.disabled = disableWrite;
-  elements.importButton.disabled = disableImportClear;
-  elements.clearAllButton.disabled = disableImportClear;
-
-  elements.adminAccessPanel.classList.toggle("hidden", !isAdmin());
-  elements.syncPanel.classList.toggle("hidden", !isAdmin());
-
-  if (isCloudSyncActive() && !isAuthenticated()) {
-    setAuthStatus("Cloud mode is active. Please login to access data.", "is-warn");
+function renderMetrics(items) {
+  if (elements.metricTotal) {
+    elements.metricTotal.textContent = String(items.length);
   }
 
-  if (disableDanger) {
-    elements.clearAllButton.title = isAdmin() || !isCloudSyncActive()
-      ? ""
-      : "Only admin can clear all records.";
-  } else {
-    elements.clearAllButton.title = "";
+  const expiring = items.filter((item) => getExpiryStatus(item.expiryDate).kind === "expiring").length;
+  const expired = items.filter((item) => getExpiryStatus(item.expiryDate).kind === "expired").length;
+
+  if (elements.metricExpiring) {
+    elements.metricExpiring.textContent = String(expiring);
   }
 
-  if (disableWrite && isAuthenticated() && isCloudSyncActive() && !isAdmin()) {
-    showFormError("Employee mode: view/search access only.");
+  if (elements.metricExpired) {
+    elements.metricExpired.textContent = String(expired);
   }
 }
 
-function renderList(itemsToRender) {
+function renderMedicineList(itemsToRender) {
+  if (!elements.listContainer) {
+    return;
+  }
+
   elements.listContainer.textContent = "";
 
   if (!itemsToRender.length) {
-    const emptyMessage = document.createElement("p");
-    emptyMessage.className = "empty-state";
-    emptyMessage.textContent = state.items.length
-      ? "No results match your search."
-      : "Start by adding your first medicine and location.";
-    elements.listContainer.appendChild(emptyMessage);
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = state.items.length
+      ? "No medicines match your search."
+      : "Start by adding your first medicine and rack location.";
+    elements.listContainer.appendChild(empty);
     return;
   }
 
   const fragment = document.createDocumentFragment();
 
   itemsToRender.forEach((item) => {
+    if (!elements.rowTemplate) {
+      return;
+    }
+
     const row = elements.rowTemplate.content.cloneNode(true);
     const card = row.querySelector(".medicine-card");
     const expiry = getExpiryStatus(item.expiryDate);
@@ -720,7 +951,7 @@ function renderList(itemsToRender) {
     }
 
     const deleteButton = row.querySelector(".action-delete");
-    if (!canDeleteRecords()) {
+    if (!canWriteRecords()) {
       deleteButton.disabled = true;
       deleteButton.title = "Only admin can delete records.";
     } else {
@@ -729,36 +960,129 @@ function renderList(itemsToRender) {
       });
     }
 
-    if (state.editingId === item.id) {
-      card.style.borderColor = "rgba(19, 111, 99, 0.8)";
-      card.style.boxShadow = "0 0 0 2px rgba(19, 111, 99, 0.18)";
-    }
-
     fragment.appendChild(row);
   });
 
   elements.listContainer.appendChild(fragment);
 }
 
-function render() {
-  const itemsToRender = getFilteredAndSortedItems();
-  renderSummary(itemsToRender.length);
-  renderList(itemsToRender);
-  applyRoleBasedUi();
-}
+function beginEdit(itemId) {
+  if (!elements.form) {
+    return;
+  }
 
-async function handleDeleteItem(itemId) {
   const item = state.items.find((entry) => entry.id === itemId);
   if (!item) {
     return;
   }
 
-  if (!canDeleteRecords()) {
-    window.alert("Only admin can delete records in cloud mode.");
+  state.editingId = item.id;
+  if (elements.medicineName) elements.medicineName.value = item.medicineName;
+  if (elements.location) elements.location.value = item.location;
+  if (elements.quantity) elements.quantity.value = item.quantity ?? "";
+  if (elements.expiryDate) elements.expiryDate.value = item.expiryDate || "";
+
+  if (elements.cancelEditButton) {
+    elements.cancelEditButton.classList.remove("hidden");
+  }
+
+  if (elements.saveButton) {
+    elements.saveButton.textContent = "Update Medicine";
+  }
+
+  setStatus(elements.formError, "", "");
+  elements.medicineName?.focus();
+}
+
+function resetFormState() {
+  if (elements.form) {
+    elements.form.reset();
+  }
+
+  state.editingId = null;
+
+  if (elements.cancelEditButton) {
+    elements.cancelEditButton.classList.add("hidden");
+  }
+
+  if (elements.saveButton) {
+    elements.saveButton.textContent = "Save Medicine";
+  }
+
+  setStatus(elements.formError, "", "");
+}
+
+function renderDashboardPage() {
+  if (currentPage !== "dashboard") {
     return;
   }
 
-  const confirmed = window.confirm(`Delete \"${item.medicineName}\" from the list?`);
+  if (!canViewRecords()) {
+    setDashboardStatus("Please login to view medicine data.", "is-warn");
+    return;
+  }
+
+  const itemsToRender = getFilteredAndSortedItems();
+  renderMetrics(state.items);
+  renderSummary(itemsToRender.length);
+  renderMedicineList(itemsToRender);
+
+  if (elements.formPanel) {
+    elements.formPanel.classList.toggle("hidden", !canWriteRecords());
+  }
+
+  if (elements.importButton) {
+    elements.importButton.disabled = !canWriteRecords();
+  }
+
+  if (elements.clearAllButton) {
+    elements.clearAllButton.disabled = !canWriteRecords();
+  }
+
+  setDashboardStatus(
+    canWriteRecords() ? "Admin mode: full inventory controls active." : "Employee mode: view and search only.",
+    canWriteRecords() ? "is-ok" : "is-info"
+  );
+}
+
+function renderAccessPage() {
+  if (currentPage !== "access") {
+    return;
+  }
+
+  const adminView = canManageAccess();
+
+  if (elements.adminAccessPanel) {
+    elements.adminAccessPanel.classList.toggle("hidden", !adminView);
+  }
+
+  if (elements.syncPanel) {
+    elements.syncPanel.classList.toggle("hidden", !adminView);
+  }
+
+  if (!adminView) {
+    setAccessStatus("Only admin can manage user access.", "is-warn");
+  }
+}
+
+function renderPage() {
+  renderHeaderSession();
+  renderDashboardPage();
+  renderAccessPage();
+}
+
+async function handleDeleteItem(itemId) {
+  const target = state.items.find((item) => item.id === itemId);
+  if (!target) {
+    return;
+  }
+
+  if (!canWriteRecords()) {
+    window.alert("Only admin can delete records.");
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete \"${target.medicineName}\" from inventory?`);
   if (!confirmed) {
     return;
   }
@@ -768,14 +1092,14 @@ async function handleDeleteItem(itemId) {
       await deleteCloudItem(itemId);
     }
 
-    state.items = state.items.filter((entry) => entry.id !== itemId);
-    syncStateToLocalCache();
+    state.items = state.items.filter((item) => item.id !== itemId);
+    saveLocalItems(state.items);
 
     if (state.editingId === itemId) {
-      resetForm();
+      resetFormState();
     }
 
-    render();
+    renderPage();
   } catch (error) {
     window.alert(`Delete failed: ${error.message || "Unknown error"}`);
   }
@@ -784,29 +1108,24 @@ async function handleDeleteItem(itemId) {
 async function handleFormSubmit(event) {
   event.preventDefault();
 
-  if (isCloudSyncActive() && !isAuthenticated()) {
-    showFormError("Please login to add or edit records in cloud mode.");
-    return;
-  }
-
   if (!canWriteRecords()) {
-    showFormError("Employee mode: view/search access only.");
+    setStatus(elements.formError, "Only admin can change records.", "is-warn");
     return;
   }
 
-  const medicineName = normalizeString(elements.medicineName.value);
-  const location = normalizeString(elements.location.value);
-  const rawQuantity = normalizeString(elements.quantity.value);
+  const medicineName = normalizeString(elements.medicineName?.value);
+  const location = normalizeString(elements.location?.value);
+  const rawQuantity = normalizeString(elements.quantity?.value);
   const parsedQuantity = normalizePositiveInteger(rawQuantity);
-  const expiryDate = normalizeDateOnly(elements.expiryDate.value);
+  const expiryDate = normalizeDateOnly(elements.expiryDate?.value);
 
   if (!medicineName || !location) {
-    showFormError("Medicine name and rack/place are required.");
+    setStatus(elements.formError, "Medicine name and rack/place are required.", "is-error");
     return;
   }
 
   if (rawQuantity && parsedQuantity === null) {
-    showFormError("Quantity must be a non-negative whole number.");
+    setStatus(elements.formError, "Quantity must be a non-negative whole number.", "is-error");
     return;
   }
 
@@ -816,7 +1135,7 @@ async function handleFormSubmit(event) {
     if (state.editingId) {
       const existing = state.items.find((item) => item.id === state.editingId);
       if (!existing) {
-        showFormError("The selected medicine no longer exists.");
+        setStatus(elements.formError, "Selected medicine no longer exists.", "is-error");
         return;
       }
 
@@ -846,50 +1165,155 @@ async function handleFormSubmit(event) {
       state.items.unshift(finalItem);
     }
 
-    syncStateToLocalCache();
-    resetForm();
-    render();
+    saveLocalItems(state.items);
+    resetFormState();
+    renderPage();
   } catch (error) {
-    showFormError(`Save failed: ${error.message || "Unknown error"}`);
+    setStatus(elements.formError, `Save failed: ${error.message || "Unknown error"}`, "is-error");
   }
 }
 
 function handleExport() {
+  if (!canViewRecords()) {
+    return;
+  }
+
   const payload = {
     exportedAt: new Date().toISOString(),
-    schema: 3,
+    schema: 4,
     items: state.items,
   };
 
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: "application/json",
-  });
-
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "medicine-rack-tracker-export.json";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "adarsh-medicals-inventory-export.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
   URL.revokeObjectURL(url);
 }
 
 async function replaceAllItems(newItems) {
   if (isCloudSyncActive()) {
-    if (!canImportClearRecords()) {
-      throw new Error("Only admin can import/clear data in cloud mode.");
-    }
     if (!isAuthenticated()) {
-      throw new Error("Please login to import/clear data in cloud mode.");
+      throw new Error("Login required for cloud import/clear.");
     }
+
+    if (!canWriteRecords()) {
+      throw new Error("Only admin can import or clear records.");
+    }
+
     await replaceAllCloudItems(newItems);
   }
 
   state.items = [...newItems];
-  syncStateToLocalCache();
-  resetForm();
-  render();
+  saveLocalItems(state.items);
+  resetFormState();
+  renderPage();
+}
+
+function normalizeKey(value) {
+  return normalizeString(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pickValueByKnownKeys(record, candidates) {
+  if (!record || typeof record !== "object") {
+    return "";
+  }
+
+  const normalizedCandidates = candidates.map(normalizeKey);
+
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedCandidates.includes(normalizeKey(key))) {
+      return normalizeString(value);
+    }
+  }
+
+  return "";
+}
+
+function arrayRowsToObjects(rows) {
+  if (!Array.isArray(rows) || !rows.length || !Array.isArray(rows[0])) {
+    return [];
+  }
+
+  const headers = rows[0].map((cell) => normalizeString(cell));
+  if (!headers.some(Boolean)) {
+    return [];
+  }
+
+  return rows.slice(1).map((row) => {
+    const obj = {};
+    headers.forEach((name, idx) => {
+      if (name) {
+        obj[name] = row[idx];
+      }
+    });
+    return obj;
+  });
+}
+
+function extractImportRows(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return [];
+  }
+
+  const candidates = [parsed.items, parsed.data, parsed.rows, parsed.values, parsed.records];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function convertImportRowsToItems(rows) {
+  const medicineKeys = ["medicineName", "medicine", "name", "medicine_name", "drug", "tablet", "item"];
+  const locationKeys = ["location", "rack", "place", "rackPlace", "rack_place", "storage", "position", "shelf"];
+  const quantityKeys = ["quantity", "qty", "count", "stock", "units", "balance"];
+  const expiryKeys = ["expiryDate", "expiry", "expire", "expdate", "expiry_date", "expireson", "bestbefore"];
+
+  let rowsAsObjects = rows;
+  if (rows.length && Array.isArray(rows[0])) {
+    rowsAsObjects = arrayRowsToObjects(rows);
+  }
+
+  return rowsAsObjects
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      if (row.medicineName && row.location) {
+        return normalizeItem(row);
+      }
+
+      const medicineName = pickValueByKnownKeys(row, medicineKeys);
+      const location = pickValueByKnownKeys(row, locationKeys);
+      const quantity = pickValueByKnownKeys(row, quantityKeys);
+      const expiryDate = pickValueByKnownKeys(row, expiryKeys);
+
+      if (!medicineName || !location) {
+        return null;
+      }
+
+      return normalizeItem({
+        medicineName,
+        location,
+        quantity,
+        expiryDate,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+    })
+    .filter(Boolean);
 }
 
 function handleImportFile(file) {
@@ -902,26 +1326,24 @@ function handleImportFile(file) {
   reader.onload = async () => {
     try {
       const parsed = JSON.parse(String(reader.result || ""));
-
-      const importedRows = extractImportRows(parsed);
-      if (!importedRows.length) {
-        throw new Error("Invalid format");
+      const rows = extractImportRows(parsed);
+      if (!rows.length) {
+        throw new Error("Invalid JSON format for import.");
       }
 
-      const normalized = convertImportRowsToItems(importedRows);
+      const normalized = convertImportRowsToItems(rows);
       if (!normalized.length) {
-        window.alert(
-          "Import worked, but no rows matched medicine + location columns. Rename your sheet columns to values like Medicine Name and Rack/Place, then try again."
-        );
-        return;
+        throw new Error("No valid medicine rows found in file.");
       }
 
       await replaceAllItems(normalized);
       window.alert(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`);
     } catch (error) {
-      window.alert(error.message || "Could not import file. Please choose a valid JSON export.");
+      window.alert(error.message || "Import failed.");
     } finally {
-      elements.importInput.value = "";
+      if (elements.importInput) {
+        elements.importInput.value = "";
+      }
     }
   };
 
@@ -933,10 +1355,12 @@ async function handleClearAll() {
     return;
   }
 
-  const confirmed = window.confirm(
-    "Clear all medicines? This cannot be undone unless you exported a backup."
-  );
+  if (!canWriteRecords()) {
+    window.alert("Only admin can clear records.");
+    return;
+  }
 
+  const confirmed = window.confirm("Clear all medicines? This cannot be undone unless you exported backup.");
   if (!confirmed) {
     return;
   }
@@ -948,145 +1372,41 @@ async function handleClearAll() {
   }
 }
 
-function parseSyncInputs() {
-  return {
-    enabled: elements.syncEnabled.checked,
-    projectUrl: normalizeString(elements.syncUrl.value),
-    anonKey: normalizeString(elements.syncAnonKey.value),
-    tableName: normalizeString(elements.syncTable.value) || "medicines",
-  };
-}
-
-async function getRoleForCurrentUser() {
-  if (!isAuthenticated()) {
-    return "guest";
-  }
-
-  const email = normalizeString(state.auth.user.email).toLowerCase();
-  if (state.sync.adminEmails.includes(email)) {
-    return "admin";
-  }
-
-  const { data, error } = await state.sync.client
-    .from(state.sync.roleTable)
-    .select("role, is_active")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  if (data && data.is_active === false) {
-    return "inactive";
-  }
-
-  if (data && normalizeString(data.role)) {
-    return normalizeString(data.role).toLowerCase();
-  }
-
-  return "employee";
-}
-
-async function refreshItemsFromCloud() {
-  if (!isCloudSyncActive() || !isAuthenticated()) {
-    state.items = isCloudSyncActive() ? [] : loadLocalItems();
-    render();
-    return;
-  }
-
-  try {
-    state.items = await fetchCloudItems();
-    syncStateToLocalCache();
-    render();
-  } catch (error) {
-    setSyncStatus(`Could not load cloud data: ${error.message || "Unknown error"}`, "is-error");
-  }
-}
-
-async function handleAuthSession(session) {
-  state.auth.user = session?.user || null;
-
-  if (!state.auth.user) {
-    state.auth.role = "guest";
-    elements.currentUser.textContent = "";
-    stopRealtimeSync();
-    if (isCloudSyncActive()) {
-      state.items = [];
-      setAuthStatus("Signed out. Login required for cloud data access.", "is-warn");
-    } else {
-      setAuthStatus("Signed out. Local mode is available.", "is-info");
-    }
-    render();
-    return;
-  }
-
-  try {
-    state.auth.role = await getRoleForCurrentUser();
-
-    if (state.auth.role === "inactive") {
-      setAuthStatus("Account is inactive. Contact admin.", "is-error");
-      await state.sync.client.auth.signOut();
-      return;
-    }
-
-    elements.currentUser.textContent = `Signed in as ${state.auth.user.email} (${state.auth.role})`;
-    setAuthStatus("Login successful.", "is-ok");
-    await refreshItemsFromCloud();
-    startRealtimeSync();
-  } catch (error) {
-    state.auth.role = "employee";
-    setAuthStatus(
-      `Signed in, but role lookup failed (${error.message || "Unknown"}). Defaulting to employee access.`,
-      "is-warn"
-    );
-    await refreshItemsFromCloud();
-    startRealtimeSync();
-  }
-}
-
-function ensureAuthListener() {
-  if (!isCloudSyncActive() || state.auth.subscription) {
-    return;
-  }
-
-  const { data } = state.sync.client.auth.onAuthStateChange((event, session) => {
-    handleAuthSession(session);
-  });
-
-  state.auth.subscription = data.subscription;
-}
-
 async function loginUser() {
   if (!isCloudSyncActive()) {
-    setAuthStatus("Enable cloud sync first, then login.", "is-warn");
+    setAuthStatus("Enable cloud sync first.", "is-warn");
     return;
   }
 
-  const email = normalizeString(elements.authEmail.value);
-  const password = normalizeString(elements.authPassword.value);
+  const email = normalizeString(elements.authEmail?.value);
+  const password = normalizeString(elements.authPassword?.value);
+
   if (!email || !password) {
     setAuthStatus("Enter email and password.", "is-error");
     return;
   }
 
+  state.auth.pendingRedirectAfterLogin = true;
+
   const { error } = await state.sync.client.auth.signInWithPassword({ email, password });
   if (error) {
+    state.auth.pendingRedirectAfterLogin = false;
     setAuthStatus(`Login failed: ${error.message}`, "is-error");
     return;
   }
 
-  setAuthStatus("Login request successful.", "is-ok");
+  setAuthStatus("Login successful.", "is-ok");
 }
 
 async function signupUser() {
   if (!isCloudSyncActive()) {
-    setAuthStatus("Enable cloud sync first, then create account.", "is-warn");
+    setAuthStatus("Enable cloud sync first.", "is-warn");
     return;
   }
 
-  const email = normalizeString(elements.authEmail.value);
-  const password = normalizeString(elements.authPassword.value);
+  const email = normalizeString(elements.authEmail?.value);
+  const password = normalizeString(elements.authPassword?.value);
+
   if (!email || !password) {
     setAuthStatus("Enter email and password.", "is-error");
     return;
@@ -1094,11 +1414,11 @@ async function signupUser() {
 
   const { error } = await state.sync.client.auth.signUp({ email, password });
   if (error) {
-    setAuthStatus(`Signup failed: ${error.message}`, "is-error");
+    setAuthStatus(`Create account failed: ${error.message}`, "is-error");
     return;
   }
 
-  setAuthStatus("Account created. If email confirmation is enabled, verify email then login.", "is-info");
+  setAuthStatus("Account created. Verify email if confirmation is enabled.", "is-info");
 }
 
 async function logoutUser() {
@@ -1114,29 +1434,30 @@ async function logoutUser() {
   }
 
   setAuthStatus("Logged out.", "is-info");
+  goTo("index.html");
 }
 
 async function saveUserRoleByAdmin() {
   if (!isCloudSyncActive() || !isAuthenticated()) {
-    setAccessStatus("Login first.", "is-error");
+    setAccessStatus("Login required.", "is-error");
     return;
   }
 
   if (!isAdmin()) {
-    setAccessStatus("Only admin can assign roles.", "is-error");
+    setAccessStatus("Only admin can manage user access.", "is-error");
     return;
   }
 
-  const email = normalizeString(elements.accessEmail.value).toLowerCase();
-  const role = normalizeString(elements.accessRole.value).toLowerCase();
-  const status = normalizeString(elements.accessStatusSelect.value).toLowerCase();
+  const email = normalizeString(elements.accessEmail?.value).toLowerCase();
+  const role = normalizeString(elements.accessRole?.value).toLowerCase();
+  const status = normalizeString(elements.accessStatusSelect?.value).toLowerCase();
 
   if (
     !email ||
     (role !== "admin" && role !== "employee") ||
     (status !== "active" && status !== "inactive")
   ) {
-    setAccessStatus("Provide a valid email, role, and status.", "is-error");
+    setAccessStatus("Provide valid email, role, and status.", "is-error");
     return;
   }
 
@@ -1145,167 +1466,94 @@ async function saveUserRoleByAdmin() {
     .upsert({ email, role, is_active: status === "active" }, { onConflict: "email" });
 
   if (error) {
-    setAccessStatus(`Could not save role: ${error.message}`, "is-error");
+    setAccessStatus(`Could not save access: ${error.message}`, "is-error");
     return;
   }
 
   setAccessStatus(`Saved ${email} as ${role} (${status}).`, "is-ok");
 }
 
-async function enableCloudSyncFromInputs() {
-  const config = parseSyncInputs();
-
-  if (!config.enabled) {
-    disableCloudSync();
-    return;
-  }
-
-  if (!config.projectUrl || !config.anonKey) {
-    setSyncStatus("Enter Supabase Project URL and Anon Key first.", "is-error");
-    return;
-  }
-
-  try {
-    const defaults = getDefaultSyncConfig();
-    state.sync = {
-      ...state.sync,
-      ...config,
-      roleTable: defaults.roleTable,
-      adminEmails: defaults.adminEmails,
-      client: createCloudClient(config.projectUrl, config.anonKey),
-      enabled: true,
-    };
-
-    ensureAuthListener();
-    const { data, error } = await state.sync.client.auth.getSession();
-    if (error) {
-      throw error;
-    }
-
-    saveSyncConfig();
-    setSyncStatus("Cloud sync enabled. Please login to access cloud records.", "is-ok");
-    await handleAuthSession(data.session);
-  } catch (error) {
-    state.sync.client = null;
-    state.sync.enabled = false;
-    saveSyncConfig();
-    setSyncStatus(`Cloud sync failed: ${error.message || "Unknown error"}`, "is-error");
-  }
-}
-
-function disableCloudSync() {
-  state.sync.enabled = false;
-  state.sync.client = null;
-  if (state.auth.subscription) {
-    state.auth.subscription.unsubscribe();
-    state.auth.subscription = null;
-  }
-  stopRealtimeSync();
-
-  state.auth.user = null;
-  state.auth.role = "guest";
-  elements.syncEnabled.checked = false;
-  saveSyncConfig();
-  state.items = loadLocalItems();
-  setSyncStatus("Cloud sync disabled. Running in local browser storage mode.", "is-warn");
-  setAuthStatus("Not signed in.", "is-info");
-  elements.currentUser.textContent = "";
-  render();
-}
-
-async function restoreSyncOnStartup() {
-  const persisted = loadSyncConfig();
-  state.sync = {
-    ...state.sync,
-    ...persisted,
-    client: null,
-  };
-  hydrateSyncInputsFromState();
-
-  if (!state.sync.enabled) {
-    state.items = loadLocalItems();
-    setSyncStatus("Sync mode: Local browser storage.", "is-warn");
-    setAuthStatus("Not signed in.", "is-info");
-    return;
-  }
-
-  try {
-    state.sync.client = createCloudClient(state.sync.projectUrl, state.sync.anonKey);
-    ensureAuthListener();
-    const { data, error } = await state.sync.client.auth.getSession();
-    if (error) {
-      throw error;
-    }
-
-    setSyncStatus("Cloud sync is active.", "is-ok");
-    await handleAuthSession(data.session);
-  } catch (error) {
-    state.sync.client = null;
-    state.sync.enabled = false;
-    saveSyncConfig();
-    state.items = loadLocalItems();
-    setSyncStatus(
-      `Cloud sync could not start (${error.message || "Unknown error"}). Using local mode.`,
-      "is-warn"
-    );
-    setAuthStatus("Not signed in.", "is-info");
-  }
-}
-
-function wireEvents() {
-  elements.form.addEventListener("submit", (event) => {
+function bindDashboardEvents() {
+  safeListen(elements.form, "submit", (event) => {
     handleFormSubmit(event);
   });
 
-  elements.cancelEditButton.addEventListener("click", resetForm);
+  safeListen(elements.cancelEditButton, "click", () => {
+    resetFormState();
+    renderPage();
+  });
 
-  elements.searchInput.addEventListener("input", (event) => {
+  safeListen(elements.searchInput, "input", (event) => {
     state.searchTerm = normalizeString(event.target.value);
-    render();
+    renderPage();
   });
 
-  elements.sortSelect.addEventListener("change", (event) => {
-    state.sortBy = event.target.value;
-    render();
+  safeListen(elements.sortSelect, "change", (event) => {
+    state.sortBy = normalizeString(event.target.value) || "recent";
+    renderPage();
   });
 
-  elements.exportButton.addEventListener("click", handleExport);
-  elements.importButton.addEventListener("click", () => elements.importInput.click());
-  elements.importInput.addEventListener("change", (event) => {
+  safeListen(elements.exportButton, "click", handleExport);
+
+  safeListen(elements.importButton, "click", () => {
+    elements.importInput?.click();
+  });
+
+  safeListen(elements.importInput, "change", (event) => {
     handleImportFile(event.target.files?.[0]);
   });
-  elements.clearAllButton.addEventListener("click", () => {
+
+  safeListen(elements.clearAllButton, "click", () => {
     handleClearAll();
-  });
-
-  elements.syncSaveButton.addEventListener("click", () => {
-    enableCloudSyncFromInputs();
-  });
-
-  elements.syncDisableButton.addEventListener("click", disableCloudSync);
-
-  elements.authLoginButton.addEventListener("click", () => {
-    loginUser();
-  });
-
-  elements.authSignupButton.addEventListener("click", () => {
-    signupUser();
-  });
-
-  elements.authLogoutButton.addEventListener("click", () => {
-    logoutUser();
-  });
-
-  elements.accessSaveButton.addEventListener("click", () => {
-    saveUserRoleByAdmin();
   });
 }
 
+function bindAuthEvents() {
+  safeListen(elements.authLoginButton, "click", () => {
+    loginUser();
+  });
+
+  safeListen(elements.authSignupButton, "click", () => {
+    signupUser();
+  });
+
+  safeListen(elements.authLogoutButton, "click", () => {
+    logoutUser();
+  });
+
+  safeListen(elements.headerLogout, "click", () => {
+    logoutUser();
+  });
+}
+
+function bindAccessEvents() {
+  safeListen(elements.accessSaveButton, "click", () => {
+    saveUserRoleByAdmin();
+  });
+
+  safeListen(elements.syncSaveButton, "click", () => {
+    enableCloudSyncFromInputs();
+  });
+
+  safeListen(elements.syncDisableButton, "click", () => {
+    disableCloudSync();
+  });
+}
+
+function bindAllEvents() {
+  bindAuthEvents();
+  bindDashboardEvents();
+  bindAccessEvents();
+}
+
 async function init() {
-  state.sortBy = elements.sortSelect.value;
-  wireEvents();
+  setupPageTransitions();
+  bindAllEvents();
+
+  state.sortBy = normalizeString(elements.sortSelect?.value) || "recent";
+
   await restoreSyncOnStartup();
-  render();
+  renderPage();
 }
 
 init();
