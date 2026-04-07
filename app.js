@@ -296,6 +296,24 @@ function saveLocalItems(items = state.items) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
+async function loadRuntimeConfig() {
+  if (!window.APP_SYNC_CONFIG_PROMISE) {
+    return;
+  }
+
+  try {
+    const runtimeConfig = await window.APP_SYNC_CONFIG_PROMISE;
+    if (runtimeConfig && typeof runtimeConfig === "object") {
+      window.APP_SYNC_CONFIG = {
+        ...(window.APP_SYNC_CONFIG || {}),
+        ...runtimeConfig,
+      };
+    }
+  } catch (error) {
+    console.error("Runtime sync config load failed", error);
+  }
+}
+
 function getDefaultSyncConfig() {
   const defaults = window.APP_SYNC_CONFIG || {};
   return {
@@ -312,27 +330,10 @@ function getDefaultSyncConfig() {
 
 function loadSyncConfig() {
   const fallback = getDefaultSyncConfig();
-  const raw = localStorage.getItem(SYNC_CONFIG_KEY);
-  if (!raw) {
-    return fallback;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    const hasEnabled = typeof parsed.enabled === "boolean";
-    return {
-      enabled: hasEnabled ? parsed.enabled : fallback.enabled,
-      projectUrl: normalizeString(parsed.projectUrl) || fallback.projectUrl,
-      anonKey: normalizeString(parsed.anonKey) || fallback.anonKey,
-      tableName: normalizeString(parsed.tableName) || fallback.tableName,
-      roleTable: normalizeString(parsed.roleTable) || fallback.roleTable,
-      adminEmails: Array.isArray(parsed.adminEmails)
-        ? parsed.adminEmails.map((entry) => normalizeString(entry).toLowerCase()).filter(Boolean)
-        : fallback.adminEmails,
-    };
-  } catch {
-    return fallback;
-  }
+  return {
+    ...fallback,
+    enabled: Boolean(fallback.enabled && fallback.projectUrl && fallback.anonKey),
+  };
 }
 
 function saveSyncConfig() {
@@ -340,8 +341,6 @@ function saveSyncConfig() {
     SYNC_CONFIG_KEY,
     JSON.stringify({
       enabled: state.sync.enabled,
-      projectUrl: state.sync.projectUrl,
-      anonKey: state.sync.anonKey,
       tableName: state.sync.tableName,
       roleTable: state.sync.roleTable,
       adminEmails: state.sync.adminEmails,
@@ -350,17 +349,33 @@ function saveSyncConfig() {
 }
 
 function hydrateSyncInputs() {
+  const envManaged = Boolean(state.sync.projectUrl && state.sync.anonKey);
+
   if (elements.syncEnabled) {
     elements.syncEnabled.checked = state.sync.enabled;
+    elements.syncEnabled.disabled = envManaged;
   }
   if (elements.syncUrl) {
     elements.syncUrl.value = state.sync.projectUrl;
+    elements.syncUrl.readOnly = true;
   }
   if (elements.syncAnonKey) {
     elements.syncAnonKey.value = state.sync.anonKey;
+    elements.syncAnonKey.readOnly = true;
   }
   if (elements.syncTable) {
     elements.syncTable.value = state.sync.tableName || "medicines";
+    elements.syncTable.readOnly = true;
+  }
+  if (elements.syncSaveButton) {
+    elements.syncSaveButton.disabled = envManaged;
+  }
+  if (elements.syncDisableButton) {
+    elements.syncDisableButton.disabled = envManaged;
+  }
+
+  if (envManaged) {
+    setSyncStatus("Supabase connection is managed by environment variables.", "is-info");
   }
 }
 
@@ -690,11 +705,12 @@ function disableCloudSync() {
 }
 
 function parseSyncInputs() {
+  const defaults = getDefaultSyncConfig();
   return {
-    enabled: elements.syncEnabled ? elements.syncEnabled.checked : false,
-    projectUrl: normalizeString(elements.syncUrl?.value),
-    anonKey: normalizeString(elements.syncAnonKey?.value),
-    tableName: normalizeString(elements.syncTable?.value) || "medicines",
+    enabled: Boolean(defaults.enabled && defaults.projectUrl && defaults.anonKey),
+    projectUrl: defaults.projectUrl,
+    anonKey: defaults.anonKey,
+    tableName: defaults.tableName || "medicines",
   };
 }
 
@@ -707,7 +723,7 @@ async function enableCloudSyncFromInputs() {
   }
 
   if (!config.projectUrl || !config.anonKey) {
-    setSyncStatus("Supabase URL and Anon Key are required.", "is-error");
+    setSyncStatus("Missing environment variables for Supabase connection.", "is-error");
     return;
   }
 
@@ -1552,6 +1568,7 @@ async function init() {
 
   state.sortBy = normalizeString(elements.sortSelect?.value) || "recent";
 
+  await loadRuntimeConfig();
   await restoreSyncOnStartup();
   renderPage();
 }
