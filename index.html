@@ -75,6 +75,31 @@
               <button id="auth-signup-button" class="btn btn-secondary" type="button">Create Account</button>
             </div>
 
+            <div class="actions-row">
+              <button id="auth-forgot-button" class="btn btn-ghost btn-xs" type="button">Forgot Password</button>
+              <button id="auth-resend-verify-button" class="btn btn-ghost btn-xs" type="button">
+                Resend Verification Email
+              </button>
+            </div>
+
+            <div id="reset-panel" class="form-grid hidden">
+              <label for="reset-password">New Password</label>
+              <input id="reset-password" type="password" placeholder="Enter new password" autocomplete="new-password" />
+
+              <label for="reset-password-confirm">Confirm New Password</label>
+              <input
+                id="reset-password-confirm"
+                type="password"
+                placeholder="Re-enter new password"
+                autocomplete="new-password"
+              />
+
+              <div class="actions-row">
+                <button id="reset-password-button" class="btn btn-primary" type="button">Update Password</button>
+                <button id="reset-cancel-button" class="btn btn-ghost" type="button">Cancel</button>
+              </div>
+            </div>
+
             <p id="auth-status" class="status-message">Not signed in.</p>
             <p id="current-user" class="user-note"></p>
           </div>

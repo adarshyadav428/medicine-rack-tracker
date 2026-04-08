@@ -20,6 +20,8 @@ const state = {
     user: null,
     role: "guest",
     pendingRedirectAfterLogin: false,
+    passwordRecoveryMode: false,
+    pendingNotice: "",
   },
 };
 
@@ -31,9 +33,16 @@ const elements = {
   authPassword: document.getElementById("auth-password"),
   authLoginButton: document.getElementById("auth-login-button"),
   authSignupButton: document.getElementById("auth-signup-button"),
+  authForgotButton: document.getElementById("auth-forgot-button"),
+  authResendVerifyButton: document.getElementById("auth-resend-verify-button"),
   authLogoutButton: document.getElementById("auth-logout-button"),
   authStatus: document.getElementById("auth-status"),
   currentUser: document.getElementById("current-user"),
+  resetPanel: document.getElementById("reset-panel"),
+  resetPassword: document.getElementById("reset-password"),
+  resetPasswordConfirm: document.getElementById("reset-password-confirm"),
+  resetPasswordButton: document.getElementById("reset-password-button"),
+  resetCancelButton: document.getElementById("reset-cancel-button"),
 
   dashboardStatus: document.getElementById("dashboard-status"),
   metricTotal: document.getElementById("metric-total"),
@@ -199,6 +208,170 @@ function getNextDestination() {
   const params = new URLSearchParams(window.location.search);
   const target = resolvePageTarget(params.get("next"));
   return target || "dashboard.html";
+}
+
+function setPasswordRecoveryMode(enabled) {
+  state.auth.passwordRecoveryMode = Boolean(enabled);
+
+  if (!enabled) {
+    if (elements.resetPassword) {
+      elements.resetPassword.value = "";
+    }
+
+    if (elements.resetPasswordConfirm) {
+      elements.resetPasswordConfirm.value = "";
+    }
+  }
+
+  if (elements.resetPanel) {
+    elements.resetPanel.classList.toggle("hidden", !state.auth.passwordRecoveryMode);
+  }
+}
+
+function clearAuthArtifactsFromUrl() {
+  const url = new URL(window.location.href);
+  const keysToRemove = [
+    "auth_action",
+    "token_hash",
+    "token",
+    "type",
+    "error",
+    "error_code",
+    "error_description",
+    "access_token",
+    "refresh_token",
+    "expires_in",
+    "expires_at",
+    "provider_token",
+    "provider_refresh_token",
+  ];
+
+  keysToRemove.forEach((key) => {
+    url.searchParams.delete(key);
+  });
+
+  const search = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${search ? `?${search}` : ""}`;
+  window.history.replaceState({}, document.title, nextUrl);
+}
+
+async function processAuthCallbackFromUrl() {
+  if (currentPage !== "home" && currentPage !== "access") {
+    return;
+  }
+
+  const query = new URLSearchParams(window.location.search);
+  const tokenHash = normalizeString(query.get("token_hash"));
+  const token = normalizeString(query.get("token"));
+  const queryType = normalizeString(query.get("type")).toLowerCase();
+  const authAction = normalizeString(query.get("auth_action")).toLowerCase();
+  const authError = normalizeString(query.get("error_description") || query.get("error"));
+
+  const hash = (window.location.hash || "").replace(/^#/, "");
+  const hashParams = new URLSearchParams(hash);
+  const accessToken = normalizeString(hashParams.get("access_token"));
+  const refreshToken = normalizeString(hashParams.get("refresh_token"));
+  const hashType = normalizeString(hashParams.get("type")).toLowerCase();
+
+  let shouldCleanUrl = false;
+
+  if (authError) {
+    state.auth.pendingNotice = `Auth link error: ${authError}`;
+    shouldCleanUrl = true;
+  }
+
+  if ((tokenHash || token) && queryType) {
+    try {
+      const payload = await requestApi("/api/auth/verify", {
+        method: "POST",
+        body: {
+          tokenHash,
+          token,
+          type: queryType,
+        },
+      });
+
+      if (payload.user) {
+        state.auth.user = payload.user;
+        state.auth.role = normalizeString(payload.user.role).toLowerCase() || "employee";
+      }
+
+      if (queryType === "recovery") {
+        setPasswordRecoveryMode(true);
+        state.auth.pendingNotice = "Reset link verified. Set your new password below.";
+      } else {
+        state.auth.pendingNotice = "Email verified successfully. You can login now.";
+      }
+
+      shouldCleanUrl = true;
+    } catch (error) {
+      state.auth.pendingNotice = `Verification failed: ${error.message || "Unknown error"}`;
+      shouldCleanUrl = true;
+    }
+  }
+
+  if (accessToken) {
+    try {
+      const payload = await requestApi("/api/auth/session", {
+        method: "POST",
+        body: {
+          accessToken,
+          refreshToken,
+        },
+      });
+
+      if (payload.user) {
+        state.auth.user = payload.user;
+        state.auth.role = normalizeString(payload.user.role).toLowerCase() || "employee";
+      }
+
+      if (hashType === "recovery") {
+        setPasswordRecoveryMode(true);
+        state.auth.pendingNotice = "Reset link verified. Set your new password below.";
+      } else if (!state.auth.pendingNotice) {
+        state.auth.pendingNotice = "Email verification completed.";
+      }
+
+      shouldCleanUrl = true;
+    } catch (error) {
+      state.auth.pendingNotice = `Session setup failed: ${error.message || "Unknown error"}`;
+      shouldCleanUrl = true;
+    }
+  }
+
+  if (authAction === "recovery") {
+    setPasswordRecoveryMode(true);
+    if (!state.auth.pendingNotice) {
+      state.auth.pendingNotice = "Use the form below to set a new password.";
+    }
+    shouldCleanUrl = true;
+  }
+
+  if (authAction === "verified") {
+    if (!state.auth.pendingNotice) {
+      state.auth.pendingNotice = "Email verified successfully. You can login now.";
+    }
+    shouldCleanUrl = true;
+  }
+
+  if (shouldCleanUrl) {
+    clearAuthArtifactsFromUrl();
+  }
+}
+
+function applyPendingAuthNotice() {
+  if (!state.auth.pendingNotice) {
+    return;
+  }
+
+  const tone = state.auth.pendingNotice.toLowerCase().includes("failed")
+    ? "is-error"
+    : state.auth.pendingNotice.toLowerCase().includes("error")
+      ? "is-error"
+      : "is-info";
+
+  setAuthStatus(state.auth.pendingNotice, tone);
+  state.auth.pendingNotice = "";
 }
 
 function goTo(targetPath) {
@@ -1048,8 +1221,19 @@ function renderAccessPage() {
   }
 }
 
+function renderAuthPage() {
+  if (currentPage !== "home" && currentPage !== "access") {
+    return;
+  }
+
+  if (elements.resetPanel) {
+    elements.resetPanel.classList.toggle("hidden", !state.auth.passwordRecoveryMode);
+  }
+}
+
 function renderPage() {
   renderHeaderSession();
+  renderAuthPage();
   renderDashboardPage();
   renderAccessPage();
 }
@@ -1355,6 +1539,94 @@ async function handleClearAll() {
   }
 }
 
+async function requestPasswordRecovery() {
+  if (!isCloudSyncActive()) {
+    setAuthStatus("Backend sync is not configured.", "is-warn");
+    return;
+  }
+
+  const email = normalizeString(elements.authEmail?.value);
+  if (!email) {
+    setAuthStatus("Enter your email first to receive a reset link.", "is-error");
+    return;
+  }
+
+  try {
+    const payload = await requestApi("/api/auth/recover", {
+      method: "POST",
+      body: { email },
+    });
+
+    setAuthStatus(payload.message || "Password reset link sent. Check your email.", "is-info");
+  } catch (error) {
+    setAuthStatus(`Reset request failed: ${error.message || "Unknown error"}`, "is-error");
+  }
+}
+
+async function resendVerificationEmail() {
+  if (!isCloudSyncActive()) {
+    setAuthStatus("Backend sync is not configured.", "is-warn");
+    return;
+  }
+
+  const email = normalizeString(elements.authEmail?.value);
+  if (!email) {
+    setAuthStatus("Enter your email first to resend verification.", "is-error");
+    return;
+  }
+
+  try {
+    const payload = await requestApi("/api/auth/resend-verification", {
+      method: "POST",
+      body: { email },
+    });
+
+    setAuthStatus(payload.message || "Verification email sent.", "is-info");
+  } catch (error) {
+    setAuthStatus(`Resend failed: ${error.message || "Unknown error"}`, "is-error");
+  }
+}
+
+async function updatePasswordFromRecovery() {
+  if (!isCloudSyncActive()) {
+    setAuthStatus("Backend sync is not configured.", "is-warn");
+    return;
+  }
+
+  const password = normalizeString(elements.resetPassword?.value);
+  const confirmPassword = normalizeString(elements.resetPasswordConfirm?.value);
+
+  if (!password || password.length < 8) {
+    setAuthStatus("New password must be at least 8 characters.", "is-error");
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    setAuthStatus("Password and confirm password do not match.", "is-error");
+    return;
+  }
+
+  try {
+    const payload = await requestApi("/api/auth/update-password", {
+      method: "POST",
+      body: {
+        password,
+        confirmPassword,
+      },
+    });
+
+    setPasswordRecoveryMode(false);
+    setAuthStatus(payload.message || "Password updated successfully.", "is-ok");
+  } catch (error) {
+    setAuthStatus(`Password update failed: ${error.message || "Unknown error"}`, "is-error");
+  }
+}
+
+function cancelPasswordRecoveryMode() {
+  setPasswordRecoveryMode(false);
+  setAuthStatus("Password reset canceled.", "is-info");
+}
+
 async function loginUser() {
   if (!isCloudSyncActive()) {
     setAuthStatus("Backend sync is not configured.", "is-warn");
@@ -1377,6 +1649,7 @@ async function loginUser() {
       body: { email, password },
     });
 
+    setPasswordRecoveryMode(false);
     await handleAuthSession({ user: payload.user }, "signed-in");
     setAuthStatus("Login successful.", "is-ok");
   } catch (error) {
@@ -1406,12 +1679,21 @@ async function signupUser() {
     });
 
     if (payload.user) {
+      setPasswordRecoveryMode(false);
       await handleAuthSession({ user: payload.user }, "signed-in");
       setAuthStatus("Account created and logged in.", "is-ok");
       return;
     }
 
-    setAuthStatus(payload.message || "Account created. Verify email if confirmation is enabled.", "is-info");
+    if (payload.requiresEmailVerification) {
+      setAuthStatus(
+        payload.message || "Account created. Check email to verify, then login.",
+        "is-info"
+      );
+      return;
+    }
+
+    setAuthStatus(payload.message || "Account created.", "is-info");
   } catch (error) {
     setAuthStatus(`Create account failed: ${error.message || "Unknown error"}`, "is-error");
   }
@@ -1430,6 +1712,7 @@ async function logoutUser() {
     return;
   }
 
+  setPasswordRecoveryMode(false);
   await handleAuthSession(null, "session");
   setAuthStatus("Logged out.", "is-info");
   goTo("index.html");
@@ -1520,6 +1803,22 @@ function bindAuthEvents() {
     signupUser();
   });
 
+  safeListen(elements.authForgotButton, "click", () => {
+    requestPasswordRecovery();
+  });
+
+  safeListen(elements.authResendVerifyButton, "click", () => {
+    resendVerificationEmail();
+  });
+
+  safeListen(elements.resetPasswordButton, "click", () => {
+    updatePasswordFromRecovery();
+  });
+
+  safeListen(elements.resetCancelButton, "click", () => {
+    cancelPasswordRecoveryMode();
+  });
+
   safeListen(elements.authLogoutButton, "click", () => {
     logoutUser();
   });
@@ -1556,7 +1855,9 @@ async function init() {
   state.sortBy = normalizeString(elements.sortSelect?.value) || "recent";
 
   await loadRuntimeConfig();
+  await processAuthCallbackFromUrl();
   await restoreSyncOnStartup();
+  applyPendingAuthNotice();
   renderPage();
 }
 

@@ -9,6 +9,19 @@ function normalizeEmail(value) {
   return normalizeString(value).toLowerCase();
 }
 
+function getRequestOrigin(req) {
+  const forwardedProto = normalizeString(req.headers?.["x-forwarded-proto"]).split(",")[0];
+  const forwardedHost = normalizeString(req.headers?.["x-forwarded-host"]).split(",")[0];
+  const host = forwardedHost || normalizeString(req.headers?.host);
+  const protocol = forwardedProto || (process.env.NODE_ENV === "development" ? "http" : "https");
+
+  if (!host) {
+    return "";
+  }
+
+  return `${protocol}://${host}`;
+}
+
 function sanitizeTableName(value) {
   const cleaned = normalizeString(value);
   if (!cleaned) {
@@ -407,7 +420,9 @@ module.exports = {
   callSupabaseAuth,
   callSupabaseRest,
   clearAuthCookies,
+  fetchUserByAccessToken,
   fromCloudRow,
+  getRequestOrigin,
   getRoleInfo,
   getServerConfig,
   getSessionUser,

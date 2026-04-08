@@ -1,6 +1,7 @@
 const {
   allowMethods,
   callSupabaseAuth,
+  getRequestOrigin,
   getRoleInfo,
   getServerConfig,
   normalizeEmail,
@@ -30,10 +31,24 @@ module.exports = async (req, res) => {
     return;
   }
 
+  const origin = getRequestOrigin(req);
+  const emailRedirectTo = origin ? `${origin}/index.html?auth_action=verified` : undefined;
+
   try {
     const payload = await callSupabaseAuth(config, "/auth/v1/signup", {
       method: "POST",
-      body: { email, password },
+      body: {
+        email,
+        password,
+        ...(emailRedirectTo
+          ? {
+              options: {
+                emailRedirectTo,
+              },
+              email_redirect_to: emailRedirectTo,
+            }
+          : {}),
+      },
     });
 
     const hasSession = Boolean(payload?.access_token && payload?.user?.email);
@@ -53,6 +68,7 @@ module.exports = async (req, res) => {
     }
 
     sendJson(res, 200, {
+      requiresEmailVerification: true,
       message: "Account created. Verify email if confirmation is enabled.",
     });
   } catch (error) {
