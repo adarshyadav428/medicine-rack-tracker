@@ -9,7 +9,7 @@ const {
   parseJsonBody,
   sendJson,
   setAuthCookies,
-} = require("../_lib/supabase-server");
+} = require("../../lib/supabase-server");
 
 const ALLOWED_TYPES = new Set(["signup", "recovery", "magiclink", "invite", "email_change"]);
 

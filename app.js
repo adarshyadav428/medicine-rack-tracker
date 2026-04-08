@@ -657,7 +657,7 @@ async function deleteCloudItem(itemId) {
 }
 
 async function replaceAllCloudItems(newItems) {
-  await requestApi("/api/medicines/replace", {
+  await requestApi("/api/medicines", {
     method: "POST",
     body: {
       items: newItems,

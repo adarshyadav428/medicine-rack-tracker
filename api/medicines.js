@@ -8,7 +8,7 @@ const {
   requireAuthContext,
   sendJson,
   toCloudRow,
-} = require("./_lib/supabase-server");
+} = require("../lib/supabase-server");
 
 module.exports = async (req, res) => {
   if (!allowMethods(req, res, ["GET", "POST", "DELETE"])) {
@@ -45,6 +45,29 @@ module.exports = async (req, res) => {
       }
 
       const body = await parseJsonBody(req);
+
+      const items = Array.isArray(body?.items) ? body.items : null;
+      if (items) {
+        await callSupabaseRest(config, `${config.tableName}?id=not.is.null`, {
+          method: "DELETE",
+        });
+
+        const rowsForReplace = items
+          .map((item) => toCloudRow(item))
+          .filter((row) => normalizeString(row.medicine_name) && normalizeString(row.location));
+
+        if (rowsForReplace.length) {
+          await callSupabaseRest(config, config.tableName, {
+            method: "POST",
+            body: rowsForReplace,
+            prefer: "return=minimal",
+          });
+        }
+
+        sendJson(res, 200, { ok: true, count: rowsForReplace.length });
+        return;
+      }
+
       const rawItem = body?.item;
       if (!rawItem || typeof rawItem !== "object") {
         sendJson(res, 400, { error: "Medicine item is required." });

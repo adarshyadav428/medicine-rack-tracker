@@ -5,7 +5,7 @@ const {
   normalizeString,
   parseJsonBody,
   sendJson,
-} = require("../_lib/supabase-server");
+} = require("../../lib/supabase-server");
 
 async function readResponseJson(response) {
   const text = await response.text();

@@ -9,7 +9,7 @@ const {
   parseJsonBody,
   sendJson,
   setAuthCookies,
-} = require("../_lib/supabase-server");
+} = require("../../lib/supabase-server");
 
 module.exports = async (req, res) => {
   if (!allowMethods(req, res, ["POST"])) {
