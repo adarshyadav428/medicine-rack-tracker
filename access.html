@@ -104,7 +104,7 @@
       <section id="sync-panel" class="panel fade-up delay-2">
         <div class="panel-headline">
           <h2>Cloud Sync Settings</h2>
-          <p>Supabase connection for shared multi-device inventory.</p>
+          <p>Supabase connection is managed by backend environment variables.</p>
         </div>
 
         <div class="form-grid">
@@ -113,18 +113,18 @@
             <span>Enable shared cloud sync</span>
           </label>
 
-          <label for="sync-url">Supabase Project URL</label>
-          <input id="sync-url" type="url" placeholder="https://your-project.supabase.co" />
+          <label for="sync-url">Backend Connection</label>
+          <input id="sync-url" type="url" placeholder="Configured securely on backend" />
 
-          <label for="sync-anon-key">Supabase Anon Key</label>
-          <input id="sync-anon-key" type="password" placeholder="Paste anon key" />
+          <label for="sync-anon-key">Credential Storage</label>
+          <input id="sync-anon-key" type="password" placeholder="Never exposed to browser" />
 
           <label for="sync-table">Table Name</label>
           <input id="sync-table" type="text" value="medicines" maxlength="64" />
 
           <div class="actions-row">
-            <button id="sync-save-button" class="btn btn-primary" type="button">Save Sync Settings</button>
-            <button id="sync-disable-button" class="btn btn-ghost" type="button">Disable Sync</button>
+            <button id="sync-save-button" class="btn btn-primary" type="button">Refresh Backend Config</button>
+            <button id="sync-disable-button" class="btn btn-ghost" type="button">Managed by Backend</button>
           </div>
 
           <p id="sync-status" class="status-message"></p>
@@ -132,7 +132,6 @@
       </section>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="sync-config.js"></script>
     <script src="app.js"></script>
   </body>

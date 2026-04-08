@@ -11,18 +11,14 @@ const state = {
   editingId: null,
   sync: {
     enabled: false,
-    projectUrl: "",
-    anonKey: "",
     tableName: "medicines",
     roleTable: "user_roles",
     adminEmails: [],
-    client: null,
     realtimeChannel: null,
   },
   auth: {
     user: null,
     role: "guest",
-    authSubscription: null,
     pendingRedirectAfterLogin: false,
   },
 };
@@ -251,7 +247,7 @@ function setupPageTransitions() {
 }
 
 function isCloudSyncActive() {
-  return Boolean(state.sync.enabled && state.sync.client);
+  return Boolean(state.sync.enabled);
 }
 
 function isAuthenticated() {
@@ -263,15 +259,15 @@ function isAdmin() {
 }
 
 function canViewRecords() {
-  return !isCloudSyncActive() || isAuthenticated();
+  return Boolean(isCloudSyncActive() && isAuthenticated());
 }
 
 function canWriteRecords() {
-  return !isCloudSyncActive() || isAdmin();
+  return Boolean(canViewRecords() && isAdmin());
 }
 
 function canManageAccess() {
-  return !isCloudSyncActive() || isAdmin();
+  return Boolean(isCloudSyncActive() && isAuthenticated() && isAdmin());
 }
 
 function loadLocalItems() {
@@ -318,8 +314,6 @@ function getDefaultSyncConfig() {
   const defaults = window.APP_SYNC_CONFIG || {};
   return {
     enabled: Boolean(defaults.enabled),
-    projectUrl: normalizeString(defaults.projectUrl),
-    anonKey: normalizeString(defaults.anonKey),
     tableName: normalizeString(defaults.tableName) || "medicines",
     roleTable: normalizeString(defaults.roleTable) || "user_roles",
     adminEmails: Array.isArray(defaults.adminEmails)
@@ -332,7 +326,7 @@ function loadSyncConfig() {
   const fallback = getDefaultSyncConfig();
   return {
     ...fallback,
-    enabled: Boolean(fallback.enabled && fallback.projectUrl && fallback.anonKey),
+    enabled: Boolean(fallback.enabled),
   };
 }
 
@@ -349,18 +343,20 @@ function saveSyncConfig() {
 }
 
 function hydrateSyncInputs() {
-  const envManaged = Boolean(state.sync.projectUrl && state.sync.anonKey);
+  const envManaged = true;
 
   if (elements.syncEnabled) {
     elements.syncEnabled.checked = state.sync.enabled;
     elements.syncEnabled.disabled = envManaged;
   }
   if (elements.syncUrl) {
-    elements.syncUrl.value = state.sync.projectUrl;
+    elements.syncUrl.value = "";
+    elements.syncUrl.placeholder = "Configured securely on backend";
     elements.syncUrl.readOnly = true;
   }
   if (elements.syncAnonKey) {
-    elements.syncAnonKey.value = state.sync.anonKey;
+    elements.syncAnonKey.value = "";
+    elements.syncAnonKey.placeholder = "Stored securely on backend";
     elements.syncAnonKey.readOnly = true;
   }
   if (elements.syncTable) {
@@ -374,21 +370,12 @@ function hydrateSyncInputs() {
     elements.syncDisableButton.disabled = envManaged;
   }
 
-  if (envManaged) {
-    setSyncStatus("Supabase connection is managed by environment variables.", "is-info");
-  }
-}
-
-function ensureSupabaseAvailable() {
-  return Boolean(window.supabase && typeof window.supabase.createClient === "function");
-}
-
-function createCloudClient(projectUrl, anonKey) {
-  if (!ensureSupabaseAvailable()) {
-    throw new Error("Supabase SDK not loaded.");
-  }
-
-  return window.supabase.createClient(projectUrl, anonKey);
+  setSyncStatus(
+    state.sync.enabled
+      ? "Supabase is connected through backend API routes."
+      : "Backend sync is not configured yet.",
+    state.sync.enabled ? "is-info" : "is-warn"
+  );
 }
 
 function toCloudRow(item) {
@@ -415,12 +402,44 @@ function fromCloudRow(row) {
   };
 }
 
+async function requestApi(path, options = {}) {
+  const method = options.method || "GET";
+  const hasBody = options.body !== undefined;
+
+  const response = await fetch(path, {
+    method,
+    credentials: "include",
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
+    body: hasBody ? JSON.stringify(options.body) : undefined,
+  });
+
+  const text = await response.text();
+  let payload = {};
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = {};
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed (${response.status}).`);
+  }
+
+  return payload;
+}
+
 function stopRealtimeSync() {
-  if (!state.sync.client || !state.sync.realtimeChannel) {
+  if (!state.sync.realtimeChannel) {
     return;
   }
 
-  state.sync.client.removeChannel(state.sync.realtimeChannel);
+  window.clearInterval(state.sync.realtimeChannel);
   state.sync.realtimeChannel = null;
 }
 
@@ -433,78 +452,44 @@ function startRealtimeSync() {
     return;
   }
 
-  const channelName = `medicines-live-${Date.now()}`;
-  state.sync.realtimeChannel = state.sync.client
-    .channel(channelName)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: state.sync.tableName },
-      async () => {
-        await refreshItemsFromCloud();
-      }
-    )
-    .subscribe();
+  state.sync.realtimeChannel = window.setInterval(() => {
+    refreshItemsFromCloud();
+  }, 15000);
 }
 
 async function fetchCloudItems() {
-  const { data, error } = await state.sync.client
-    .from(state.sync.tableName)
-    .select("*")
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    throw error;
-  }
+  const payload = await requestApi("/api/medicines", { method: "GET" });
+  const data = Array.isArray(payload.items) ? payload.items : [];
 
   return data
-    .map(fromCloudRow)
     .map(normalizeItem)
     .filter((item) => item.medicineName && item.location);
 }
 
 async function upsertCloudItem(item) {
-  const row = toCloudRow(item);
-  const { data, error } = await state.sync.client
-    .from(state.sync.tableName)
-    .upsert(row)
-    .select("*")
-    .single();
+  const payload = await requestApi("/api/medicines", {
+    method: "POST",
+    body: {
+      item,
+    },
+  });
 
-  if (error) {
-    throw error;
-  }
-
-  return normalizeItem(fromCloudRow(data));
+  return normalizeItem(payload.item || item);
 }
 
 async function deleteCloudItem(itemId) {
-  const { error } = await state.sync.client.from(state.sync.tableName).delete().eq("id", itemId);
-  if (error) {
-    throw error;
-  }
+  await requestApi(`/api/medicines?id=${encodeURIComponent(itemId)}`, {
+    method: "DELETE",
+  });
 }
 
 async function replaceAllCloudItems(newItems) {
-  const existing = await fetchCloudItems();
-  if (existing.length) {
-    const ids = existing.map((item) => item.id);
-    const { error: deleteError } = await state.sync.client
-      .from(state.sync.tableName)
-      .delete()
-      .in("id", ids);
-
-    if (deleteError) {
-      throw deleteError;
-    }
-  }
-
-  if (newItems.length) {
-    const rows = newItems.map(toCloudRow);
-    const { error: insertError } = await state.sync.client.from(state.sync.tableName).insert(rows);
-    if (insertError) {
-      throw insertError;
-    }
-  }
+  await requestApi("/api/medicines/replace", {
+    method: "POST",
+    body: {
+      items: newItems,
+    },
+  });
 }
 
 async function getRoleForCurrentUser() {
@@ -512,36 +497,24 @@ async function getRoleForCurrentUser() {
     return "guest";
   }
 
-  const email = normalizeString(state.auth.user.email).toLowerCase();
-
-  if (state.sync.adminEmails.includes(email)) {
-    return "admin";
+  const directRole = normalizeString(state.auth.user.role).toLowerCase();
+  if (directRole) {
+    return directRole;
   }
 
-  const { data, error } = await state.sync.client
-    .from(state.sync.roleTable)
-    .select("role, is_active")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
+  const payload = await requestApi("/api/auth/me", { method: "GET" });
+  if (!payload.authenticated || !payload.user) {
+    return "guest";
   }
 
-  if (data && data.is_active === false) {
-    return "inactive";
-  }
+  state.auth.user = payload.user;
 
-  if (data && normalizeString(data.role)) {
-    return normalizeString(data.role).toLowerCase();
-  }
-
-  return "employee";
+  return normalizeString(payload.user.role).toLowerCase() || "employee";
 }
 
 async function refreshItemsFromCloud() {
   if (!isCloudSyncActive() || !isAuthenticated()) {
-    state.items = isCloudSyncActive() ? [] : loadLocalItems();
+    state.items = [];
     renderPage();
     return;
   }
@@ -583,8 +556,8 @@ function enforcePageGuard() {
     return false;
   }
 
-  if (currentPage === "access" && isCloudSyncActive()) {
-    if (!isAuthenticated()) {
+  if (currentPage === "access") {
+    if (!isCloudSyncActive() || !isAuthenticated()) {
       goTo("index.html?next=access.html");
       return false;
     }
@@ -599,18 +572,28 @@ function enforcePageGuard() {
 }
 
 async function handleAuthSession(session, source = "session") {
-  state.auth.user = session?.user || null;
+  state.auth.user = session?.user
+    ? {
+        ...session.user,
+        email: normalizeString(session.user.email),
+        role: normalizeString(session.user.role).toLowerCase(),
+      }
+    : null;
+
+  if (state.auth.user && !state.auth.user.email) {
+    state.auth.user = null;
+  }
 
   if (!state.auth.user) {
     state.auth.role = "guest";
     stopRealtimeSync();
-    state.items = isCloudSyncActive() ? [] : loadLocalItems();
+    state.items = [];
     renderHeaderSession();
 
     if (isCloudSyncActive()) {
-      setAuthStatus("Login required to access cloud data.", "is-warn");
+      setAuthStatus("Login required to access medicine data.", "is-warn");
     } else {
-      setAuthStatus("Not signed in. Local mode active.", "is-info");
+      setAuthStatus("Cloud sync unavailable. Configure environment variables first.", "is-error");
     }
 
     if (!enforcePageGuard()) {
@@ -626,7 +609,11 @@ async function handleAuthSession(session, source = "session") {
 
     if (state.auth.role === "inactive") {
       setAuthStatus("Account is inactive. Contact admin.", "is-error");
-      await state.sync.client.auth.signOut();
+      try {
+        await requestApi("/api/auth/logout", { method: "POST" });
+      } catch {
+        // Ignore logout cleanup errors for inactive users.
+      }
       return;
     }
 
@@ -664,38 +651,23 @@ async function handleAuthSession(session, source = "session") {
 }
 
 function ensureAuthListener() {
-  if (!isCloudSyncActive() || state.auth.authSubscription) {
-    return;
-  }
-
-  const { data } = state.sync.client.auth.onAuthStateChange((event, session) => {
-    const source = event === "SIGNED_IN" ? "signed-in" : "session";
-    handleAuthSession(session, source);
-  });
-
-  state.auth.authSubscription = data.subscription;
+  return;
 }
 
 function disableCloudSync() {
   state.sync.enabled = false;
-  state.sync.client = null;
-
-  if (state.auth.authSubscription) {
-    state.auth.authSubscription.unsubscribe();
-    state.auth.authSubscription = null;
-  }
 
   stopRealtimeSync();
 
   state.auth.user = null;
   state.auth.role = "guest";
-  state.items = loadLocalItems();
+  state.items = [];
 
   saveSyncConfig();
   hydrateSyncInputs();
   renderHeaderSession();
-  setSyncStatus("Cloud sync disabled. Local storage mode active.", "is-warn");
-  setAuthStatus("Not signed in. Local mode active.", "is-info");
+  setSyncStatus("Cloud sync disabled. Sign in is required to view data.", "is-warn");
+  setAuthStatus("Sign in unavailable while cloud sync is disabled.", "is-warn");
 
   if (!enforcePageGuard()) {
     return;
@@ -707,69 +679,32 @@ function disableCloudSync() {
 function parseSyncInputs() {
   const defaults = getDefaultSyncConfig();
   return {
-    enabled: Boolean(defaults.enabled && defaults.projectUrl && defaults.anonKey),
-    projectUrl: defaults.projectUrl,
-    anonKey: defaults.anonKey,
+    enabled: Boolean(defaults.enabled),
     tableName: defaults.tableName || "medicines",
   };
 }
 
 async function enableCloudSyncFromInputs() {
-  const config = parseSyncInputs();
-
-  if (!config.enabled) {
-    disableCloudSync();
-    return;
-  }
-
-  if (!config.projectUrl || !config.anonKey) {
-    setSyncStatus("Missing environment variables for Supabase connection.", "is-error");
-    return;
-  }
-
-  try {
-    const defaults = getDefaultSyncConfig();
-    state.sync = {
-      ...state.sync,
-      ...config,
-      roleTable: defaults.roleTable,
-      adminEmails: defaults.adminEmails,
-      client: createCloudClient(config.projectUrl, config.anonKey),
-      enabled: true,
-    };
-
-    saveSyncConfig();
-    hydrateSyncInputs();
-    setSyncStatus("Cloud sync enabled. Login required.", "is-ok");
-
-    ensureAuthListener();
-    const { data, error } = await state.sync.client.auth.getSession();
-    if (error) {
-      throw error;
-    }
-
-    await handleAuthSession(data.session, "startup");
-  } catch (error) {
-    state.sync.enabled = false;
-    state.sync.client = null;
-    saveSyncConfig();
-    setSyncStatus(`Cloud sync failed: ${error.message || "Unknown error"}`, "is-error");
-  }
+  await loadRuntimeConfig();
+  await restoreSyncOnStartup();
 }
 
 async function restoreSyncOnStartup() {
   const persisted = loadSyncConfig();
+  const defaults = getDefaultSyncConfig();
   state.sync = {
     ...state.sync,
     ...persisted,
-    client: null,
+    ...defaults,
+    enabled: Boolean(defaults.enabled),
   };
 
   hydrateSyncInputs();
 
-  if (!state.sync.enabled || !state.sync.projectUrl || !state.sync.anonKey) {
-    state.items = loadLocalItems();
-    setSyncStatus("Local mode active.", "is-info");
+  if (!state.sync.enabled) {
+    state.items = [];
+    setSyncStatus("Cloud sync unavailable. Configure environment variables and redeploy.", "is-error");
+    setAuthStatus("Please sign in to access medicine data.", "is-warn");
     renderHeaderSession();
 
     if (!enforcePageGuard()) {
@@ -781,31 +716,28 @@ async function restoreSyncOnStartup() {
   }
 
   try {
-    state.sync.client = createCloudClient(state.sync.projectUrl, state.sync.anonKey);
     ensureAuthListener();
 
-    const { data, error } = await state.sync.client.auth.getSession();
-    if (error) {
-      throw error;
-    }
+    const session = await requestApi("/api/auth/me", { method: "GET" });
+    setSyncStatus("Cloud sync connected through backend.", "is-ok");
 
-    setSyncStatus("Cloud sync connected.", "is-ok");
-    await handleAuthSession(data.session, "startup");
-  } catch (error) {
-    state.sync.enabled = false;
-    state.sync.client = null;
-    saveSyncConfig();
-    state.items = loadLocalItems();
-    setSyncStatus(
-      `Cloud sync startup failed (${error.message || "Unknown"}). Local mode active.`,
-      "is-warn"
-    );
-
-    if (!enforcePageGuard()) {
+    if (session.authenticated && session.user) {
+      await handleAuthSession({ user: session.user }, "startup");
       return;
     }
 
-    renderPage();
+    await handleAuthSession(null, "startup");
+  } catch (error) {
+    state.sync.enabled = false;
+    saveSyncConfig();
+    state.items = [];
+    setSyncStatus(
+      `Cloud sync startup failed (${error.message || "Unknown"}). Login required once connection is fixed.`,
+      "is-error"
+    );
+    setAuthStatus("Please sign in to access medicine data.", "is-warn");
+
+    await handleAuthSession(null, "session");
   }
 }
 
@@ -1034,7 +966,32 @@ function renderDashboardPage() {
   }
 
   if (!canViewRecords()) {
-    setDashboardStatus("Please login to view medicine data.", "is-warn");
+    renderMetrics([]);
+    renderSummary(0);
+    renderMedicineList([]);
+
+    if (elements.formPanel) {
+      elements.formPanel.classList.add("hidden");
+    }
+
+    if (elements.exportButton) {
+      elements.exportButton.disabled = true;
+    }
+
+    if (elements.importButton) {
+      elements.importButton.disabled = true;
+    }
+
+    if (elements.clearAllButton) {
+      elements.clearAllButton.disabled = true;
+    }
+
+    setDashboardStatus(
+      !isCloudSyncActive()
+        ? "Cloud connection unavailable. Contact admin."
+        : "Please login to view medicine data.",
+      "is-warn"
+    );
     return;
   }
 
@@ -1042,6 +999,10 @@ function renderDashboardPage() {
   renderMetrics(state.items);
   renderSummary(itemsToRender.length);
   renderMedicineList(itemsToRender);
+
+  if (elements.exportButton) {
+    elements.exportButton.disabled = false;
+  }
 
   if (elements.formPanel) {
     elements.formPanel.classList.toggle("hidden", !canWriteRecords());
@@ -1077,7 +1038,13 @@ function renderAccessPage() {
   }
 
   if (!adminView) {
-    setAccessStatus("Only admin can manage user access.", "is-warn");
+    if (!isCloudSyncActive()) {
+      setAccessStatus("Cloud connection unavailable. Access controls are locked.", "is-warn");
+    } else if (!isAuthenticated()) {
+      setAccessStatus("Login required.", "is-warn");
+    } else {
+      setAccessStatus("Only admin can manage user access.", "is-warn");
+    }
   }
 }
 
@@ -1390,7 +1357,7 @@ async function handleClearAll() {
 
 async function loginUser() {
   if (!isCloudSyncActive()) {
-    setAuthStatus("Enable cloud sync first.", "is-warn");
+    setAuthStatus("Backend sync is not configured.", "is-warn");
     return;
   }
 
@@ -1404,19 +1371,23 @@ async function loginUser() {
 
   state.auth.pendingRedirectAfterLogin = true;
 
-  const { error } = await state.sync.client.auth.signInWithPassword({ email, password });
-  if (error) {
-    state.auth.pendingRedirectAfterLogin = false;
-    setAuthStatus(`Login failed: ${error.message}`, "is-error");
-    return;
-  }
+  try {
+    const payload = await requestApi("/api/auth/login", {
+      method: "POST",
+      body: { email, password },
+    });
 
-  setAuthStatus("Login successful.", "is-ok");
+    await handleAuthSession({ user: payload.user }, "signed-in");
+    setAuthStatus("Login successful.", "is-ok");
+  } catch (error) {
+    state.auth.pendingRedirectAfterLogin = false;
+    setAuthStatus(`Login failed: ${error.message || "Unknown error"}`, "is-error");
+  }
 }
 
 async function signupUser() {
   if (!isCloudSyncActive()) {
-    setAuthStatus("Enable cloud sync first.", "is-warn");
+    setAuthStatus("Backend sync is not configured.", "is-warn");
     return;
   }
 
@@ -1428,13 +1399,22 @@ async function signupUser() {
     return;
   }
 
-  const { error } = await state.sync.client.auth.signUp({ email, password });
-  if (error) {
-    setAuthStatus(`Create account failed: ${error.message}`, "is-error");
-    return;
-  }
+  try {
+    const payload = await requestApi("/api/auth/signup", {
+      method: "POST",
+      body: { email, password },
+    });
 
-  setAuthStatus("Account created. Verify email if confirmation is enabled.", "is-info");
+    if (payload.user) {
+      await handleAuthSession({ user: payload.user }, "signed-in");
+      setAuthStatus("Account created and logged in.", "is-ok");
+      return;
+    }
+
+    setAuthStatus(payload.message || "Account created. Verify email if confirmation is enabled.", "is-info");
+  } catch (error) {
+    setAuthStatus(`Create account failed: ${error.message || "Unknown error"}`, "is-error");
+  }
 }
 
 async function logoutUser() {
@@ -1443,12 +1423,14 @@ async function logoutUser() {
     return;
   }
 
-  const { error } = await state.sync.client.auth.signOut();
-  if (error) {
-    setAuthStatus(`Logout failed: ${error.message}`, "is-error");
+  try {
+    await requestApi("/api/auth/logout", { method: "POST" });
+  } catch (error) {
+    setAuthStatus(`Logout failed: ${error.message || "Unknown error"}`, "is-error");
     return;
   }
 
+  await handleAuthSession(null, "session");
   setAuthStatus("Logged out.", "is-info");
   goTo("index.html");
 }
@@ -1477,16 +1459,21 @@ async function saveUserRoleByAdmin() {
     return;
   }
 
-  const { error } = await state.sync.client
-    .from(state.sync.roleTable)
-    .upsert({ email, role, is_active: status === "active" }, { onConflict: "email" });
+  try {
+    const payload = await requestApi("/api/access", {
+      method: "POST",
+      body: {
+        email,
+        role,
+        status,
+      },
+    });
 
-  if (error) {
-    setAccessStatus(`Could not save access: ${error.message}`, "is-error");
+    setAccessStatus(payload.message || `Saved ${email} as ${role} (${status}).`, "is-ok");
+  } catch (error) {
+    setAccessStatus(`Could not save access: ${error.message || "Unknown error"}`, "is-error");
     return;
   }
-
-  setAccessStatus(`Saved ${email} as ${role} (${status}).`, "is-ok");
 }
 
 function bindDashboardEvents() {

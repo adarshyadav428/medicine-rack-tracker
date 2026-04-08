@@ -1,7 +1,6 @@
 window.APP_SYNC_CONFIG = {
   enabled: false,
-  projectUrl: "",
-  anonKey: "",
+  backendManaged: true,
   tableName: "medicines",
   roleTable: "user_roles",
   adminEmails: [],
