@@ -7,10 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260416-import" />
   </head>
   <body data-page="dashboard">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -50,6 +50,10 @@
         <article class="metric-card">
           <p>Total Medicines</p>
           <h3 id="metric-total">0</h3>
+        </article>
+        <article class="metric-card">
+          <p>Low Stock</p>
+          <h3 id="metric-low-stock">0</h3>
         </article>
         <article class="metric-card">
           <p>Expiring Soon</p>
@@ -120,6 +124,16 @@
             <input id="search-input" type="search" placeholder="Type medicine name or location..." autocomplete="off" />
           </div>
           <div>
+            <label for="status-filter-select">Status</label>
+            <select id="status-filter-select">
+              <option value="all">All statuses</option>
+              <option value="low-stock">Low stock</option>
+              <option value="expiring">Expiring soon</option>
+              <option value="expired">Expired</option>
+              <option value="no-expiry">No expiry date</option>
+            </select>
+          </div>
+          <div>
             <label for="sort-select">Sort</label>
             <select id="sort-select">
               <option value="recent">Recently Updated</option>
@@ -134,6 +148,7 @@
         <div class="actions-row">
           <button id="export-button" class="btn btn-secondary" type="button">Export JSON</button>
           <button id="import-button" class="btn btn-secondary" type="button">Import JSON</button>
+          <button id="clear-filters-button" class="btn btn-ghost" type="button">Clear Filters</button>
           <button id="clear-all-button" class="btn btn-danger" type="button">Clear All</button>
           <input id="import-input" type="file" accept="application/json" class="hidden" />
         </div>
@@ -152,6 +167,7 @@
           <p class="medicine-meta"></p>
         </div>
         <div class="card-actions">
+          <button type="button" class="btn btn-ghost btn-xs action-copy-location">Copy Location</button>
           <button type="button" class="btn btn-ghost btn-xs action-edit">Edit</button>
           <button type="button" class="btn btn-danger btn-xs action-delete">Delete</button>
         </div>
@@ -159,6 +175,6 @@
     </template>
 
     <script src="sync-config.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=20260416-import"></script>
   </body>
 </html>

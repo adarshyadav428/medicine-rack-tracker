@@ -1,5 +1,9 @@
 const STORAGE_KEY = "medicineRackTracker.v1";
 const SYNC_CONFIG_KEY = "medicineRackTracker.sync.v1";
+const LOW_STOCK_THRESHOLD = 10;
+const IMPORT_BATCH_SIZE = 500;
+const SUSPICIOUS_REFRESH_CAP = 1000;
+const LARGE_SHRINK_MIN_DROP = 250;
 
 const currentPage = document.body.dataset.page || "home";
 const allowedPages = new Set(["index.html", "dashboard.html", "access.html"]);
@@ -8,6 +12,7 @@ const state = {
   items: [],
   searchTerm: "",
   sortBy: "recent",
+  statusFilter: "all",
   editingId: null,
   sync: {
     enabled: false,
@@ -46,6 +51,7 @@ const elements = {
 
   dashboardStatus: document.getElementById("dashboard-status"),
   metricTotal: document.getElementById("metric-total"),
+  metricLowStock: document.getElementById("metric-low-stock"),
   metricExpiring: document.getElementById("metric-expiring"),
   metricExpired: document.getElementById("metric-expired"),
 
@@ -60,7 +66,9 @@ const elements = {
   formError: document.getElementById("form-error"),
 
   searchInput: document.getElementById("search-input"),
+  statusFilterSelect: document.getElementById("status-filter-select"),
   sortSelect: document.getElementById("sort-select"),
+  clearFiltersButton: document.getElementById("clear-filters-button"),
   exportButton: document.getElementById("export-button"),
   importButton: document.getElementById("import-button"),
   clearAllButton: document.getElementById("clear-all-button"),
@@ -578,9 +586,11 @@ function fromCloudRow(row) {
 async function requestApi(path, options = {}) {
   const method = options.method || "GET";
   const hasBody = options.body !== undefined;
+  const cache = options.cache || (method === "GET" ? "no-store" : undefined);
 
   const response = await fetch(path, {
     method,
+    cache,
     credentials: "include",
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
@@ -631,8 +641,15 @@ function startRealtimeSync() {
 }
 
 async function fetchCloudItems() {
-  const payload = await requestApi("/api/medicines", { method: "GET" });
+  const payload = await requestApi(`/api/medicines?ts=${Date.now()}`, { method: "GET" });
   const data = Array.isArray(payload.items) ? payload.items : [];
+
+  if (typeof payload.count === "number" && payload.count !== data.length) {
+    setSyncStatus(
+      `Refresh mismatch: API reported ${payload.count} rows but returned ${data.length}.`,
+      "is-warn"
+    );
+  }
 
   return data
     .map(normalizeItem)
@@ -657,12 +674,31 @@ async function deleteCloudItem(itemId) {
 }
 
 async function replaceAllCloudItems(newItems) {
-  await requestApi("/api/medicines", {
-    method: "POST",
-    body: {
-      items: newItems,
-    },
-  });
+  if (!newItems.length) {
+    await requestApi("/api/medicines", {
+      method: "POST",
+      body: {
+        items: [],
+        mode: "replace",
+      },
+    });
+    return;
+  }
+
+  for (let start = 0; start < newItems.length; start += IMPORT_BATCH_SIZE) {
+    const chunk = newItems.slice(start, start + IMPORT_BATCH_SIZE);
+    const importedCount = Math.min(start + chunk.length, newItems.length);
+
+    setDashboardStatus(`Importing ${importedCount} of ${newItems.length} medicines...`, "is-info");
+
+    await requestApi("/api/medicines", {
+      method: "POST",
+      body: {
+        items: chunk,
+        mode: start === 0 ? "replace" : "append",
+      },
+    });
+  }
 }
 
 async function getRoleForCurrentUser() {
@@ -693,7 +729,40 @@ async function refreshItemsFromCloud() {
   }
 
   try {
-    state.items = await fetchCloudItems();
+    const cloudItems = await fetchCloudItems();
+    const localCount = state.items.length;
+    const droppedBy = localCount - cloudItems.length;
+    const hugeShrink =
+      localCount > SUSPICIOUS_REFRESH_CAP &&
+      cloudItems.length > 0 &&
+      cloudItems.length < localCount &&
+      droppedBy >= LARGE_SHRINK_MIN_DROP;
+
+    if (cloudItems.length === SUSPICIOUS_REFRESH_CAP && localCount > cloudItems.length) {
+      setDashboardStatus(
+        `Cloud refresh returned only ${cloudItems.length} of ${localCount} cached medicines. Keeping the full imported list.`,
+        "is-warn"
+      );
+      setSyncStatus(
+        `Cloud refresh looks capped at ${cloudItems.length} rows. Redeploy the API changes if this persists.`,
+        "is-warn"
+      );
+      return;
+    }
+
+    if (hugeShrink) {
+      setDashboardStatus(
+        `Cloud refresh dropped from ${localCount} to ${cloudItems.length}. Keeping the larger cached list to prevent data loss.`,
+        "is-warn"
+      );
+      setSyncStatus(
+        "Large refresh shrink detected. This usually means API paging/caching still needs attention.",
+        "is-warn"
+      );
+      return;
+    }
+
+    state.items = cloudItems;
     saveLocalItems(state.items);
     renderPage();
   } catch (error) {
@@ -888,6 +957,8 @@ async function restoreSyncOnStartup() {
     return;
   }
 
+  state.items = loadLocalItems();
+
   try {
     ensureAuthListener();
 
@@ -949,16 +1020,23 @@ function getExpiryStatus(expiryDate) {
 
 function getFilteredAndSortedItems() {
   const search = normalizeString(state.searchTerm).toLowerCase();
+  const statusFilter = normalizeString(state.statusFilter) || "all";
 
   const filtered = state.items.filter((item) => {
     if (!search) {
-      return true;
+      return matchesStatusFilter(item, statusFilter);
     }
 
-    return (
+    const searchMatch = (
       item.medicineName.toLowerCase().includes(search) ||
       item.location.toLowerCase().includes(search)
     );
+
+    if (!searchMatch) {
+      return false;
+    }
+
+    return matchesStatusFilter(item, statusFilter);
   });
 
   const sorted = [...filtered];
@@ -984,6 +1062,28 @@ function getFilteredAndSortedItems() {
   return sorted;
 }
 
+function isLowStock(item) {
+  return typeof item.quantity === "number" && item.quantity <= LOW_STOCK_THRESHOLD;
+}
+
+function matchesStatusFilter(item, filter) {
+  const expiryKind = getExpiryStatus(item.expiryDate).kind;
+
+  switch (filter) {
+    case "low-stock":
+      return isLowStock(item);
+    case "expiring":
+      return expiryKind === "expiring";
+    case "expired":
+      return expiryKind === "expired";
+    case "no-expiry":
+      return expiryKind === "none";
+    case "all":
+    default:
+      return true;
+  }
+}
+
 function renderSummary(visibleCount) {
   if (!elements.summary) {
     return;
@@ -995,12 +1095,14 @@ function renderSummary(visibleCount) {
     return;
   }
 
-  if (visibleCount === totalCount) {
+  if (visibleCount === totalCount && state.statusFilter === "all") {
     elements.summary.textContent = `${totalCount} medicine${totalCount > 1 ? "s" : ""} stored.`;
     return;
   }
 
-  elements.summary.textContent = `Showing ${visibleCount} of ${totalCount} medicine${totalCount > 1 ? "s" : ""}.`;
+  const filterName = normalizeString(state.statusFilter) || "all";
+  const suffix = filterName === "all" ? "" : ` (${filterName.replace("-", " ")})`;
+  elements.summary.textContent = `Showing ${visibleCount} of ${totalCount} medicine${totalCount > 1 ? "s" : ""}${suffix}.`;
 }
 
 function renderMetrics(items) {
@@ -1008,6 +1110,7 @@ function renderMetrics(items) {
     elements.metricTotal.textContent = String(items.length);
   }
 
+  const lowStock = items.filter((item) => isLowStock(item)).length;
   const expiring = items.filter((item) => getExpiryStatus(item.expiryDate).kind === "expiring").length;
   const expired = items.filter((item) => getExpiryStatus(item.expiryDate).kind === "expired").length;
 
@@ -1017,6 +1120,10 @@ function renderMetrics(items) {
 
   if (elements.metricExpired) {
     elements.metricExpired.textContent = String(expired);
+  }
+
+  if (elements.metricLowStock) {
+    elements.metricLowStock.textContent = String(lowStock);
   }
 }
 
@@ -1048,19 +1155,24 @@ function renderMedicineList(itemsToRender) {
     const card = row.querySelector(".medicine-card");
     const expiry = getExpiryStatus(item.expiryDate);
     const quantityText = item.quantity === null ? "Qty: not set" : `Qty: ${item.quantity}`;
+    const lowStockLabel = isLowStock(item) ? " | Low stock" : "";
 
     row.querySelector(".medicine-name").textContent = item.medicineName;
     row.querySelector(".medicine-location").textContent = item.location;
-    row.querySelector(".medicine-extra").textContent = `${quantityText} | ${expiry.label}`;
+    row.querySelector(".medicine-extra").textContent = `${quantityText} | ${expiry.label}${lowStockLabel}`;
     row.querySelector(".medicine-meta").textContent = `Updated: ${formatTimestamp(item.updatedAt)}`;
 
-    card.classList.remove("is-expiring", "is-expired", "is-safe");
+    card.classList.remove("is-expiring", "is-expired", "is-safe", "is-low-stock");
     if (expiry.kind === "expired") {
       card.classList.add("is-expired");
     } else if (expiry.kind === "expiring") {
       card.classList.add("is-expiring");
     } else if (expiry.kind === "safe") {
       card.classList.add("is-safe");
+    }
+
+    if (isLowStock(item)) {
+      card.classList.add("is-low-stock");
     }
 
     const editButton = row.querySelector(".action-edit");
@@ -1080,6 +1192,16 @@ function renderMedicineList(itemsToRender) {
         handleDeleteItem(item.id);
       });
     }
+
+    const copyLocationButton = row.querySelector(".action-copy-location");
+    copyLocationButton?.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(item.location);
+        setDashboardStatus(`Copied location for ${item.medicineName}.`, "is-ok");
+      } catch {
+        setDashboardStatus(`Could not copy location for ${item.medicineName}.`, "is-warn");
+      }
+    });
 
     fragment.appendChild(row);
   });
@@ -1150,7 +1272,6 @@ function renderDashboardPage() {
     if (elements.exportButton) {
       elements.exportButton.disabled = true;
     }
-
     if (elements.importButton) {
       elements.importButton.disabled = true;
     }
@@ -1488,6 +1609,10 @@ function handleImportFile(file) {
     return;
   }
 
+  if (elements.importButton) {
+    elements.importButton.disabled = true;
+  }
+
   const reader = new FileReader();
 
   reader.onload = async () => {
@@ -1503,11 +1628,17 @@ function handleImportFile(file) {
         throw new Error("No valid medicine rows found in file.");
       }
 
+      setDashboardStatus(`Preparing to import ${normalized.length} medicines...`, "is-info");
       await replaceAllItems(normalized);
+      setDashboardStatus(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`, "is-ok");
       window.alert(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`);
     } catch (error) {
       window.alert(error.message || "Import failed.");
     } finally {
+      if (elements.importButton) {
+        elements.importButton.disabled = !canWriteRecords();
+      }
+
       if (elements.importInput) {
         elements.importInput.value = "";
       }
@@ -1774,8 +1905,29 @@ function bindDashboardEvents() {
     renderPage();
   });
 
+  safeListen(elements.statusFilterSelect, "change", (event) => {
+    state.statusFilter = normalizeString(event.target.value) || "all";
+    renderPage();
+  });
+
   safeListen(elements.sortSelect, "change", (event) => {
     state.sortBy = normalizeString(event.target.value) || "recent";
+    renderPage();
+  });
+
+  safeListen(elements.clearFiltersButton, "click", () => {
+    state.searchTerm = "";
+    state.statusFilter = "all";
+    state.sortBy = "recent";
+    if (elements.searchInput) {
+      elements.searchInput.value = "";
+    }
+    if (elements.statusFilterSelect) {
+      elements.statusFilterSelect.value = "all";
+    }
+    if (elements.sortSelect) {
+      elements.sortSelect.value = "recent";
+    }
     renderPage();
   });
 
@@ -1846,6 +1998,22 @@ function bindAllEvents() {
   bindAuthEvents();
   bindDashboardEvents();
   bindAccessEvents();
+
+  safeListen(document, "keydown", (event) => {
+    if (currentPage !== "dashboard") {
+      return;
+    }
+
+    if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const tagName = String(event.target?.tagName || "").toLowerCase();
+      if (tagName === "input" || tagName === "textarea" || event.target?.isContentEditable) {
+        return;
+      }
+
+      event.preventDefault();
+      elements.searchInput?.focus();
+    }
+  });
 }
 
 async function init() {
@@ -1853,6 +2021,7 @@ async function init() {
   bindAllEvents();
 
   state.sortBy = normalizeString(elements.sortSelect?.value) || "recent";
+  state.statusFilter = normalizeString(elements.statusFilterSelect?.value) || "all";
 
   await loadRuntimeConfig();
   await processAuthCallbackFromUrl();
