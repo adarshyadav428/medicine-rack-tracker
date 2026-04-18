@@ -566,11 +566,39 @@ button:focus-visible {
   font-size: 0.89rem;
 }
 
+.medicine-price {
+  margin: 0.08rem 0 0.18rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7a4f00;
+  background: linear-gradient(90deg, #fff8ee, #fffdf9);
+  border: 1px solid #f0d8a8;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  display: inline-block;
+}
+
 .medicine-meta {
   margin: 0;
   color: #60757c;
   font-family: var(--font-mono);
   font-size: 0.77rem;
+}
+
+.admin-price-section {
+  margin-top: 0.6rem;
+  padding: 0.85rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed #e0c97a;
+  background: linear-gradient(145deg, #fffdf0, #fffff8);
+}
+
+.admin-section-label {
+  margin: 0 0 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7a5a00;
+  letter-spacing: 0.02em;
 }
 
 .card-actions {

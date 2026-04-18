@@ -103,6 +103,34 @@
             </div>
           </div>
 
+          <div class="admin-price-section">
+            <p class="admin-section-label">💰 Pricing (Admin only — hidden from employees)</p>
+            <div class="two-col-fields">
+              <div>
+                <label for="medicine-sell-price">Sell Price (₹)</label>
+                <input id="medicine-sell-price" name="sellPrice" type="number" min="0" step="0.01" placeholder="e.g. 45.00" />
+              </div>
+              <div>
+                <label for="medicine-mrp">MRP (₹)</label>
+                <input id="medicine-mrp" name="mrp" type="number" min="0" step="0.01" placeholder="e.g. 50.00" />
+              </div>
+            </div>
+            <div class="two-col-fields">
+              <div>
+                <label for="medicine-rate">Purchase Rate (₹)</label>
+                <input id="medicine-rate" name="rate" type="number" min="0" step="0.01" placeholder="e.g. 38.00" />
+              </div>
+              <div>
+                <label for="medicine-discount">Discount (%)</label>
+                <input id="medicine-discount" name="discount" type="number" min="0" max="100" step="0.01" placeholder="e.g. 10" />
+              </div>
+            </div>
+            <div>
+              <label for="medicine-seller">Seller / Distributor</label>
+              <input id="medicine-seller" name="seller" type="text" placeholder="e.g. Sun Pharma" maxlength="120" />
+            </div>
+          </div>
+
           <div class="actions-row">
             <button id="save-button" class="btn btn-primary" type="submit">Save Medicine</button>
             <button id="cancel-edit-button" class="btn btn-ghost hidden" type="button">Cancel Edit</button>
@@ -147,10 +175,10 @@
 
         <div class="actions-row">
           <button id="export-button" class="btn btn-secondary" type="button">Export JSON</button>
-          <button id="import-button" class="btn btn-secondary" type="button">Import JSON</button>
+          <button id="import-button" class="btn btn-secondary" type="button">Import CSV / JSON</button>
           <button id="clear-filters-button" class="btn btn-ghost" type="button">Clear Filters</button>
           <button id="clear-all-button" class="btn btn-danger" type="button">Clear All</button>
-          <input id="import-input" type="file" accept="application/json" class="hidden" />
+          <input id="import-input" type="file" accept=".csv,.json,application/json,text/csv" class="hidden" />
         </div>
 
         <p id="summary" class="summary-text"></p>
@@ -164,6 +192,7 @@
           <h3 class="medicine-name"></h3>
           <p class="medicine-location"></p>
           <p class="medicine-extra"></p>
+          <p class="medicine-price hidden"></p>
           <p class="medicine-meta"></p>
         </div>
         <div class="card-actions">
@@ -175,6 +204,6 @@
     </template>
 
     <script src="sync-config.js"></script>
-    <script src="app.js?v=20260417-ui-refresh"></script>
+    <script src="app.js?v=20260418-csv-import"></script>
   </body>
 </html>

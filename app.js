@@ -61,6 +61,11 @@ const elements = {
   location: document.getElementById("medicine-location"),
   quantity: document.getElementById("medicine-quantity"),
   expiryDate: document.getElementById("medicine-expiry"),
+  sellPrice: document.getElementById("medicine-sell-price"),
+  mrp: document.getElementById("medicine-mrp"),
+  rate: document.getElementById("medicine-rate"),
+  discount: document.getElementById("medicine-discount"),
+  seller: document.getElementById("medicine-seller"),
   saveButton: document.getElementById("save-button"),
   cancelEditButton: document.getElementById("cancel-edit-button"),
   formError: document.getElementById("form-error"),
@@ -144,6 +149,13 @@ function createId() {
   });
 }
 
+function normalizeDecimal(value) {
+  const cleaned = normalizeString(value);
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isNaN(n) || n < 0 ? null : n;
+}
+
 function normalizeItem(item) {
   return {
     id: normalizeString(item.id) || createId(),
@@ -151,6 +163,11 @@ function normalizeItem(item) {
     location: normalizeString(item.location),
     quantity: normalizePositiveInteger(item.quantity),
     expiryDate: normalizeDateOnly(item.expiryDate),
+    sellPrice: normalizeDecimal(item.sellPrice),
+    mrp: normalizeDecimal(item.mrp),
+    rate: normalizeDecimal(item.rate),
+    discount: normalizeDecimal(item.discount),
+    seller: normalizeString(item.seller),
     createdAt: normalizeString(item.createdAt) || new Date().toISOString(),
     updatedAt: normalizeString(item.updatedAt) || new Date().toISOString(),
   };
@@ -1158,8 +1175,27 @@ function renderMedicineList(itemsToRender) {
     const lowStockLabel = isLowStock(item) ? " | Low stock" : "";
 
     row.querySelector(".medicine-name").textContent = item.medicineName;
-    row.querySelector(".medicine-location").textContent = item.location;
+    row.querySelector(".medicine-location").textContent = `📍 ${item.location}`;
     row.querySelector(".medicine-extra").textContent = `${quantityText} | ${expiry.label}${lowStockLabel}`;
+
+    // Price row — only visible to admin
+    const priceEl = row.querySelector(".medicine-price");
+    if (priceEl) {
+      if (canWriteRecords()) {
+        const parts = [];
+        if (item.sellPrice !== null && item.sellPrice !== undefined) parts.push(`Sell: ₹${item.sellPrice}`);
+        if (item.mrp !== null && item.mrp !== undefined) parts.push(`MRP: ₹${item.mrp}`);
+        if (item.rate !== null && item.rate !== undefined) parts.push(`Rate: ₹${item.rate}`);
+        if (item.discount !== null && item.discount !== undefined) parts.push(`Disc: ${item.discount}%`);
+        if (item.seller) parts.push(`Seller: ${item.seller}`);
+        priceEl.textContent = parts.length ? parts.join(" | ") : "";
+        priceEl.classList.remove("hidden");
+      } else {
+        priceEl.textContent = "";
+        priceEl.classList.add("hidden");
+      }
+    }
+
     row.querySelector(".medicine-meta").textContent = `Updated: ${formatTimestamp(item.updatedAt)}`;
 
     card.classList.remove("is-expiring", "is-expired", "is-safe", "is-low-stock");
@@ -1224,6 +1260,11 @@ function beginEdit(itemId) {
   if (elements.location) elements.location.value = item.location;
   if (elements.quantity) elements.quantity.value = item.quantity ?? "";
   if (elements.expiryDate) elements.expiryDate.value = item.expiryDate || "";
+  if (elements.sellPrice) elements.sellPrice.value = item.sellPrice ?? "";
+  if (elements.mrp) elements.mrp.value = item.mrp ?? "";
+  if (elements.rate) elements.rate.value = item.rate ?? "";
+  if (elements.discount) elements.discount.value = item.discount ?? "";
+  if (elements.seller) elements.seller.value = item.seller || "";
 
   if (elements.cancelEditButton) {
     elements.cancelEditButton.classList.remove("hidden");
@@ -1406,6 +1447,11 @@ async function handleFormSubmit(event) {
   const rawQuantity = normalizeString(elements.quantity?.value);
   const parsedQuantity = normalizePositiveInteger(rawQuantity);
   const expiryDate = normalizeDateOnly(elements.expiryDate?.value);
+  const sellPrice = normalizeDecimal(elements.sellPrice?.value);
+  const mrp = normalizeDecimal(elements.mrp?.value);
+  const rate = normalizeDecimal(elements.rate?.value);
+  const discount = normalizeDecimal(elements.discount?.value);
+  const seller = normalizeString(elements.seller?.value);
 
   if (!medicineName || !location) {
     setStatus(elements.formError, "Medicine name and rack/place are required.", "is-error");
@@ -1433,6 +1479,11 @@ async function handleFormSubmit(event) {
         location,
         quantity: parsedQuantity,
         expiryDate,
+        sellPrice,
+        mrp,
+        rate,
+        discount,
+        seller,
         updatedAt: now,
       });
 
@@ -1445,6 +1496,11 @@ async function handleFormSubmit(event) {
         location,
         quantity: parsedQuantity,
         expiryDate,
+        sellPrice,
+        mrp,
+        rate,
+        discount,
+        seller,
         createdAt: now,
         updatedAt: now,
       });
@@ -1563,10 +1619,16 @@ function extractImportRows(parsed) {
 }
 
 function convertImportRowsToItems(rows) {
+  // Supports your Google Sheet columns: Medicine, SELL, MRP, RATE, Discount, Seller, Place
   const medicineKeys = ["medicineName", "medicine", "name", "medicine_name", "drug", "tablet", "item"];
   const locationKeys = ["location", "rack", "place", "rackPlace", "rack_place", "storage", "position", "shelf"];
   const quantityKeys = ["quantity", "qty", "count", "stock", "units", "balance"];
   const expiryKeys = ["expiryDate", "expiry", "expire", "expdate", "expiry_date", "expireson", "bestbefore"];
+  const sellPriceKeys = ["sellPrice", "sell", "sellingprice", "sale", "saleprice", "sp"];
+  const mrpKeys = ["mrp", "maximumretailprice", "maxprice"];
+  const rateKeys = ["rate", "purchaseprice", "pp", "cost", "costprice"];
+  const discountKeys = ["discount", "disc", "discountpercent", "off"];
+  const sellerKeys = ["seller", "distributor", "supplier", "company", "vendor"];
 
   let rowsAsObjects = rows;
   if (rows.length && Array.isArray(rows[0])) {
@@ -1587,8 +1649,13 @@ function convertImportRowsToItems(rows) {
       const location = pickValueByKnownKeys(row, locationKeys);
       const quantity = pickValueByKnownKeys(row, quantityKeys);
       const expiryDate = pickValueByKnownKeys(row, expiryKeys);
+      const sellPrice = pickValueByKnownKeys(row, sellPriceKeys);
+      const mrp = pickValueByKnownKeys(row, mrpKeys);
+      const rate = pickValueByKnownKeys(row, rateKeys);
+      const discount = pickValueByKnownKeys(row, discountKeys);
+      const seller = pickValueByKnownKeys(row, sellerKeys);
 
-      if (!medicineName || !location) {
+      if (!medicineName) {
         return null;
       }
 
@@ -1597,11 +1664,69 @@ function convertImportRowsToItems(rows) {
         location,
         quantity,
         expiryDate,
+        sellPrice,
+        mrp,
+        rate,
+        discount,
+        seller,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       });
     })
     .filter(Boolean);
+}
+
+/**
+ * Parses a CSV string (including Google Sheets exports) into an array of objects.
+ * Handles quoted fields, commas inside quotes, and Windows/Unix line endings.
+ */
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+
+  // Filter out completely empty lines
+  const nonEmpty = lines.filter((line) => line.trim() !== "");
+  if (nonEmpty.length < 2) {
+    return [];
+  }
+
+  function splitCSVLine(line) {
+    const fields = [];
+    let current = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          // Escaped quote inside a quoted field
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === "," && !inQuotes) {
+        fields.push(current.trim());
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+    fields.push(current.trim());
+    return fields;
+  }
+
+  const headers = splitCSVLine(nonEmpty[0]).map((h) => normalizeString(h));
+
+  return nonEmpty.slice(1).map((line) => {
+    const values = splitCSVLine(line);
+    const obj = {};
+    headers.forEach((header, idx) => {
+      if (header) {
+        obj[header] = normalizeString(values[idx] || "");
+      }
+    });
+    return obj;
+  });
 }
 
 function handleImportFile(file) {
@@ -1613,27 +1738,47 @@ function handleImportFile(file) {
     elements.importButton.disabled = true;
   }
 
+  const isCSV =
+    file.name.toLowerCase().endsWith(".csv") ||
+    file.type === "text/csv" ||
+    file.type === "application/vnd.ms-excel";
+
   const reader = new FileReader();
 
   reader.onload = async () => {
     try {
-      const parsed = JSON.parse(String(reader.result || ""));
-      const rows = extractImportRows(parsed);
-      if (!rows.length) {
-        throw new Error("Invalid JSON format for import.");
+      const rawText = String(reader.result || "");
+      let rows;
+
+      if (isCSV) {
+        rows = parseCSV(rawText);
+        if (!rows.length) {
+          throw new Error("CSV file is empty or has no data rows.");
+        }
+      } else {
+        const parsed = JSON.parse(rawText);
+        rows = extractImportRows(parsed);
+        if (!rows.length) {
+          throw new Error("Invalid JSON format for import.");
+        }
       }
 
       const normalized = convertImportRowsToItems(rows);
       if (!normalized.length) {
-        throw new Error("No valid medicine rows found in file.");
+        throw new Error(
+          "No valid medicine rows found. Make sure your file has a 'Medicine' column and data rows."
+        );
       }
 
       setDashboardStatus(`Preparing to import ${normalized.length} medicines...`, "is-info");
       await replaceAllItems(normalized);
-      setDashboardStatus(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`, "is-ok");
-      window.alert(`Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`);
+      setDashboardStatus(
+        `Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`,
+        "is-ok"
+      );
+      window.alert(`✅ Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"} from ${isCSV ? "CSV" : "JSON"}.`);
     } catch (error) {
-      window.alert(error.message || "Import failed.");
+      window.alert(`Import failed: ${error.message || "Unknown error"}`);
     } finally {
       if (elements.importButton) {
         elements.importButton.disabled = !canWriteRecords();
