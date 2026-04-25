@@ -68,7 +68,7 @@
       <section id="medicine-form-panel" class="panel fade-up delay-2">
         <div class="panel-headline">
           <h2>Add or Edit Medicine</h2>
-          <p>Admin can update medicine records and location details.</p>
+          <p>Admin can update medicine records, location, and pricing details.</p>
         </div>
 
         <form id="medicine-form" class="form-grid" novalidate>
@@ -107,7 +107,7 @@
             <p class="admin-section-label">💰 Pricing (Admin only — hidden from employees)</p>
             <div class="two-col-fields">
               <div>
-                <label for="medicine-sell-price">Sell Price (₹)</label>
+                <label for="medicine-sell-price">Selling Price (₹)</label>
                 <input id="medicine-sell-price" name="sellPrice" type="number" min="0" step="0.01" placeholder="e.g. 45.00" />
               </div>
               <div>
@@ -117,7 +117,7 @@
             </div>
             <div class="two-col-fields">
               <div>
-                <label for="medicine-rate">Purchase Rate (₹)</label>
+                <label for="medicine-rate">Purchase Price (₹)</label>
                 <input id="medicine-rate" name="rate" type="number" min="0" step="0.01" placeholder="e.g. 38.00" />
               </div>
               <div>
@@ -175,10 +175,15 @@
 
         <div class="actions-row">
           <button id="export-button" class="btn btn-secondary" type="button">Export JSON</button>
-          <button id="import-button" class="btn btn-secondary" type="button">Import CSV / JSON</button>
+          <button id="import-button" class="btn btn-secondary" type="button">Import Excel / CSV / JSON</button>
           <button id="clear-filters-button" class="btn btn-ghost" type="button">Clear Filters</button>
           <button id="clear-all-button" class="btn btn-danger" type="button">Clear All</button>
-          <input id="import-input" type="file" accept=".csv,.json,application/json,text/csv" class="hidden" />
+          <input
+            id="import-input"
+            type="file"
+            accept=".xlsx,.xls,.csv,.json,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            class="hidden"
+          />
         </div>
 
         <p id="summary" class="summary-text"></p>
@@ -204,6 +209,7 @@
     </template>
 
     <script src="sync-config.js"></script>
-    <script src="app.js?v=20260418-csv-import"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="app.js?v=20260425-pricing-security"></script>
   </body>
 </html>

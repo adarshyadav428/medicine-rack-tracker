@@ -13,6 +13,18 @@ const {
 const READ_PAGE_SIZE = 1000;
 const WRITE_BATCH_SIZE = 500;
 
+function sanitizeItemForRole(item, role) {
+  if (role === "admin") {
+    return item;
+  }
+
+  return {
+    ...item,
+    purchasePrice: null,
+    rate: null,
+  };
+}
+
 async function fetchAllMedicineRows(config) {
   const allRows = [];
   let offset = 0;
@@ -58,7 +70,8 @@ module.exports = async (req, res) => {
 
   try {
     if (req.method === "GET") {
-      if (!(await requireAuthContext(req, res, config))) {
+      const authContext = await requireAuthContext(req, res, config);
+      if (!authContext) {
         return;
       }
 
@@ -69,6 +82,7 @@ module.exports = async (req, res) => {
       const items = Array.isArray(rows)
         ? rows
             .map(fromCloudRow)
+            .map((item) => sanitizeItemForRole(item, authContext.user.role))
             .filter((item) => normalizeString(item.medicineName) && normalizeString(item.location))
         : [];
 

@@ -157,20 +157,41 @@ function normalizeDecimal(value) {
 }
 
 function normalizeItem(item) {
+  const sellingPrice = normalizeDecimal(item.sellingPrice ?? item.sellPrice);
+  const purchasePrice = normalizeDecimal(item.purchasePrice ?? item.rate);
+
   return {
     id: normalizeString(item.id) || createId(),
     medicineName: normalizeString(item.medicineName),
     location: normalizeString(item.location),
     quantity: normalizePositiveInteger(item.quantity),
     expiryDate: normalizeDateOnly(item.expiryDate),
-    sellPrice: normalizeDecimal(item.sellPrice),
+    sellPrice: sellingPrice,
+    sellingPrice,
     mrp: normalizeDecimal(item.mrp),
-    rate: normalizeDecimal(item.rate),
+    rate: purchasePrice,
+    purchasePrice,
     discount: normalizeDecimal(item.discount),
     seller: normalizeString(item.seller),
     createdAt: normalizeString(item.createdAt) || new Date().toISOString(),
     updatedAt: normalizeString(item.updatedAt) || new Date().toISOString(),
   };
+}
+
+function stripPurchasePrice(item) {
+  return {
+    ...item,
+    purchasePrice: null,
+    rate: null,
+  };
+}
+
+function sanitizeItemsForCurrentRole(items) {
+  if (isAdmin()) {
+    return items;
+  }
+
+  return items.map(stripPurchasePrice);
 }
 
 function formatTimestamp(ts) {
@@ -583,18 +604,33 @@ function toCloudRow(item) {
     location: item.location,
     quantity: item.quantity,
     expiry_date: item.expiryDate || null,
+    sell_price: item.sellingPrice ?? item.sellPrice ?? null,
+    rate: item.purchasePrice ?? item.rate ?? null,
+    mrp: item.mrp ?? null,
+    discount: item.discount ?? null,
+    seller: item.seller || "",
     created_at: item.createdAt,
     updated_at: item.updatedAt,
   };
 }
 
 function fromCloudRow(row) {
+  const sellingPrice = row.selling_price ?? row.sell_price ?? null;
+  const purchasePrice = row.purchase_price ?? row.rate ?? null;
+
   return {
     id: row.id,
     medicineName: row.medicine_name,
     location: row.location,
     quantity: row.quantity,
     expiryDate: row.expiry_date,
+    sellPrice: sellingPrice,
+    sellingPrice,
+    rate: purchasePrice,
+    purchasePrice,
+    mrp: row.mrp ?? null,
+    discount: row.discount ?? null,
+    seller: normalizeString(row.seller),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -668,9 +704,11 @@ async function fetchCloudItems() {
     );
   }
 
-  return data
+  const normalizedItems = data
     .map(normalizeItem)
     .filter((item) => item.medicineName && item.location);
+
+  return sanitizeItemsForCurrentRole(normalizedItems);
 }
 
 async function upsertCloudItem(item) {
@@ -779,7 +817,7 @@ async function refreshItemsFromCloud() {
       return;
     }
 
-    state.items = cloudItems;
+    state.items = sanitizeItemsForCurrentRole(cloudItems);
     saveLocalItems(state.items);
     renderPage();
   } catch (error) {
@@ -865,6 +903,11 @@ async function handleAuthSession(session, source = "session") {
 
   try {
     state.auth.role = await getRoleForCurrentUser();
+
+    if (!isAdmin() && state.items.length) {
+      state.items = sanitizeItemsForCurrentRole(state.items);
+      saveLocalItems(state.items);
+    }
 
     if (state.auth.role === "inactive") {
       setAuthStatus("Account is inactive. Contact admin.", "is-error");
@@ -1181,19 +1224,20 @@ function renderMedicineList(itemsToRender) {
     // Price row — only visible to admin
     const priceEl = row.querySelector(".medicine-price");
     if (priceEl) {
-      if (canWriteRecords()) {
-        const parts = [];
-        if (item.sellPrice !== null && item.sellPrice !== undefined) parts.push(`Sell: ₹${item.sellPrice}`);
-        if (item.mrp !== null && item.mrp !== undefined) parts.push(`MRP: ₹${item.mrp}`);
-        if (item.rate !== null && item.rate !== undefined) parts.push(`Rate: ₹${item.rate}`);
-        if (item.discount !== null && item.discount !== undefined) parts.push(`Disc: ${item.discount}%`);
-        if (item.seller) parts.push(`Seller: ${item.seller}`);
-        priceEl.textContent = parts.length ? parts.join(" | ") : "";
-        priceEl.classList.remove("hidden");
-      } else {
-        priceEl.textContent = "";
-        priceEl.classList.add("hidden");
+      const parts = [];
+      const sellingPrice = item.sellingPrice ?? item.sellPrice;
+      const purchasePrice = item.purchasePrice ?? item.rate;
+
+      if (sellingPrice !== null && sellingPrice !== undefined) parts.push(`Selling: ₹${sellingPrice}`);
+      if (item.mrp !== null && item.mrp !== undefined) parts.push(`MRP: ₹${item.mrp}`);
+      if (canWriteRecords() && purchasePrice !== null && purchasePrice !== undefined) {
+        parts.push(`Purchase: ₹${purchasePrice}`);
       }
+      if (item.discount !== null && item.discount !== undefined) parts.push(`Disc: ${item.discount}%`);
+      if (item.seller) parts.push(`Seller: ${item.seller}`);
+
+      priceEl.textContent = parts.length ? parts.join(" | ") : "";
+      priceEl.classList.toggle("hidden", !parts.length);
     }
 
     row.querySelector(".medicine-meta").textContent = `Updated: ${formatTimestamp(item.updatedAt)}`;
@@ -1260,9 +1304,9 @@ function beginEdit(itemId) {
   if (elements.location) elements.location.value = item.location;
   if (elements.quantity) elements.quantity.value = item.quantity ?? "";
   if (elements.expiryDate) elements.expiryDate.value = item.expiryDate || "";
-  if (elements.sellPrice) elements.sellPrice.value = item.sellPrice ?? "";
+  if (elements.sellPrice) elements.sellPrice.value = item.sellingPrice ?? item.sellPrice ?? "";
   if (elements.mrp) elements.mrp.value = item.mrp ?? "";
-  if (elements.rate) elements.rate.value = item.rate ?? "";
+  if (elements.rate) elements.rate.value = item.purchasePrice ?? item.rate ?? "";
   if (elements.discount) elements.discount.value = item.discount ?? "";
   if (elements.seller) elements.seller.value = item.seller || "";
 
@@ -1449,7 +1493,7 @@ async function handleFormSubmit(event) {
   const expiryDate = normalizeDateOnly(elements.expiryDate?.value);
   const sellPrice = normalizeDecimal(elements.sellPrice?.value);
   const mrp = normalizeDecimal(elements.mrp?.value);
-  const rate = normalizeDecimal(elements.rate?.value);
+  const purchasePrice = normalizeDecimal(elements.rate?.value);
   const discount = normalizeDecimal(elements.discount?.value);
   const seller = normalizeString(elements.seller?.value);
 
@@ -1479,9 +1523,9 @@ async function handleFormSubmit(event) {
         location,
         quantity: parsedQuantity,
         expiryDate,
-        sellPrice,
+        sellingPrice: sellPrice,
         mrp,
-        rate,
+        purchasePrice,
         discount,
         seller,
         updatedAt: now,
@@ -1496,9 +1540,9 @@ async function handleFormSubmit(event) {
         location,
         quantity: parsedQuantity,
         expiryDate,
-        sellPrice,
+        sellingPrice: sellPrice,
         mrp,
-        rate,
+        purchasePrice,
         discount,
         seller,
         createdAt: now,
@@ -1619,14 +1663,14 @@ function extractImportRows(parsed) {
 }
 
 function convertImportRowsToItems(rows) {
-  // Supports your Google Sheet columns: Medicine, SELL, MRP, RATE, Discount, Seller, Place
+  // Supports spreadsheet headers such as: Medicine, Place, Selling Price, Purchase Price, MRP.
   const medicineKeys = ["medicineName", "medicine", "name", "medicine_name", "drug", "tablet", "item"];
   const locationKeys = ["location", "rack", "place", "rackPlace", "rack_place", "storage", "position", "shelf"];
   const quantityKeys = ["quantity", "qty", "count", "stock", "units", "balance"];
   const expiryKeys = ["expiryDate", "expiry", "expire", "expdate", "expiry_date", "expireson", "bestbefore"];
-  const sellPriceKeys = ["sellPrice", "sell", "sellingprice", "sale", "saleprice", "sp"];
+  const sellPriceKeys = ["sellPrice", "sellingPrice", "sell", "sellingprice", "sale", "saleprice", "sp"];
   const mrpKeys = ["mrp", "maximumretailprice", "maxprice"];
-  const rateKeys = ["rate", "purchaseprice", "pp", "cost", "costprice"];
+  const rateKeys = ["purchasePrice", "rate", "purchaseprice", "pp", "cost", "costprice"];
   const discountKeys = ["discount", "disc", "discountpercent", "off"];
   const sellerKeys = ["seller", "distributor", "supplier", "company", "vendor"];
 
@@ -1649,9 +1693,9 @@ function convertImportRowsToItems(rows) {
       const location = pickValueByKnownKeys(row, locationKeys);
       const quantity = pickValueByKnownKeys(row, quantityKeys);
       const expiryDate = pickValueByKnownKeys(row, expiryKeys);
-      const sellPrice = pickValueByKnownKeys(row, sellPriceKeys);
+      const sellingPrice = pickValueByKnownKeys(row, sellPriceKeys);
       const mrp = pickValueByKnownKeys(row, mrpKeys);
-      const rate = pickValueByKnownKeys(row, rateKeys);
+      const purchasePrice = pickValueByKnownKeys(row, rateKeys);
       const discount = pickValueByKnownKeys(row, discountKeys);
       const seller = pickValueByKnownKeys(row, sellerKeys);
 
@@ -1664,9 +1708,9 @@ function convertImportRowsToItems(rows) {
         location,
         quantity,
         expiryDate,
-        sellPrice,
+        sellingPrice,
         mrp,
-        rate,
+        purchasePrice,
         discount,
         seller,
         createdAt: row.createdAt,
@@ -1742,20 +1786,42 @@ function handleImportFile(file) {
     file.name.toLowerCase().endsWith(".csv") ||
     file.type === "text/csv" ||
     file.type === "application/vnd.ms-excel";
+  const isExcel =
+    file.name.toLowerCase().endsWith(".xlsx") ||
+    file.name.toLowerCase().endsWith(".xls") ||
+    file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    file.type === "application/vnd.ms-excel.sheet.macroEnabled.12";
 
   const reader = new FileReader();
 
   reader.onload = async () => {
     try {
-      const rawText = String(reader.result || "");
       let rows;
 
-      if (isCSV) {
+      if (isExcel) {
+        if (!window.XLSX) {
+          throw new Error("Excel parser is not loaded. Refresh and try again.");
+        }
+
+        const workbook = window.XLSX.read(reader.result, { type: "array" });
+        const firstSheetName = workbook.SheetNames?.[0];
+        if (!firstSheetName) {
+          throw new Error("Excel file has no sheets.");
+        }
+
+        const sheet = workbook.Sheets[firstSheetName];
+        rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+        if (!rows.length) {
+          throw new Error("Excel file is empty or has no data rows.");
+        }
+      } else if (isCSV) {
+        const rawText = String(reader.result || "");
         rows = parseCSV(rawText);
         if (!rows.length) {
           throw new Error("CSV file is empty or has no data rows.");
         }
       } else {
+        const rawText = String(reader.result || "");
         const parsed = JSON.parse(rawText);
         rows = extractImportRows(parsed);
         if (!rows.length) {
@@ -1776,7 +1842,10 @@ function handleImportFile(file) {
         `Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"}.`,
         "is-ok"
       );
-      window.alert(`✅ Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"} from ${isCSV ? "CSV" : "JSON"}.`);
+      const sourceLabel = isExcel ? "Excel" : isCSV ? "CSV" : "JSON";
+      window.alert(
+        `✅ Imported ${normalized.length} medicine record${normalized.length === 1 ? "" : "s"} from ${sourceLabel}.`
+      );
     } catch (error) {
       window.alert(`Import failed: ${error.message || "Unknown error"}`);
     } finally {
@@ -1790,7 +1859,11 @@ function handleImportFile(file) {
     }
   };
 
-  reader.readAsText(file);
+  if (isExcel) {
+    reader.readAsArrayBuffer(file);
+  } else {
+    reader.readAsText(file);
+  }
 }
 
 async function handleClearAll() {
