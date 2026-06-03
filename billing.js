@@ -118,7 +118,7 @@
     searchTimer = setTimeout(function () {
       var query = (bEl.search ? bEl.search.value : "").trim().toLowerCase();
       if (!query || query.length < 2) {
-        hideDropdown();
+        hideDropdown(false);
         return;
       }
       var results = (state.items || [])
@@ -309,9 +309,9 @@
     }
   }
 
-  function hideDropdown() {
+  function hideDropdown(clearSearch) {
     if (bEl.dropdown) bEl.dropdown.classList.add("hidden");
-    if (bEl.search) bEl.search.value = "";
+    if (clearSearch !== false && bEl.search) bEl.search.value = "";
   }
 
   // -------------------------------------------------------------------------
