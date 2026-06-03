@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adarsh Medicals | Billing</title>
+    <meta name="description" content="Create and manage medicine bills for Adarsh Medicals — Thekma, Azamgarh." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=20260603-billing" />
+  </head>
+  <body data-page="billing">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" data-nav>Home</a>
+        <a href="dashboard.html" data-nav>Medicine Database</a>
+        <a href="billing.html" class="active" data-nav>Billing</a>
+        <a href="access.html" data-nav>Access Control</a>
+      </nav>
+
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+
+      <!-- Page header + status -->
+      <section class="panel fade-up">
+        <div class="panel-headline">
+          <h1 class="page-title">Billing</h1>
+          <p>Create and manage bills directly from your inventory. Admin access only.</p>
+        </div>
+        <p id="billing-status" class="status-message is-info">Loading…</p>
+      </section>
+
+      <!-- ── Bill Header ─────────────────────────────────────────────── -->
+      <section id="bill-form-section" class="panel fade-up delay-1">
+        <div class="bill-form-header">
+          <div class="bill-number-display">
+            <span class="bill-meta-label">Bill No.</span>
+            <span id="bill-number-preview" class="bill-number-value">New Bill</span>
+          </div>
+          <div class="bill-number-display">
+            <span class="bill-meta-label">Date</span>
+            <span id="bill-date-value" class="bill-number-value bill-date-text"></span>
+          </div>
+        </div>
+
+        <div class="two-col-fields bill-customer-grid">
+          <div>
+            <label for="bill-customer-name">Customer Name</label>
+            <input
+              id="bill-customer-name"
+              type="text"
+              placeholder="Walk-in customer"
+              maxlength="120"
+              autocomplete="off"
+            />
+          </div>
+          <div>
+            <label for="bill-customer-phone">Phone Number</label>
+            <input
+              id="bill-customer-phone"
+              type="tel"
+              placeholder="e.g. 9876543210"
+              maxlength="15"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+
+        <div style="margin-top: 0.64rem;">
+          <label for="bill-notes">Notes (optional)</label>
+          <input
+            id="bill-notes"
+            type="text"
+            placeholder="e.g. Doctor prescribed, batch no., etc."
+            maxlength="240"
+          />
+        </div>
+      </section>
+
+      <!-- ── Medicine Search & Line Items ───────────────────────────── -->
+      <section class="panel fade-up delay-2">
+        <div class="panel-headline">
+          <h2>Add Medicines</h2>
+          <p>Search by medicine name and click to add to the bill.</p>
+        </div>
+
+        <div class="billing-search-wrap">
+          <label for="billing-search">Search Medicine</label>
+          <div class="billing-search-field-wrap">
+            <input
+              id="billing-search"
+              type="search"
+              placeholder="Type medicine name to search… (min. 2 characters)"
+              autocomplete="off"
+              aria-autocomplete="list"
+              aria-controls="billing-search-dropdown"
+              aria-haspopup="listbox"
+            />
+            <span class="billing-search-icon" aria-hidden="true">🔍</span>
+          </div>
+          <div
+            id="billing-search-dropdown"
+            class="medicine-dropdown hidden"
+            role="listbox"
+            aria-label="Medicine search results"
+          ></div>
+        </div>
+
+        <!-- Line Items -->
+        <div id="bill-line-items-wrap" style="margin-top: 1.1rem;">
+          <p id="bill-items-empty" class="empty-state">
+            Search and add medicines above to begin the bill.
+          </p>
+
+          <div id="bill-items-table-wrap" class="hidden">
+            <div class="bill-table-scroll">
+              <table class="bill-items-table">
+                <thead>
+                  <tr>
+                    <th style="min-width:160px;">Medicine</th>
+                    <th class="num-col">MRP (₹)</th>
+                    <th class="num-col" id="purchase-price-th">Purchase (₹)</th>
+                    <th class="num-col" style="min-width:88px;">Markup %</th>
+                    <th class="num-col" style="min-width:96px;">Sell Price (₹)</th>
+                    <th class="num-col" style="min-width:68px;">Qty</th>
+                    <th class="num-col">Total (₹)</th>
+                    <th style="width:44px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="bill-items-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Bill Summary & Actions ──────────────────────────────────── -->
+      <section class="panel fade-up delay-3">
+        <div class="bill-summary-grid">
+          <div class="bill-summary-left">
+            <label for="bill-gst-percent">GST / Tax (%)</label>
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.32rem;">
+              <input
+                id="bill-gst-percent"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                placeholder="0"
+                value="0"
+                style="max-width:120px;"
+              />
+              <span style="font-size:0.82rem;color:var(--muted);">applied on subtotal</span>
+            </div>
+          </div>
+
+          <div class="bill-summary-box">
+            <div class="summary-row">
+              <span>Subtotal</span>
+              <span id="summary-subtotal" class="summary-amount">₹0.00</span>
+            </div>
+            <div class="summary-row" id="gst-summary-row">
+              <span id="gst-label-text">GST (0%)</span>
+              <span id="summary-gst" class="summary-amount">₹0.00</span>
+            </div>
+            <div class="summary-row summary-total-row">
+              <span>Grand Total</span>
+              <span id="summary-grand-total" class="summary-amount">₹0.00</span>
+            </div>
+            <div class="summary-row summary-items-row">
+              <span>Line Items</span>
+              <span id="summary-items-count">0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="bill-actions-bar">
+          <button id="save-bill-button" class="btn btn-primary" type="button">
+            💾 Save Bill
+          </button>
+          <button id="print-bill-button" class="btn btn-secondary" type="button" disabled>
+            🖨️ Print
+          </button>
+          <button id="new-bill-button" class="btn btn-ghost" type="button">
+            ✨ New Bill
+          </button>
+        </div>
+
+        <p id="bill-save-status" class="status-message" style="margin-top: 0.72rem;"></p>
+      </section>
+
+      <!-- ── Bill History ───────────────────────────────────────────── -->
+      <section class="panel fade-up delay-3" id="bill-history-section">
+        <div class="panel-headline">
+          <h2>Bill History</h2>
+          <p>All bills created from this portal (most recent first).</p>
+        </div>
+        <div id="bill-history-container">
+          <p class="empty-state">Loading bill history…</p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Print receipt area — hidden on screen, shown only when printing -->
+    <div id="print-receipt-area" class="print-receipt-area" aria-hidden="true"></div>
+
+    <script src="sync-config.js"></script>
+    <script src="app.js?v=20260603-billing"></script>
+    <script src="billing.js?v=20260603"></script>
+  </body>
+</html>

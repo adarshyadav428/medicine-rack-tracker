@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adarsh Medicals | Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+      <link
+        href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+        rel="stylesheet"
+      />
+    <link rel="stylesheet" href="styles.css?v=20260417-ui-refresh" />
+  </head>
+  <body data-page="home">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" class="active" data-nav>Home</a>
+        <a href="dashboard.html" data-nav>Medicine Database</a>
+        <a href="billing.html" data-nav>Billing</a>
+        <a href="access.html" data-nav>Access Control</a>
+      </nav>
+
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="hero-card fade-up">
+        <p class="hero-kicker">Adarsh Medicals Inventory Portal</p>
+        <h1>Fast medicine location lookup for admin and staff.</h1>
+        <p>
+          Staff can instantly find where medicines are kept. Admin controls access,
+          account status, and data quality from one place.
+        </p>
+        <div class="hero-meta">
+          <span>Contact: 8470900910</span>
+          <span>Medical Store Workflow Ready</span>
+        </div>
+      </section>
+
+      <section class="layout-two fade-up delay-1">
+        <article class="panel">
+          <div class="panel-headline">
+            <h2>Login</h2>
+            <p>Use your staff account to access the medicine database.</p>
+          </div>
+
+          <div class="form-grid">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" placeholder="name@company.com" autocomplete="email" />
+
+            <label for="auth-password">Password</label>
+            <input
+              id="auth-password"
+              type="password"
+              placeholder="Enter password"
+              autocomplete="current-password"
+            />
+
+            <div class="actions-row">
+              <button id="auth-login-button" class="btn btn-primary" type="button">Login</button>
+              <button id="auth-signup-button" class="btn btn-secondary" type="button">Create Account</button>
+            </div>
+
+            <div class="actions-row">
+              <button id="auth-forgot-button" class="btn btn-ghost btn-xs" type="button">Forgot Password</button>
+              <button id="auth-resend-verify-button" class="btn btn-ghost btn-xs" type="button">
+                Resend Verification Email
+              </button>
+            </div>
+
+            <div id="reset-panel" class="form-grid hidden">
+              <label for="reset-password">New Password</label>
+              <input id="reset-password" type="password" placeholder="Enter new password" autocomplete="new-password" />
+
+              <label for="reset-password-confirm">Confirm New Password</label>
+              <input
+                id="reset-password-confirm"
+                type="password"
+                placeholder="Re-enter new password"
+                autocomplete="new-password"
+              />
+
+              <div class="actions-row">
+                <button id="reset-password-button" class="btn btn-primary" type="button">Update Password</button>
+                <button id="reset-cancel-button" class="btn btn-ghost" type="button">Cancel</button>
+              </div>
+            </div>
+
+            <p id="auth-status" class="status-message">Not signed in.</p>
+            <p id="current-user" class="user-note"></p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-headline">
+            <h2>How This Works</h2>
+            <p>Simple role-based flow for your medical store team.</p>
+          </div>
+
+          <ol class="steps-list">
+            <li>Admin logs in and manages user access.</li>
+            <li>Employees login and search medicine locations quickly.</li>
+            <li>Database updates sync live across browsers.</li>
+            <li>Inactive users are blocked automatically.</li>
+          </ol>
+
+          <div class="notice-box">
+            <strong>Store Notice</strong>
+            <p>
+              If your account is not active, contact admin to enable it from Access Control.
+            </p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="sync-config.js"></script>
+    <script src="app.js?v=20260425-pricing-security"></script>
+  </body>
+</html>
