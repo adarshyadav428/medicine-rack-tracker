@@ -782,6 +782,11 @@ button:focus-visible {
 }
 
 /* ── Medicine search + autocomplete dropdown ───────────────── */
+body[data-page="billing"] .panel {
+  position: relative;
+  z-index: 1;
+}
+
 .billing-search-wrap {
   position: relative;
   z-index: 200;
