@@ -97,6 +97,20 @@
     bEl.saveStatus.className = "status-message" + (tone ? " " + tone : "");
   }
 
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function parseMoneyInput(value) {
+    var parsed = parseFloat(value);
+    return isNaN(parsed) || parsed < 0 ? null : round2(parsed);
+  }
+
   // -------------------------------------------------------------------------
   // Medicine Search (client-side, against state.items)
   // -------------------------------------------------------------------------
@@ -124,10 +138,7 @@
     bEl.dropdown.textContent = "";
 
     if (!results.length) {
-      var noResult = document.createElement("div");
-      noResult.className = "medicine-dropdown-item medicine-dropdown-empty";
-      noResult.textContent = 'No medicines found for "' + query + '"';
-      bEl.dropdown.appendChild(noResult);
+      bEl.dropdown.appendChild(buildNewMedicineOption(query));
       bEl.dropdown.classList.remove("hidden");
       return;
     }
@@ -177,8 +188,128 @@
       frag.appendChild(el);
     });
 
+    var exactMatch = results.some(function (item) {
+      return item.medicineName.toLowerCase() === query.toLowerCase();
+    });
+    if (!exactMatch) {
+      frag.appendChild(buildNewMedicineOption(query));
+    }
+
     bEl.dropdown.appendChild(frag);
     bEl.dropdown.classList.remove("hidden");
+  }
+
+  function buildNewMedicineOption(query) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "medicine-dropdown-item medicine-dropdown-new";
+    wrapper.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+    });
+
+    var safeQuery = escapeHtml(query);
+    wrapper.innerHTML =
+      '<div class="medicine-dropdown-new-head">' +
+        '<span class="medicine-dropdown-name">Add "' + safeQuery + '" as new medicine</span>' +
+        '<span class="medicine-dropdown-meta">Enter purchase price and MRP to add it now.</span>' +
+      "</div>" +
+      '<div class="billing-new-medicine-grid">' +
+        '<div class="billing-new-field">' +
+          '<label for="billing-new-name">Medicine Name</label>' +
+          '<input id="billing-new-name" type="text" maxlength="160" value="' + safeQuery + '" />' +
+        "</div>" +
+        '<div class="billing-new-field">' +
+          '<label for="billing-new-purchase">Purchase (₹)</label>' +
+          '<input id="billing-new-purchase" type="number" min="0" step="0.01" placeholder="0.00" />' +
+        "</div>" +
+        '<div class="billing-new-field">' +
+          '<label for="billing-new-mrp">MRP (₹)</label>' +
+          '<input id="billing-new-mrp" type="number" min="0" step="0.01" placeholder="0.00" />' +
+        "</div>" +
+        '<button id="billing-new-add" class="btn btn-primary btn-xs" type="button">Add</button>' +
+      "</div>" +
+      '<p id="billing-new-error" class="billing-new-error"></p>';
+
+    var addButton = wrapper.querySelector("#billing-new-add");
+    if (addButton) {
+      addButton.addEventListener("click", function () {
+        saveNewMedicineFromBilling(wrapper);
+      });
+    }
+
+    wrapper.querySelectorAll("input").forEach(function (input) {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveNewMedicineFromBilling(wrapper);
+        }
+      });
+    });
+
+    return wrapper;
+  }
+
+  async function saveNewMedicineFromBilling(wrapper) {
+    var nameInput = wrapper.querySelector("#billing-new-name");
+    var purchaseInput = wrapper.querySelector("#billing-new-purchase");
+    var mrpInput = wrapper.querySelector("#billing-new-mrp");
+    var addButton = wrapper.querySelector("#billing-new-add");
+    var errorEl = wrapper.querySelector("#billing-new-error");
+
+    var medicineName = normalizeString(nameInput ? nameInput.value : "");
+    var purchasePrice = parseMoneyInput(purchaseInput ? purchaseInput.value : "");
+    var mrp = parseMoneyInput(mrpInput ? mrpInput.value : "");
+
+    if (!medicineName) {
+      if (errorEl) errorEl.textContent = "Medicine name is required.";
+      return;
+    }
+
+    if (purchasePrice === null || mrp === null) {
+      if (errorEl) errorEl.textContent = "Purchase price and MRP are required.";
+      return;
+    }
+
+    var existing = (state.items || []).find(function (item) {
+      return item.medicineName.toLowerCase() === medicineName.toLowerCase();
+    });
+    if (existing) {
+      addLineItem(existing);
+      hideDropdown();
+      setSaveStatus("Medicine already exists. Added it to the bill.", "is-info");
+      return;
+    }
+
+    if (addButton) addButton.disabled = true;
+    if (errorEl) errorEl.textContent = "Adding medicine...";
+
+    var now = new Date().toISOString();
+    var newMedicine = normalizeItem({
+      id: createId(),
+      medicineName: medicineName,
+      location: "Billing",
+      quantity: null,
+      expiryDate: "",
+      sellingPrice: mrp,
+      mrp: mrp,
+      purchasePrice: purchasePrice,
+      discount: null,
+      seller: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    try {
+      var savedMedicine = isCloudSyncActive() ? await upsertCloudItem(newMedicine) : newMedicine;
+      state.items = [savedMedicine].concat(state.items || []);
+      saveLocalItems(state.items);
+      renderPage();
+      addLineItem(savedMedicine);
+      hideDropdown();
+      setSaveStatus('Added "' + savedMedicine.medicineName + '" to inventory and bill.', "is-ok");
+    } catch (error) {
+      if (errorEl) errorEl.textContent = "Could not add medicine: " + (error.message || "Unknown error");
+      if (addButton) addButton.disabled = false;
+    }
   }
 
   function hideDropdown() {

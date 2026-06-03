@@ -847,6 +847,54 @@ button:focus-visible {
   background: transparent;
 }
 
+.medicine-dropdown-new {
+  cursor: default;
+  gap: 0.62rem;
+}
+
+.medicine-dropdown-new:hover,
+.medicine-dropdown-new:focus {
+  background: #ffffff;
+}
+
+.medicine-dropdown-new-head {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.billing-new-medicine-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) auto;
+  gap: 0.52rem;
+  align-items: end;
+}
+
+.billing-new-field {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.billing-new-field label {
+  font-size: 0.68rem;
+  margin: 0;
+  color: #516873;
+}
+
+.billing-new-field input {
+  min-height: 2.12rem;
+  padding: 0.38rem 0.5rem;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.billing-new-error {
+  min-height: 1rem;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
 .medicine-dropdown-name {
   font-weight: 700;
   font-size: 0.93rem;
@@ -1109,6 +1157,10 @@ button:focus-visible {
 
   .bill-number-value {
     font-size: 1rem;
+  }
+
+  .billing-new-medicine-grid {
+    grid-template-columns: 1fr;
   }
 }
 
