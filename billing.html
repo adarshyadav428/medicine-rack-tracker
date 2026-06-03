@@ -157,31 +157,10 @@
       <!-- ── Bill Summary & Actions ──────────────────────────────────── -->
       <section class="panel fade-up delay-3">
         <div class="bill-summary-grid">
-          <div class="bill-summary-left">
-            <label for="bill-gst-percent">GST / Tax (%)</label>
-            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.32rem;">
-              <input
-                id="bill-gst-percent"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                placeholder="0"
-                value="0"
-                style="max-width:120px;"
-              />
-              <span style="font-size:0.82rem;color:var(--muted);">applied on subtotal</span>
-            </div>
-          </div>
-
           <div class="bill-summary-box">
             <div class="summary-row">
               <span>Subtotal</span>
               <span id="summary-subtotal" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row" id="gst-summary-row">
-              <span id="gst-label-text">GST (0%)</span>
-              <span id="summary-gst" class="summary-amount">₹0.00</span>
             </div>
             <div class="summary-row summary-total-row">
               <span>Grand Total</span>

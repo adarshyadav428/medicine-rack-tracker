@@ -1033,10 +1033,6 @@ button:focus-visible {
   align-items: start;
 }
 
-.bill-summary-left {
-  /* GST input area */
-}
-
 .bill-summary-box {
   min-width: 290px;
   background: linear-gradient(145deg, #f6fbff, #f2faf8);

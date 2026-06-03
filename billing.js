@@ -42,10 +42,7 @@
     itemsTableWrap:   document.getElementById("bill-items-table-wrap"),
     itemsTbody:       document.getElementById("bill-items-tbody"),
     purchasePriceTh:  document.getElementById("purchase-price-th"),
-    gstPercent:       document.getElementById("bill-gst-percent"),
     subtotal:         document.getElementById("summary-subtotal"),
-    gstAmount:        document.getElementById("summary-gst"),
-    gstLabel:         document.getElementById("gst-label-text"),
     grandTotal:       document.getElementById("summary-grand-total"),
     itemsCount:       document.getElementById("summary-items-count"),
     saveBillButton:   document.getElementById("save-bill-button"),
@@ -488,13 +485,9 @@
     }, 0);
     subtotalVal = round2(subtotalVal);
 
-    var gstPct = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-    var gstAmt = round2(subtotalVal * gstPct / 100);
-    var grandTotalVal = round2(subtotalVal + gstAmt);
+    var grandTotalVal = subtotalVal;
 
     if (bEl.subtotal)   bEl.subtotal.textContent   = fmtMoney(subtotalVal);
-    if (bEl.gstAmount)  bEl.gstAmount.textContent  = fmtMoney(gstAmt);
-    if (bEl.gstLabel)   bEl.gstLabel.textContent   = "GST (" + gstPct + "%)";
     if (bEl.grandTotal) bEl.grandTotal.textContent = fmtMoney(grandTotalVal);
     if (bEl.itemsCount) bEl.itemsCount.textContent = String(bState.lineItems.length);
   }
@@ -503,12 +496,11 @@
   // Save Bill
   // -------------------------------------------------------------------------
   function buildSavePayload() {
-    var gstPct = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
     return {
       customerName:  normalizeString(bEl.customerName  ? bEl.customerName.value  : ""),
       customerPhone: normalizeString(bEl.customerPhone ? bEl.customerPhone.value : ""),
       notes:         normalizeString(bEl.notes         ? bEl.notes.value         : ""),
-      gstPercent:    gstPct,
+      gstPercent:    0,
       items: bState.lineItems.map(function (item) {
         return {
           medicineId:    item.medicineId,
@@ -568,7 +560,7 @@
     var customer   = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "") || "Walk-in";
     var phone      = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
     var notes      = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
-    var gstPct     = (overrides && overrides.gstPercent  !== undefined) ? overrides.gstPercent  : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
+    var gstPct     = 0;
     var items      = (overrides && overrides.items) || bState.lineItems;
     var billNo     = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
     var dateStr    = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -658,7 +650,6 @@
     if (bEl.customerName)   bEl.customerName.value   = "";
     if (bEl.customerPhone)  bEl.customerPhone.value  = "";
     if (bEl.notes)          bEl.notes.value          = "";
-    if (bEl.gstPercent)     bEl.gstPercent.value     = "0";
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
     if (bEl.printBillButton) bEl.printBillButton.disabled = true;
 
@@ -767,7 +758,6 @@
       if (bEl.customerName)   bEl.customerName.value   = bill.customer_name  || "";
       if (bEl.customerPhone)  bEl.customerPhone.value  = bill.customer_phone || "";
       if (bEl.notes)          bEl.notes.value          = bill.notes          || "";
-      if (bEl.gstPercent)     bEl.gstPercent.value     = bill.gst_percent    || "0";
       if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bill.bill_number;
       if (bEl.printBillButton)   bEl.printBillButton.disabled = false;
 
@@ -797,7 +787,7 @@
         customerName:  bill.customer_name,
         customerPhone: bill.customer_phone,
         notes:         bill.notes,
-        gstPercent:    bill.gst_percent,
+        gstPercent:    0,
         items:         items,
       });
       window.print();
@@ -842,9 +832,6 @@
         bEl.dropdown.classList.add("hidden");
       }
     });
-
-    // GST recalculation
-    if (bEl.gstPercent) bEl.gstPercent.addEventListener("input", recalcTotals);
 
     // Action buttons
     if (bEl.saveBillButton)  bEl.saveBillButton.addEventListener("click", saveBill);
