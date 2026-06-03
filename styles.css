@@ -784,6 +784,12 @@ button:focus-visible {
 /* ── Medicine search + autocomplete dropdown ───────────────── */
 .billing-search-wrap {
   position: relative;
+  z-index: 200;
+}
+
+#bill-medicine-section {
+  position: relative;
+  z-index: 20;
 }
 
 .billing-search-field-wrap {
@@ -811,7 +817,7 @@ button:focus-visible {
   top: calc(100% + 5px);
   left: 0;
   right: 0;
-  z-index: 50;
+  z-index: 300;
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
