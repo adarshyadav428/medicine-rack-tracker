@@ -172,13 +172,13 @@
       el.addEventListener("mousedown", function (e) {
         e.preventDefault();
         addLineItem(item);
-        hideDropdown();
+        hideDropdown(true);
       });
       el.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           addLineItem(item);
-          hideDropdown();
+          hideDropdown(true);
         }
       });
 
@@ -271,7 +271,7 @@
     });
     if (existing) {
       addLineItem(existing);
-      hideDropdown();
+      hideDropdown(true);
       setSaveStatus("Medicine already exists. Added it to the bill.", "is-info");
       return;
     }
@@ -301,7 +301,7 @@
       saveLocalItems(state.items);
       renderPage();
       addLineItem(savedMedicine);
-      hideDropdown();
+      hideDropdown(true);
       setSaveStatus('Added "' + savedMedicine.medicineName + '" to inventory and bill.', "is-ok");
     } catch (error) {
       if (errorEl) errorEl.textContent = "Could not add medicine: " + (error.message || "Unknown error");
@@ -311,7 +311,7 @@
 
   function hideDropdown(clearSearch) {
     if (bEl.dropdown) bEl.dropdown.classList.add("hidden");
-    if (clearSearch !== false && bEl.search) bEl.search.value = "";
+    if (clearSearch === true && bEl.search) bEl.search.value = "";
   }
 
   // -------------------------------------------------------------------------
@@ -818,10 +818,10 @@
     if (bEl.search) {
       bEl.search.addEventListener("input", handleSearchInput);
       bEl.search.addEventListener("blur", function () {
-        setTimeout(function () { hideDropdown(); }, 200);
+        setTimeout(function () { hideDropdown(false); }, 200);
       });
       bEl.search.addEventListener("keydown", function (e) {
-        if (e.key === "Escape") hideDropdown();
+        if (e.key === "Escape") hideDropdown(false);
       });
     }
 
