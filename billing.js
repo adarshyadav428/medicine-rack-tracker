@@ -23,6 +23,8 @@
     currentBillNumber: null,
     billHistory: [],
     initialized: false,
+    currentCustomerIdx: null,   // index into saved-customers array, or null
+    currentCustomerBalance: 0,  // cached previous balance of selected customer
   };
 
   // -------------------------------------------------------------------------
@@ -57,6 +59,11 @@
     savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
     saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
     saveCustomerStatus:    document.getElementById("bill-save-customer-status"),
+    openingBalance:        document.getElementById("bill-opening-balance"),
+    receivedAmount:        document.getElementById("bill-received-amount"),
+    prevBalance:           document.getElementById("summary-prev-balance"),
+    totalDue:              document.getElementById("summary-total-due"),
+    balanceDue:            document.getElementById("summary-balance-due"),
   };
 
   // -------------------------------------------------------------------------
@@ -131,13 +138,23 @@
 
   function onSavedCustomerChange() {
     var idx = parseInt(bEl.savedCustomerSelect ? bEl.savedCustomerSelect.value : "", 10);
-    if (isNaN(idx)) return;
+    if (isNaN(idx)) {
+      bState.currentCustomerIdx     = null;
+      bState.currentCustomerBalance = 0;
+      if (bEl.openingBalance) bEl.openingBalance.value = "";
+      recalcPayment();
+      return;
+    }
     var list = loadSavedCustomers();
     var c = list[idx];
     if (!c) return;
-    if (bEl.customerName)  bEl.customerName.value  = c.name  || "";
-    if (bEl.customerPhone) bEl.customerPhone.value = c.phone || "";
+    bState.currentCustomerIdx     = idx;
+    bState.currentCustomerBalance = parseFloat(c.balance) || 0;
+    if (bEl.customerName)   bEl.customerName.value   = c.name  || "";
+    if (bEl.customerPhone)  bEl.customerPhone.value  = c.phone || "";
+    if (bEl.openingBalance) bEl.openingBalance.value = bState.currentCustomerBalance || "";
     setSaveCustomerStatus("", "");
+    recalcPayment();
   }
 
   function setSaveCustomerStatus(msg, tone) {
@@ -147,8 +164,10 @@
   }
 
   function saveCurrentCustomer() {
-    var name  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
-    var phone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    var name    = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
+    var phone   = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    var balRaw  = bEl.openingBalance ? bEl.openingBalance.value : "";
+    var balance = balRaw !== "" ? (parseFloat(balRaw) || 0) : 0;
     if (!name) {
       setSaveCustomerStatus("Enter a customer name first.", "is-warn");
       return;
@@ -158,14 +177,21 @@
       return c.name.toLowerCase() === name.toLowerCase();
     });
     if (idx >= 0) {
-      list[idx] = { name: name, phone: phone };
+      list[idx].name  = name;
+      list[idx].phone = phone;
+      if (balRaw !== "") list[idx].balance = balance;
+      bState.currentCustomerIdx     = idx;
+      bState.currentCustomerBalance = list[idx].balance || 0;
       setSaveCustomerStatus("Customer updated.", "is-ok");
     } else {
-      list.push({ name: name, phone: phone });
+      list.push({ name: name, phone: phone, balance: balance });
+      bState.currentCustomerIdx     = list.length - 1;
+      bState.currentCustomerBalance = balance;
       setSaveCustomerStatus("Customer saved.", "is-ok");
     }
     persistSavedCustomers(list);
     renderCustomerSelect();
+    recalcPayment();
   }
 
   // -------------------------------------------------------------------------
@@ -438,6 +464,32 @@
     if (bEl.gstLabel)   bEl.gstLabel.textContent   = "GST (" + gstPct + "%)";
     if (bEl.grandTotal) bEl.grandTotal.textContent = fmtMoney(grandTotalVal);
     if (bEl.itemsCount) bEl.itemsCount.textContent = String(bState.lineItems.length);
+
+    recalcPayment();
+  }
+
+  function recalcPayment() {
+    var subtotalVal = bState.lineItems.reduce(function (sum, item) {
+      return sum + round2(item.sellPrice * item.quantity);
+    }, 0);
+    var gstPct      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
+    var grandTotal  = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
+    var prevBal     = bState.currentCustomerBalance || 0;
+    var totalDueVal = round2(grandTotal + prevBal);
+    var received    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+    var balDue      = round2(totalDueVal - received);
+
+    // Previous balance row — dim it when zero
+    var prevRow = document.querySelector(".bill-prev-balance-row");
+    if (prevRow) prevRow.style.opacity = prevBal > 0 ? "1" : "0.38";
+    if (bEl.prevBalance) bEl.prevBalance.textContent = fmtMoney(prevBal);
+
+    if (bEl.totalDue)  bEl.totalDue.textContent  = fmtMoney(totalDueVal);
+    if (bEl.balanceDue) {
+      bEl.balanceDue.textContent = fmtMoney(balDue);
+      bEl.balanceDue.className   = "bill-balance-due-value" +
+        (balDue > 0.005 ? " bill-balance-due-value--debt" : (balDue < -0.005 ? " bill-balance-due-value--credit" : ""));
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -493,6 +545,26 @@
       }
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
+
+      // Carry forward balance for the selected saved customer
+      if (bState.currentCustomerIdx !== null) {
+        var received   = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+        var subtotal   = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
+        var gstPct     = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
+        var grandTot   = round2(round2(subtotal) + round2(round2(subtotal) * gstPct / 100));
+        var totalDue   = round2(grandTot + (bState.currentCustomerBalance || 0));
+        var newBalance = round2(totalDue - received);
+        var custList   = loadSavedCustomers();
+        if (custList[bState.currentCustomerIdx]) {
+          custList[bState.currentCustomerIdx].balance = newBalance;
+          persistSavedCustomers(custList);
+          bState.currentCustomerBalance = newBalance;
+          if (bEl.openingBalance) bEl.openingBalance.value = newBalance || "";
+          renderCustomerSelect();
+          recalcPayment();
+        }
+      }
+
       await loadBillHistory();
 
     } catch (error) {
@@ -529,12 +601,14 @@
   }
 
   function buildReceiptHtml(overrides) {
-    var customer = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
-    var phone    = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-    var notes    = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
-    var gstPct   = (overrides && overrides.gstPercent !== undefined) ? overrides.gstPercent : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
-    var items    = (overrides && overrides.items) || bState.lineItems;
-    var billNo   = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
+    var customer  = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
+    var phone     = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    var notes     = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
+    var gstPct    = (overrides && overrides.gstPercent !== undefined) ? overrides.gstPercent : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
+    var items     = (overrides && overrides.items) || bState.lineItems;
+    var billNo    = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
+    var prevBal   = (overrides && overrides.prevBalance  !== undefined) ? overrides.prevBalance  : (bState.currentCustomerBalance || 0);
+    var received  = (overrides && overrides.received     !== undefined) ? overrides.received     : (parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0);
     var now      = new Date();
     var dateStr  = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
     var timeStr  = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
@@ -545,8 +619,11 @@
     var gstAmt     = round2(subtotal * gstPct / 100);
     var grandTotal = round2(subtotal + gstAmt);
 
-    var intPart  = Math.floor(grandTotal);
-    var decPart  = Math.round((grandTotal - intPart) * 100);
+    var totalDue    = round2(grandTotal + prevBal);
+    var balanceDue  = round2(totalDue - received);
+
+    var intPart  = Math.floor(totalDue);
+    var decPart  = Math.round((totalDue - intPart) * 100);
     var amtWords = "Rupees " + numToWords(intPart) + (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only";
 
     var rowsHtml = items.map(function (it, idx) {
@@ -618,7 +695,7 @@
 
         /* ── Totals ── */
         "<div style='display:flex;justify-content:flex-end;border:1px solid #c4e2de;border-top:none;'>" +
-          "<div style='min-width:262px;font-size:12.5px;'>" +
+          "<div style='min-width:280px;font-size:12.5px;'>" +
             "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;'>" +
               "<span>Subtotal</span><span style='font-family:monospace;'>&#8377;" + subtotal.toFixed(2) + "</span>" +
             "</div>" +
@@ -627,8 +704,23 @@
                   "<span>GST (" + gstPct + "%)</span><span style='font-family:monospace;'>&#8377;" + gstAmt.toFixed(2) + "</span>" +
                 "</div>"
               : "") +
+            "<div style='display:flex;justify-content:space-between;padding:6px 12px;border-bottom:1px solid #dff0ed;font-size:13.5px;font-weight:700;color:#0d2a28;'>" +
+              "<span>Bill Amount</span><span style='font-family:monospace;'>&#8377;" + grandTotal.toFixed(2) + "</span>" +
+            "</div>" +
+            (prevBal > 0
+              ? "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#8a5500;background:#fffbf2;'>" +
+                  "<span>Previous Balance</span><span style='font-family:monospace;'>&#8377;" + prevBal.toFixed(2) + "</span>" +
+                "</div>" +
+                "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;font-weight:700;'>" +
+                  "<span>Total Due</span><span style='font-family:monospace;'>&#8377;" + totalDue.toFixed(2) + "</span>" +
+                "</div>"
+              : "") +
+            "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#1a6644;'>" +
+              "<span>Amount Received</span><span style='font-family:monospace;'>&#8377;" + received.toFixed(2) + "</span>" +
+            "</div>" +
             "<div style='display:flex;justify-content:space-between;padding:8px 12px;font-size:14px;font-weight:800;background:linear-gradient(135deg,#0b6d67,#0d5c80);color:#fff;letter-spacing:0.5px;'>" +
-              "<span>NET AMOUNT</span><span style='font-family:monospace;'>&#8377;" + grandTotal.toFixed(2) + "</span>" +
+              "<span>" + (balanceDue > 0.005 ? "BALANCE DUE" : (balanceDue < -0.005 ? "EXCESS PAID" : "CLEARED")) + "</span>" +
+              "<span style='font-family:monospace;'>&#8377;" + Math.abs(balanceDue).toFixed(2) + "</span>" +
             "</div>" +
           "</div>" +
         "</div>" +
@@ -693,6 +785,10 @@
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
     if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
+    if (bEl.openingBalance)      bEl.openingBalance.value      = "";
+    if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
+    bState.currentCustomerIdx     = null;
+    bState.currentCustomerBalance = 0;
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
@@ -881,8 +977,9 @@
       }
     });
 
-    // GST recalculation
-    if (bEl.gstPercent) bEl.gstPercent.addEventListener("input", recalcTotals);
+    // GST / received amount recalculation
+    if (bEl.gstPercent)     bEl.gstPercent.addEventListener("input",    recalcTotals);
+    if (bEl.receivedAmount) bEl.receivedAmount.addEventListener("input", recalcPayment);
 
     // Action buttons
     if (bEl.saveBillButton)  bEl.saveBillButton.addEventListener("click", saveBill);

@@ -1292,6 +1292,122 @@ button:focus-visible {
   letter-spacing: -0.02em;
 }
 
+/* Opening balance input inside save-customer-bar */
+.bill-opening-balance-input {
+  max-width: 130px;
+  min-height: 2.05rem;
+  padding: 0.32rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  color: var(--ink);
+  text-align: right;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.bill-opening-balance-input:focus {
+  outline: none;
+  border-color: rgba(12, 122, 115, 0.55);
+  box-shadow: var(--ring);
+}
+
+/* ── Payment & balance section ─────────────────────────────── */
+.bill-payment-section {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 2px dashed var(--line);
+}
+
+.bill-payment-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--muted);
+  margin-bottom: 0.78rem;
+}
+
+.bill-payment-layout {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.bill-payment-left {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.bill-breakdown-row--strong {
+  font-weight: 700;
+  color: var(--ink) !important;
+}
+
+.summary-amount--warn {
+  color: #9a5a00 !important;
+}
+
+/* Balance carried forward block */
+.bill-balance-due-block {
+  text-align: center;
+  padding: 1.1rem 1.4rem;
+  background: linear-gradient(145deg, #fff8f0, #fff3e6);
+  border: 1.5px solid rgba(200, 110, 20, 0.22);
+  border-radius: var(--radius-lg);
+  min-width: 190px;
+  box-shadow: 0 4px 14px rgba(180, 90, 10, 0.08);
+}
+
+.bill-balance-due-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #8a5500;
+  margin: 0 0 0.4rem;
+}
+
+.bill-balance-due-value {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: clamp(1.6rem, 2.6vw, 2.2rem);
+  color: #7a4800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* When balance is cleared or in credit */
+.bill-balance-due-value--credit {
+  color: var(--brand-strong);
+}
+
+/* When the bill is fully settled */
+.bill-balance-due-block:has(.bill-balance-due-value:not(.bill-balance-due-value--debt):not(.bill-balance-due-value--credit)) {
+  background: linear-gradient(145deg, var(--brand-soft), #dff5f1);
+  border-color: rgba(12, 122, 115, 0.22);
+  box-shadow: 0 4px 14px rgba(12, 122, 115, 0.08);
+}
+
+@media (max-width: 900px) {
+  .bill-payment-layout {
+    grid-template-columns: 1fr;
+  }
+  .bill-balance-due-block {
+    min-width: 0;
+    width: 100%;
+    text-align: left;
+    padding: 0.9rem 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .bill-balance-due-label { margin: 0; }
+}
+
 /* Action buttons bar */
 .bill-actions-bar {
   display: flex;

@@ -113,6 +113,15 @@
 
         <!-- Save customer shortcut -->
         <div class="bill-save-customer-bar">
+          <input
+            id="bill-opening-balance"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Balance ₹0"
+            class="bill-opening-balance-input"
+            title="Opening / current balance for this customer"
+          />
           <button id="bill-save-customer-btn" class="btn btn-ghost btn-xs" type="button">
             + Save as Customer
           </button>
@@ -221,6 +230,43 @@
           <div class="bill-grand-total-block">
             <p class="bill-grand-total-label">Grand Total</p>
             <span id="summary-grand-total" class="bill-grand-total-value">₹0.00</span>
+          </div>
+        </div>
+
+        <!-- Payment & balance tracking -->
+        <div id="bill-payment-section" class="bill-payment-section">
+          <div class="bill-payment-heading">Payment &amp; Balance</div>
+          <div class="bill-payment-layout">
+            <div class="bill-payment-left">
+              <div class="bill-breakdown-box">
+                <div class="bill-breakdown-row bill-prev-balance-row">
+                  <span>Previous Balance</span>
+                  <span id="summary-prev-balance" class="summary-amount summary-amount--warn">₹0.00</span>
+                </div>
+                <div class="bill-breakdown-row bill-breakdown-row--strong">
+                  <span>Total Due</span>
+                  <span id="summary-total-due" class="summary-amount">₹0.00</span>
+                </div>
+              </div>
+              <div class="bill-gst-field" style="margin-top:0.7rem;">
+                <label for="bill-received-amount">Amount Received (₹)</label>
+                <div class="bill-gst-input-row">
+                  <input
+                    id="bill-received-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value="0"
+                  />
+                  <span class="bill-gst-hint">cash / UPI / cheque</span>
+                </div>
+              </div>
+            </div>
+            <div class="bill-balance-due-block">
+              <p class="bill-balance-due-label">Balance Carried Forward</p>
+              <span id="summary-balance-due" class="bill-balance-due-value">₹0.00</span>
+            </div>
           </div>
         </div>
 
