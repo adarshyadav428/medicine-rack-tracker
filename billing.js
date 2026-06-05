@@ -313,7 +313,7 @@
 
     if (bEl.search) {
       bEl.search.value = "";
-      bEl.search.focus();
+      setTimeout(function () { bEl.search.focus(); }, 0);
     }
   }
 
