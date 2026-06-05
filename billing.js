@@ -68,7 +68,16 @@
     roundOffToggle:        document.getElementById("bill-roundoff-toggle"),
     roundOffRow:           document.getElementById("roundoff-summary-row"),
     roundOffAmount:        document.getElementById("summary-roundoff"),
+    receiptModal:          document.getElementById("receipt-modal"),
+    receiptModalBody:      document.getElementById("receipt-modal-body"),
+    receiptModalRef:       document.getElementById("receipt-modal-ref"),
+    receiptModalBackdrop:  document.getElementById("receipt-modal-backdrop"),
+    receiptModalClose:     document.getElementById("receipt-modal-close-btn"),
+    receiptModalPrint:     document.getElementById("receipt-modal-print-btn"),
+    receiptModalShare:     document.getElementById("receipt-modal-share-btn"),
   };
+
+  var modalBillData = null; // { billNumber, receiptHtml }
 
   // -------------------------------------------------------------------------
   // Utility
@@ -1290,6 +1299,96 @@
     }
   }
 
+  // ── Receipt modal ────────────────────────────────────────────────────────
+
+  function openReceiptModal(billNumber, receiptHtml) {
+    modalBillData = { billNumber: billNumber, receiptHtml: receiptHtml };
+    if (bEl.receiptModalRef)  bEl.receiptModalRef.textContent = "Bill " + billNumber;
+    if (bEl.receiptModalBody) bEl.receiptModalBody.innerHTML  = receiptHtml;
+    if (bEl.receiptModal)     bEl.receiptModal.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeReceiptModal() {
+    if (bEl.receiptModal) bEl.receiptModal.classList.add("hidden");
+    if (bEl.receiptModalBody) bEl.receiptModalBody.innerHTML = "";
+    document.body.style.overflow = "";
+    modalBillData = null;
+  }
+
+  function printModalBill() {
+    if (!modalBillData || !bEl.printArea) return;
+    bEl.printArea.innerHTML = modalBillData.receiptHtml;
+    window.print();
+  }
+
+  async function shareModalBill() {
+    if (!modalBillData) return;
+    var bn       = modalBillData.billNumber;
+    var fullHtml =
+      "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>" +
+      "<meta name='viewport' content='width=device-width,initial-scale=1.0'>" +
+      "<title>Bill " + bn + " — Adarsh Medicals</title></head><body>" +
+      modalBillData.receiptHtml + "</body></html>";
+
+    if (window.navigator.share) {
+      try {
+        var file = new File([fullHtml], "Bill-" + bn + ".html", { type: "text/html" });
+        if (window.navigator.canShare && window.navigator.canShare({ files: [file] })) {
+          await window.navigator.share({ files: [file], title: "Bill " + bn + " — Adarsh Medicals" });
+          return;
+        }
+        await window.navigator.share({ title: "Bill " + bn + " — Adarsh Medicals", text: fullHtml });
+        return;
+      } catch (e) {
+        if (e.name === "AbortError") return;
+      }
+    }
+    // Fallback: open receipt in a new tab
+    var blob = URL.createObjectURL(new Blob([fullHtml], { type: "text/html" }));
+    var win  = window.open(blob, "_blank");
+    if (win) setTimeout(function () { URL.revokeObjectURL(blob); }, 30000);
+  }
+
+  async function viewBillInModal(billId) {
+    try {
+      var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
+      var bill   = result.bill;
+      var items  = result.items || [];
+      var html   = buildReceiptHtml({
+        billNumber:    bill.bill_number,
+        customerName:  bill.customer_name,
+        customerPhone: bill.customer_phone,
+        notes:         bill.notes,
+        gstPercent:    bill.gst_percent,
+        items:         items,
+      });
+      openReceiptModal(bill.bill_number, html);
+    } catch (err) {
+      window.alert("Could not load bill: " + (err.message || "Unknown error"));
+    }
+  }
+
+  async function shareFromHistory(billId) {
+    try {
+      var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
+      var bill   = result.bill;
+      var items  = result.items || [];
+      var html   = buildReceiptHtml({
+        billNumber:    bill.bill_number,
+        customerName:  bill.customer_name,
+        customerPhone: bill.customer_phone,
+        notes:         bill.notes,
+        gstPercent:    bill.gst_percent,
+        items:         items,
+      });
+      // Open the modal first so user can also print, then share
+      openReceiptModal(bill.bill_number, html);
+    } catch (err) {
+      window.alert("Could not load bill: " + (err.message || "Unknown error"));
+    }
+  }
+
   function renderBillHistory() {
     if (!bEl.historyContainer) return;
 
@@ -1312,8 +1411,10 @@
           "</td>" +
           '<td class="num-col"><span class="bill-history-total">' + fmtMoney(bill.grand_total) + "</span></td>" +
           "<td>" +
-            '<div style="display:flex;gap:0.4rem;justify-content:flex-end;">' +
-              '<button class="btn btn-ghost btn-xs" data-edit-bill="' + bill.id + '" type="button">✏️ Edit</button>' +
+            '<div style="display:flex;gap:0.4rem;justify-content:flex-end;flex-wrap:wrap;">' +
+              '<button class="btn btn-ghost btn-xs" data-view-bill="'  + bill.id + '" type="button">👁 View</button>' +
+              '<button class="btn btn-ghost btn-xs" data-share-bill="' + bill.id + '" type="button">📤 Share</button>' +
+              '<button class="btn btn-ghost btn-xs" data-edit-bill="'  + bill.id + '" type="button">✏️ Edit</button>' +
               '<button class="btn btn-secondary btn-xs" data-print-bill="' + bill.id + '" type="button">🖨️</button>' +
             "</div>" +
           "</td>" +
@@ -1335,6 +1436,14 @@
           "<tbody>" + rowsHtml + "</tbody>" +
         "</table>" +
       "</div>";
+
+    bEl.historyContainer.querySelectorAll("[data-view-bill]").forEach(function (btn) {
+      btn.addEventListener("click", function () { viewBillInModal(btn.dataset.viewBill); });
+    });
+
+    bEl.historyContainer.querySelectorAll("[data-share-bill]").forEach(function (btn) {
+      btn.addEventListener("click", function () { shareFromHistory(btn.dataset.shareBill); });
+    });
 
     bEl.historyContainer.querySelectorAll("[data-edit-bill]").forEach(function (btn) {
       btn.addEventListener("click", function () { loadBillForEdit(btn.dataset.editBill); });
@@ -1510,6 +1619,17 @@
     if (bEl.saveBillButton)  bEl.saveBillButton.addEventListener("click", saveBill);
     if (bEl.printBillButton) bEl.printBillButton.addEventListener("click", printBill);
     if (bEl.newBillButton)   bEl.newBillButton.addEventListener("click", newBill);
+
+    // Receipt modal wiring
+    if (bEl.receiptModalClose)    bEl.receiptModalClose.addEventListener("click", closeReceiptModal);
+    if (bEl.receiptModalBackdrop) bEl.receiptModalBackdrop.addEventListener("click", closeReceiptModal);
+    if (bEl.receiptModalPrint)    bEl.receiptModalPrint.addEventListener("click", printModalBill);
+    if (bEl.receiptModalShare)    bEl.receiptModalShare.addEventListener("click", shareModalBill);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && bEl.receiptModal && !bEl.receiptModal.classList.contains("hidden")) {
+        closeReceiptModal();
+      }
+    });
 
     // Initial render
     setBillingStatus("Ready. Search for medicines to start a new bill.", "is-ok");

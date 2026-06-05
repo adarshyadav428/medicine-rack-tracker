@@ -2213,3 +2213,88 @@ button:focus-visible {
   gap: 0.5rem;
 }
 
+
+/* ── Receipt view modal ──────────────────────────────────── */
+.receipt-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 1.2rem 1rem 1rem;
+  background: rgba(10, 30, 38, 0.52);
+  backdrop-filter: blur(3px);
+  animation: fadeInOverlay 0.15s ease;
+  overflow-y: auto;
+}
+
+.receipt-modal.hidden {
+  display: none;
+}
+
+.receipt-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  cursor: pointer;
+}
+
+.receipt-modal-panel {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 28px 72px rgba(10, 30, 38, 0.28);
+  width: 100%;
+  max-width: 780px;
+  display: flex;
+  flex-direction: column;
+  animation: slideUpModal 0.18s ease;
+  margin: auto;
+}
+
+.receipt-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.receipt-modal-ref {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--ink);
+  letter-spacing: 0.3px;
+}
+
+.receipt-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.receipt-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.05rem;
+  color: var(--muted);
+  padding: 0.22rem 0.5rem;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.14s, color 0.14s;
+  margin-left: 0.2rem;
+}
+
+.receipt-modal-close:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.receipt-modal-body {
+  padding: 1.4rem;
+  overflow-y: auto;
+}

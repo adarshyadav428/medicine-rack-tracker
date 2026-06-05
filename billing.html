@@ -312,8 +312,24 @@
     <!-- Print receipt area — hidden on screen, shown only when printing -->
     <div id="print-receipt-area" class="print-receipt-area" aria-hidden="true"></div>
 
+    <!-- Receipt view modal -->
+    <div id="receipt-modal" class="receipt-modal hidden" role="dialog" aria-modal="true" aria-label="Receipt preview">
+      <div class="receipt-modal-backdrop" id="receipt-modal-backdrop"></div>
+      <div class="receipt-modal-panel">
+        <div class="receipt-modal-toolbar">
+          <span class="receipt-modal-ref" id="receipt-modal-ref">Receipt</span>
+          <div class="receipt-modal-actions">
+            <button class="btn btn-secondary btn-xs" id="receipt-modal-print-btn" type="button">🖨️ Print</button>
+            <button class="btn btn-ghost btn-xs" id="receipt-modal-share-btn" type="button">📤 Share</button>
+            <button class="receipt-modal-close" id="receipt-modal-close-btn" type="button" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <div class="receipt-modal-body" id="receipt-modal-body"></div>
+      </div>
+    </div>
+
     <script src="sync-config.js"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260603"></script>
+    <script src="billing.js?v=20260606"></script>
   </body>
 </html>
