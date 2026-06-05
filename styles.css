@@ -956,6 +956,8 @@ button:focus-visible {
 /* ── Add medicines section ────────────────────────────────── */
 .billing-add-panel {
   background: linear-gradient(145deg, #f5fafa, #f2faf8);
+  position: relative;
+  z-index: 2; /* keep above sibling panels so dropdown isn't clipped */
 }
 
 .billing-add-header {
