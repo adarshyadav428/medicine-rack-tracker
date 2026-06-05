@@ -281,12 +281,20 @@
       metaParts.push(stockLabel);
 
       el.innerHTML =
-        '<span class="medicine-dropdown-name">' + item.medicineName + "</span>" +
-        '<span class="medicine-dropdown-meta">' + metaParts.join(" · ") + "</span>";
+        '<div class="medicine-dropdown-item-content">' +
+          '<span class="medicine-dropdown-name">' + item.medicineName + "</span>" +
+          '<span class="medicine-dropdown-meta">' + metaParts.join(" · ") + "</span>" +
+        '</div>' +
+        '<button class="medicine-dropdown-edit-btn" type="button" title="Edit medicine in inventory">✏</button>';
 
       // Use mousedown so blur doesn't hide dropdown before click fires
       el.addEventListener("mousedown", function (e) {
         e.preventDefault();
+        if (e.target.closest(".medicine-dropdown-edit-btn")) {
+          hideDropdown();
+          showMedicineEditModal(item);
+          return;
+        }
         addLineItem(item);
         hideDropdown();
       });
@@ -498,6 +506,176 @@
   }
 
   // -------------------------------------------------------------------------
+  // Edit existing inventory medicine modal
+  // -------------------------------------------------------------------------
+  function showMedicineEditModal(invItem) {
+    var existing = document.getElementById("manual-add-overlay");
+    if (existing) existing.parentNode.removeChild(existing);
+
+    var curPurchase = invItem.purchasePrice !== null && invItem.purchasePrice !== undefined
+      ? invItem.purchasePrice
+      : (invItem.rate !== null && invItem.rate !== undefined ? invItem.rate : "");
+    var curSell = invItem.sellingPrice !== null && invItem.sellingPrice !== undefined
+      ? invItem.sellingPrice
+      : (invItem.sellPrice !== null && invItem.sellPrice !== undefined ? invItem.sellPrice : "");
+    var curMarkup = (curPurchase !== "" && curPurchase > 0 && curSell !== "")
+      ? round2((curSell - curPurchase) / curPurchase * 100) : "";
+
+    var overlay = document.createElement("div");
+    overlay.id = "manual-add-overlay";
+    overlay.className = "manual-add-overlay";
+    overlay.innerHTML = [
+      '<div class="manual-add-modal">',
+        '<div class="manual-add-header">',
+          '<h3>Edit Medicine</h3>',
+          '<button class="manual-add-close" id="manual-add-close" type="button" aria-label="Close">✕</button>',
+        '</div>',
+        '<div class="manual-add-body">',
+          '<p class="manual-add-hint">Changes will be saved to your inventory immediately.</p>',
+          '<div class="manual-add-fields">',
+            '<div class="manual-add-field manual-add-field--wide">',
+              '<label for="manual-name">Medicine Name *</label>',
+              '<input type="text" id="manual-name" autocomplete="off" maxlength="200" value="' + (invItem.medicineName || "") + '" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-mrp">MRP (&#8377;) *</label>',
+              '<input type="number" id="manual-mrp" min="0" step="0.01" value="' + (invItem.mrp !== null && invItem.mrp !== undefined ? invItem.mrp : "") + '" placeholder="0.00" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-purchase">Purchase Price (&#8377;) *</label>',
+              '<input type="number" id="manual-purchase" min="0" step="0.01" value="' + curPurchase + '" placeholder="0.00" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-markup">Markup % <span class="manual-optional">(optional)</span></label>',
+              '<input type="number" id="manual-markup" min="-100" step="0.01" value="' + curMarkup + '" placeholder="auto" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-sell">Sell Price (&#8377;) <span class="manual-optional">(optional)</span></label>',
+              '<input type="number" id="manual-sell" min="0" step="0.01" value="' + curSell + '" placeholder="auto" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-location">Rack / Location <span class="manual-optional">(optional)</span></label>',
+              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" value="' + (invItem.location || "") + '" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-stock-qty">Stock Qty <span class="manual-optional">(optional)</span></label>',
+              '<input type="number" id="manual-stock-qty" min="0" step="1" value="' + (invItem.quantity !== null && invItem.quantity !== undefined ? invItem.quantity : "") + '" placeholder="?" />',
+            '</div>',
+          '</div>',
+          '<p class="manual-add-save-status" id="manual-add-save-status"></p>',
+        '</div>',
+        '<div class="manual-add-footer">',
+          '<button class="btn btn-ghost" id="manual-add-cancel" type="button">Cancel</button>',
+          '<button class="btn btn-primary" id="manual-add-submit" type="button">Save Changes</button>',
+        '</div>',
+      '</div>',
+    ].join("");
+
+    document.body.appendChild(overlay);
+
+    var nameEl     = document.getElementById("manual-name");
+    var locationEl = document.getElementById("manual-location");
+    var mrpEl      = document.getElementById("manual-mrp");
+    var purchaseEl = document.getElementById("manual-purchase");
+    var markupEl   = document.getElementById("manual-markup");
+    var sellEl     = document.getElementById("manual-sell");
+    var stockQtyEl = document.getElementById("manual-stock-qty");
+    var saveStatusEl = document.getElementById("manual-add-save-status");
+
+    function recalcSell() {
+      var p = parseFloat(purchaseEl.value), m = parseFloat(markupEl.value);
+      if (!isNaN(p) && !isNaN(m)) sellEl.value = round2(p * (1 + m / 100));
+    }
+    function recalcMarkup() {
+      var p = parseFloat(purchaseEl.value), s = parseFloat(sellEl.value);
+      if (!isNaN(p) && p > 0 && !isNaN(s)) markupEl.value = round2((s - p) / p * 100);
+    }
+    purchaseEl.addEventListener("input", recalcSell);
+    markupEl.addEventListener("input", recalcSell);
+    sellEl.addEventListener("input", recalcMarkup);
+
+    function closeModal() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      if (bEl.search) bEl.search.focus();
+    }
+
+    async function submitEdit() {
+      var name = (nameEl.value || "").trim();
+      if (!name) { nameEl.focus(); return; }
+      var mrpRaw = parseFloat(mrpEl.value);
+      if (isNaN(mrpRaw) || mrpRaw < 0) { mrpEl.focus(); return; }
+      var purchaseRaw = parseFloat(purchaseEl.value);
+      if (isNaN(purchaseRaw) || purchaseRaw < 0) { purchaseEl.focus(); return; }
+
+      var markupRaw = parseFloat(markupEl.value);
+      var sellRaw   = parseFloat(sellEl.value);
+      if (isNaN(sellRaw) || sellRaw < 0) sellRaw = mrpRaw;
+      if (isNaN(markupRaw) && purchaseRaw > 0) markupRaw = round2((sellRaw - purchaseRaw) / purchaseRaw * 100);
+      var locationVal = (locationEl.value || "").trim() || "—";
+      var stockQtyRaw = parseInt(stockQtyEl.value, 10);
+
+      var submitBtn = document.getElementById("manual-add-submit");
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
+      if (saveStatusEl) { saveStatusEl.textContent = ""; saveStatusEl.className = "manual-add-save-status"; }
+
+      try {
+        var result = await requestApi("/api/medicines", {
+          method: "POST",
+          body: {
+            item: {
+              id:            invItem.id,
+              medicineName:  name,
+              location:      locationVal,
+              mrp:           mrpRaw,
+              purchasePrice: purchaseRaw,
+              sellingPrice:  sellRaw,
+              quantity:      isNaN(stockQtyRaw) ? null : stockQtyRaw,
+            },
+          },
+        });
+
+        if (result && result.item) {
+          var updated = result.item;
+          var idx = state.items.findIndex(function (it) { return it.id === invItem.id; });
+          if (idx >= 0) state.items[idx] = updated; else state.items.unshift(updated);
+          if (typeof saveLocalItems === "function") saveLocalItems(state.items);
+
+          // Refresh any matching line items in the current bill
+          bState.lineItems.forEach(function (li) {
+            if (li.medicineId === invItem.id) {
+              li.medicineName  = updated.medicineName;
+              li.location      = updated.location;
+              li.mrp           = updated.mrp;
+              li.purchasePrice = updated.purchasePrice !== null && updated.purchasePrice !== undefined
+                ? updated.purchasePrice : updated.rate;
+            }
+          });
+          renderLineItems();
+          recalcTotals();
+        }
+
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (bEl.search) bEl.search.focus();
+
+      } catch (err) {
+        if (saveStatusEl) {
+          saveStatusEl.textContent = "⚠ Save failed: " + (err.message || "unknown");
+          saveStatusEl.className = "manual-add-save-status is-warn";
+        }
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save Changes"; }
+      }
+    }
+
+    document.getElementById("manual-add-close").addEventListener("click", closeModal);
+    document.getElementById("manual-add-cancel").addEventListener("click", closeModal);
+    document.getElementById("manual-add-submit").addEventListener("click", submitEdit);
+    overlay.addEventListener("mousedown", function (e) { if (e.target === overlay) closeModal(); });
+    overlay.addEventListener("keydown", function (e) { if (e.key === "Escape") closeModal(); });
+
+    setTimeout(function () { if (mrpEl) { mrpEl.focus(); mrpEl.select(); } }, 50);
+  }
+
+  // -------------------------------------------------------------------------
   // Line Item Management
   // -------------------------------------------------------------------------
   function addLineItem(medicine) {
@@ -646,7 +824,12 @@
         "</td>" +
         '<td class="num-col"><span id="total-' + item._rowId + '" class="bill-item-line-total">' + fmtMoney(lineTotal) + "</span></td>" +
         "<td>" +
+          '<div class="bill-row-actions">' +
+          (item.medicineId
+            ? '<button class="btn btn-ghost btn-xs bill-edit-inv-btn" data-edit-inv="' + item._rowId + '" title="Edit medicine in inventory" type="button">✏</button>'
+            : '') +
           '<button class="btn btn-danger btn-xs bill-remove-btn" data-remove="' + item._rowId + '" title="Remove this line" type="button">✕</button>' +
+          '</div>' +
         "</td>";
 
       frag.appendChild(tr);
@@ -658,6 +841,16 @@
     bEl.itemsTbody.querySelectorAll("[data-remove]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         removeLineItem(btn.dataset.remove);
+      });
+    });
+
+    bEl.itemsTbody.querySelectorAll("[data-edit-inv]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var rowId = btn.dataset.editInv;
+        var li = bState.lineItems.find(function (x) { return x._rowId === rowId; });
+        if (!li || !li.medicineId) return;
+        var invItem = (state.items || []).find(function (x) { return x.id === li.medicineId; });
+        if (invItem) showMedicineEditModal(invItem);
       });
     });
 

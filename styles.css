@@ -1020,8 +1020,9 @@ button:focus-visible {
   cursor: pointer;
   border-bottom: 1px solid #f0f4f7;
   transition: background 0.1s ease;
-  display: grid;
-  gap: 0.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .medicine-dropdown-item:last-child {
@@ -1047,6 +1048,62 @@ button:focus-visible {
 
 .medicine-dropdown-item.medicine-dropdown-empty:hover {
   background: transparent;
+}
+
+.medicine-dropdown-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.medicine-dropdown-edit-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.22rem 0.4rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.medicine-dropdown-item:hover .medicine-dropdown-edit-btn,
+.medicine-dropdown-item--active .medicine-dropdown-edit-btn {
+  opacity: 1;
+}
+
+.medicine-dropdown-edit-btn:hover {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  border-color: var(--brand);
+}
+
+.bill-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  justify-content: flex-end;
+}
+
+.bill-edit-inv-btn {
+  color: var(--muted);
+  border-color: var(--line);
+  font-size: 0.78rem;
+  padding: 0.22rem 0.4rem;
+  opacity: 0.55;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.bill-edit-inv-btn:hover {
+  opacity: 1;
+  color: var(--brand-strong);
+  border-color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .medicine-dropdown-add-manual {
