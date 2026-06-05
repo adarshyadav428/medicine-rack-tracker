@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260603-billing" />
+    <link rel="stylesheet" href="styles.css?v=20260605-billing-redesign" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -41,29 +41,32 @@
 
     <main class="page-shell">
 
-      <!-- Page header + status -->
-      <section class="panel fade-up">
-        <div class="panel-headline">
+      <!-- ── Page hero banner ───────────────────────────────────────── -->
+      <section class="billing-page-hero fade-up">
+        <div class="billing-hero-text">
+          <div class="billing-hero-eyebrow">Adarsh Medicals · Admin Only</div>
           <h1 class="page-title">Billing</h1>
-          <p>Create and manage bills directly from your inventory. Admin access only.</p>
+          <p>Create bills from your live inventory, track history, and print receipts.</p>
         </div>
         <p id="billing-status" class="status-message is-info">Loading…</p>
       </section>
 
-      <!-- ── Bill Header ─────────────────────────────────────────────── -->
-      <section id="bill-form-section" class="panel fade-up delay-1">
-        <div class="bill-form-header">
-          <div class="bill-number-display">
-            <span class="bill-meta-label">Bill No.</span>
+      <!-- ── Bill form card ─────────────────────────────────────────── -->
+      <section id="bill-form-section" class="panel billing-form-card fade-up delay-1">
+        <!-- Bill number + date bar -->
+        <div class="bill-header-row">
+          <div class="bill-num-block">
+            <span class="bill-num-chip">Bill No.</span>
             <span id="bill-number-preview" class="bill-number-value">New Bill</span>
           </div>
-          <div class="bill-number-display">
+          <div class="bill-date-block">
             <span class="bill-meta-label">Date</span>
-            <span id="bill-date-value" class="bill-number-value bill-date-text"></span>
+            <span id="bill-date-value" class="bill-date-text"></span>
           </div>
         </div>
 
-        <div class="two-col-fields bill-customer-grid">
+        <!-- Customer fields — 3 columns -->
+        <div class="bill-fields-row">
           <div>
             <label for="bill-customer-name">Customer Name</label>
             <input
@@ -84,33 +87,33 @@
               autocomplete="off"
             />
           </div>
-        </div>
-
-        <div style="margin-top: 0.64rem;">
-          <label for="bill-notes">Notes (optional)</label>
-          <input
-            id="bill-notes"
-            type="text"
-            placeholder="e.g. Doctor prescribed, batch no., etc."
-            maxlength="240"
-          />
+          <div>
+            <label for="bill-notes">Notes (optional)</label>
+            <input
+              id="bill-notes"
+              type="text"
+              placeholder="Doctor prescribed, batch no., etc."
+              maxlength="240"
+            />
+          </div>
         </div>
       </section>
 
-      <!-- ── Medicine Search & Line Items ───────────────────────────── -->
-      <section class="panel fade-up delay-2">
-        <div class="panel-headline">
-          <h2>Add Medicines</h2>
-          <p>Search by medicine name and click to add to the bill.</p>
+      <!-- ── Medicine search & line items ──────────────────────────── -->
+      <section class="panel billing-add-panel fade-up delay-2">
+        <div class="billing-add-header">
+          <div class="panel-headline" style="margin-bottom:0;">
+            <h2>Add Medicines</h2>
+            <p>Search by name and click to add to the bill.</p>
+          </div>
         </div>
 
-        <div class="billing-search-wrap">
-          <label for="billing-search">Search Medicine</label>
+        <div class="billing-search-wrap" style="margin-top:0.88rem;">
           <div class="billing-search-field-wrap">
             <input
               id="billing-search"
               type="search"
-              placeholder="Type medicine name to search… (min. 2 characters)"
+              placeholder="Search medicine name… (min. 2 characters)"
               autocomplete="off"
               aria-autocomplete="list"
               aria-controls="billing-search-dropdown"
@@ -126,10 +129,11 @@
           ></div>
         </div>
 
-        <!-- Line Items -->
-        <div id="bill-line-items-wrap" style="margin-top: 1.1rem;">
-          <p id="bill-items-empty" class="empty-state">
-            Search and add medicines above to begin the bill.
+        <!-- Line items -->
+        <div id="bill-line-items-wrap" style="margin-top:1rem;">
+          <p id="bill-items-empty" class="billing-empty-state">
+            <span class="billing-empty-icon">💊</span>
+            Search above and click a medicine to add it here.
           </p>
 
           <div id="bill-items-table-wrap" class="hidden">
@@ -154,66 +158,72 @@
         </div>
       </section>
 
-      <!-- ── Bill Summary & Actions ──────────────────────────────────── -->
-      <section class="panel fade-up delay-3">
-        <div class="bill-summary-grid">
-          <div class="bill-summary-left">
-            <label for="bill-gst-percent">GST / Tax (%)</label>
-            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.32rem;">
-              <input
-                id="bill-gst-percent"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                placeholder="0"
-                value="0"
-                style="max-width:120px;"
-              />
-              <span style="font-size:0.82rem;color:var(--muted);">applied on subtotal</span>
+      <!-- ── Bill summary & actions ─────────────────────────────────── -->
+      <section class="panel billing-summary-card fade-up delay-3">
+        <div class="bill-totals-layout">
+
+          <!-- Left: breakdown + GST input -->
+          <div class="bill-totals-left">
+            <div class="bill-breakdown-box">
+              <div class="bill-breakdown-row">
+                <span>Subtotal</span>
+                <span id="summary-subtotal" class="summary-amount">₹0.00</span>
+              </div>
+              <div class="bill-breakdown-row" id="gst-summary-row">
+                <span id="gst-label-text">GST (0%)</span>
+                <span id="summary-gst" class="summary-amount">₹0.00</span>
+              </div>
+              <div class="bill-breakdown-row bill-breakdown-items-row">
+                <span>Line Items</span>
+                <span id="summary-items-count">0</span>
+              </div>
+            </div>
+
+            <div class="bill-gst-field">
+              <label for="bill-gst-percent">GST / Tax %</label>
+              <div class="bill-gst-input-row">
+                <input
+                  id="bill-gst-percent"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="0"
+                  value="0"
+                />
+                <span class="bill-gst-hint">applied on subtotal</span>
+              </div>
             </div>
           </div>
 
-          <div class="bill-summary-box">
-            <div class="summary-row">
-              <span>Subtotal</span>
-              <span id="summary-subtotal" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row" id="gst-summary-row">
-              <span id="gst-label-text">GST (0%)</span>
-              <span id="summary-gst" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row summary-total-row">
-              <span>Grand Total</span>
-              <span id="summary-grand-total" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row summary-items-row">
-              <span>Line Items</span>
-              <span id="summary-items-count">0</span>
-            </div>
+          <!-- Right: grand total -->
+          <div class="bill-grand-total-block">
+            <p class="bill-grand-total-label">Grand Total</p>
+            <span id="summary-grand-total" class="bill-grand-total-value">₹0.00</span>
           </div>
         </div>
 
+        <!-- Action buttons -->
         <div class="bill-actions-bar">
-          <button id="save-bill-button" class="btn btn-primary" type="button">
+          <button id="save-bill-button" class="btn btn-primary bill-btn-main" type="button">
             💾 Save Bill
           </button>
-          <button id="print-bill-button" class="btn btn-secondary" type="button" disabled>
-            🖨️ Print
+          <button id="print-bill-button" class="btn btn-secondary bill-btn-main" type="button" disabled>
+            🖨️ Print Receipt
           </button>
-          <button id="new-bill-button" class="btn btn-ghost" type="button">
+          <button id="new-bill-button" class="btn btn-ghost bill-btn-main" type="button">
             ✨ New Bill
           </button>
         </div>
 
-        <p id="bill-save-status" class="status-message" style="margin-top: 0.72rem;"></p>
+        <p id="bill-save-status" class="status-message" style="margin-top:0.72rem;"></p>
       </section>
 
-      <!-- ── Bill History ───────────────────────────────────────────── -->
+      <!-- ── Bill history ───────────────────────────────────────────── -->
       <section class="panel fade-up delay-3" id="bill-history-section">
         <div class="panel-headline">
           <h2>Bill History</h2>
-          <p>All bills created from this portal (most recent first).</p>
+          <p>All bills created from this portal — most recent first.</p>
         </div>
         <div id="bill-history-container">
           <p class="empty-state">Loading bill history…</p>
