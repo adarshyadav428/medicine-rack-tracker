@@ -1680,6 +1680,16 @@ button:focus-visible {
   box-shadow: var(--ring);
 }
 
+.manual-add-save-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  min-height: 1rem;
+}
+
+.manual-add-save-status.is-warn {
+  color: #b45309;
+}
+
 .manual-add-footer {
   display: flex;
   justify-content: flex-end;

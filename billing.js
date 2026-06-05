@@ -323,15 +323,19 @@
     overlay.innerHTML = [
       '<div class="manual-add-modal">',
         '<div class="manual-add-header">',
-          '<h3>Add Medicine Manually</h3>',
+          '<h3>Add New Medicine</h3>',
           '<button class="manual-add-close" id="manual-add-close" type="button" aria-label="Close">✕</button>',
         '</div>',
         '<div class="manual-add-body">',
-          '<p class="manual-add-hint">This item will be added to the current bill only — it will not be saved to your inventory.</p>',
+          '<p class="manual-add-hint">Medicine will be saved to your inventory and added to this bill.</p>',
           '<div class="manual-add-fields">',
             '<div class="manual-add-field manual-add-field--wide">',
               '<label for="manual-name">Medicine Name *</label>',
               '<input type="text" id="manual-name" autocomplete="off" maxlength="200" placeholder="e.g. Paracetamol 500mg Tab" />',
+            '</div>',
+            '<div class="manual-add-field manual-add-field--wide">',
+              '<label for="manual-location">Rack / Location *</label>',
+              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" placeholder="e.g. A3, Shelf 2, Counter" />',
             '</div>',
             '<div class="manual-add-field">',
               '<label for="manual-mrp">MRP (&#8377;)</label>',
@@ -350,14 +354,15 @@
               '<input type="number" id="manual-sell" min="0" step="0.01" placeholder="0.00" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-qty">Quantity *</label>',
+              '<label for="manual-qty">Bill Quantity *</label>',
               '<input type="number" id="manual-qty" min="1" step="1" value="1" placeholder="1" />',
             '</div>',
           '</div>',
+          '<p class="manual-add-save-status" id="manual-add-save-status"></p>',
         '</div>',
         '<div class="manual-add-footer">',
           '<button class="btn btn-ghost" id="manual-add-cancel" type="button">Cancel</button>',
-          '<button class="btn btn-primary" id="manual-add-submit" type="button">Add to Bill</button>',
+          '<button class="btn btn-primary" id="manual-add-submit" type="button">Save &amp; Add to Bill</button>',
         '</div>',
       '</div>',
     ].join("");
@@ -365,11 +370,13 @@
     document.body.appendChild(overlay);
 
     var nameEl     = document.getElementById("manual-name");
+    var locationEl = document.getElementById("manual-location");
     var mrpEl      = document.getElementById("manual-mrp");
     var purchaseEl = document.getElementById("manual-purchase");
     var markupEl   = document.getElementById("manual-markup");
     var sellEl     = document.getElementById("manual-sell");
     var qtyEl      = document.getElementById("manual-qty");
+    var saveStatusEl = document.getElementById("manual-add-save-status");
 
     if (prefillName && nameEl) nameEl.value = prefillName;
 
@@ -398,9 +405,11 @@
       if (bEl.search) bEl.search.focus();
     }
 
-    function submitManual() {
+    async function submitManual() {
       var name = (nameEl.value || "").trim();
       if (!name) { nameEl.focus(); return; }
+      var locationVal = (locationEl.value || "").trim();
+      if (!locationVal) { locationEl.focus(); return; }
       var sellRaw = parseFloat(sellEl.value);
       if (isNaN(sellRaw) || sellRaw < 0) { sellEl.focus(); return; }
 
@@ -409,12 +418,44 @@
       var purchaseRaw = parseFloat(purchaseEl.value);
       var markupRaw   = parseFloat(markupEl.value);
 
+      var submitBtn = document.getElementById("manual-add-submit");
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
+      if (saveStatusEl) { saveStatusEl.textContent = ""; saveStatusEl.className = "manual-add-save-status"; }
+
+      var savedItem = null;
+      try {
+        var result = await requestApi("/api/medicines", {
+          method: "POST",
+          body: {
+            item: {
+              medicineName:  name,
+              location:      locationVal,
+              mrp:           isNaN(mrpRaw)      ? null : mrpRaw,
+              purchasePrice: isNaN(purchaseRaw) ? null : purchaseRaw,
+              sellingPrice:  sellRaw,
+              quantity:      null,
+            },
+          },
+        });
+        if (result && result.item) {
+          savedItem = result.item;
+          state.items.unshift(savedItem);
+          if (typeof saveLocalItems === "function") saveLocalItems(state.items);
+        }
+      } catch (err) {
+        if (saveStatusEl) {
+          saveStatusEl.textContent = "⚠ Inventory save failed (" + (err.message || "unknown") + ") — adding to bill only.";
+          saveStatusEl.className = "manual-add-save-status is-warn";
+        }
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save & Add to Bill"; }
+      }
+
       var rowId = "row-" + (bState.nextRowId++);
       bState.lineItems.push({
         _rowId:        rowId,
-        medicineId:    null,
+        medicineId:    savedItem ? savedItem.id : null,
         medicineName:  name,
-        location:      "",
+        location:      locationVal,
         mrp:           isNaN(mrpRaw)      ? null : mrpRaw,
         purchasePrice: isNaN(purchaseRaw) ? null : purchaseRaw,
         sellPrice:     sellRaw,
