@@ -52,8 +52,11 @@
     printBillButton:  document.getElementById("print-bill-button"),
     newBillButton:    document.getElementById("new-bill-button"),
     saveStatus:       document.getElementById("bill-save-status"),
-    historyContainer: document.getElementById("bill-history-container"),
-    printArea:        document.getElementById("print-receipt-area"),
+    historyContainer:      document.getElementById("bill-history-container"),
+    printArea:             document.getElementById("print-receipt-area"),
+    savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
+    saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
+    saveCustomerStatus:    document.getElementById("bill-save-customer-status"),
   };
 
   // -------------------------------------------------------------------------
@@ -95,6 +98,74 @@
     if (!bEl.saveStatus) return;
     bEl.saveStatus.textContent = msg || "";
     bEl.saveStatus.className = "status-message" + (tone ? " " + tone : "");
+  }
+
+  // -------------------------------------------------------------------------
+  // Saved customers (localStorage)
+  // -------------------------------------------------------------------------
+  var CUSTOMERS_KEY = "medicineRackTracker.customers.v1";
+
+  function loadSavedCustomers() {
+    try { return JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]"); } catch (_) { return []; }
+  }
+
+  function persistSavedCustomers(list) {
+    try { localStorage.setItem(CUSTOMERS_KEY, JSON.stringify(list)); } catch (_) {}
+  }
+
+  function renderCustomerSelect() {
+    if (!bEl.savedCustomerSelect) return;
+    var list = loadSavedCustomers();
+    bEl.savedCustomerSelect.textContent = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = list.length ? "— Select a saved customer —" : "— No saved customers yet —";
+    bEl.savedCustomerSelect.appendChild(placeholder);
+    list.forEach(function (c, i) {
+      var opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = c.name + (c.phone ? "  ·  " + c.phone : "");
+      bEl.savedCustomerSelect.appendChild(opt);
+    });
+  }
+
+  function onSavedCustomerChange() {
+    var idx = parseInt(bEl.savedCustomerSelect ? bEl.savedCustomerSelect.value : "", 10);
+    if (isNaN(idx)) return;
+    var list = loadSavedCustomers();
+    var c = list[idx];
+    if (!c) return;
+    if (bEl.customerName)  bEl.customerName.value  = c.name  || "";
+    if (bEl.customerPhone) bEl.customerPhone.value = c.phone || "";
+    setSaveCustomerStatus("", "");
+  }
+
+  function setSaveCustomerStatus(msg, tone) {
+    if (!bEl.saveCustomerStatus) return;
+    bEl.saveCustomerStatus.textContent = msg || "";
+    bEl.saveCustomerStatus.className = "bill-save-customer-hint" + (tone ? " " + tone : "");
+  }
+
+  function saveCurrentCustomer() {
+    var name  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
+    var phone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    if (!name) {
+      setSaveCustomerStatus("Enter a customer name first.", "is-warn");
+      return;
+    }
+    var list = loadSavedCustomers();
+    var idx = list.findIndex(function (c) {
+      return c.name.toLowerCase() === name.toLowerCase();
+    });
+    if (idx >= 0) {
+      list[idx] = { name: name, phone: phone };
+      setSaveCustomerStatus("Customer updated.", "is-ok");
+    } else {
+      list.push({ name: name, phone: phone });
+      setSaveCustomerStatus("Customer saved.", "is-ok");
+    }
+    persistSavedCustomers(list);
+    renderCustomerSelect();
   }
 
   // -------------------------------------------------------------------------
@@ -458,7 +529,7 @@
   }
 
   function buildReceiptHtml(overrides) {
-    var customer = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "") || "Walk-in Customer";
+    var customer = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
     var phone    = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
     var notes    = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
     var gstPct   = (overrides && overrides.gstPercent !== undefined) ? overrides.gstPercent : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
@@ -474,125 +545,122 @@
     var gstAmt     = round2(subtotal * gstPct / 100);
     var grandTotal = round2(subtotal + gstAmt);
 
-    var intPart   = Math.floor(grandTotal);
-    var decPart   = Math.round((grandTotal - intPart) * 100);
-    var amtWords  = "Rupees " + numToWords(intPart) + (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only";
+    var intPart  = Math.floor(grandTotal);
+    var decPart  = Math.round((grandTotal - intPart) * 100);
+    var amtWords = "Rupees " + numToWords(intPart) + (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only";
 
     var rowsHtml = items.map(function (it, idx) {
       var name  = it.medicine_name || it.medicineName || "—";
-      var mrp   = (it.mrp !== null && it.mrp !== undefined) ? "₹" + Number(it.mrp).toFixed(2) : "—";
+      var mrp   = (it.mrp !== null && it.mrp !== undefined) ? "&#8377;" + Number(it.mrp).toFixed(2) : "—";
       var qty   = it.quantity;
       var price = it.sell_price !== undefined ? it.sell_price : it.sellPrice;
       var total = round2(price * qty);
-      var bg    = idx % 2 === 0 ? "#fff" : "#f9fbfc";
+      var bg    = idx % 2 === 0 ? "#ffffff" : "#f5faf9";
       return (
         "<tr style='background:" + bg + ";'>" +
-          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:center;color:#666;font-size:11px;'>" + (idx + 1) + "</td>" +
-          "<td style='padding:5px 8px;border:1px solid #dde3e7;font-size:12.5px;font-weight:600;'>" + name + "</td>" +
-          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:11.5px;color:#555;'>" + mrp + "</td>" +
-          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:center;font-size:12.5px;font-weight:700;'>" + qty + "</td>" +
-          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:12px;'>₹" + Number(price).toFixed(2) + "</td>" +
-          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:12.5px;font-weight:700;'>₹" + Number(total).toFixed(2) + "</td>" +
+          "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;color:#7a9a96;font-size:11px;font-family:monospace;'>" + (idx + 1) + "</td>" +
+          "<td style='padding:6px 10px;border:1px solid #d4e8e5;font-size:12.5px;font-weight:600;color:#0d2a28;'>" + name + "</td>" +
+          "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:11px;color:#7a9a96;font-family:monospace;'>" + mrp + "</td>" +
+          "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;font-size:13px;font-weight:700;color:#0d2a28;'>" + qty + "</td>" +
+          "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:12px;font-family:monospace;color:#2c5f5b;'>&#8377;" + Number(price).toFixed(2) + "</td>" +
+          "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:12.5px;font-weight:700;font-family:monospace;color:#085f59;'>&#8377;" + Number(total).toFixed(2) + "</td>" +
         "</tr>"
       );
     }).join("");
 
     return (
-      "<div style='font-family:Arial,\"Helvetica Neue\",sans-serif;max-width:720px;margin:0 auto;padding:20px 24px;color:#000;border:1.5px solid #ccc;'>" +
+      "<div style='font-family:Arial,\"Helvetica Neue\",sans-serif;max-width:740px;margin:0 auto;color:#0d2a28;'>" +
 
-        /* ── Store header ── */
-        "<div style='text-align:center;padding-bottom:10px;border-bottom:2px solid #000;margin-bottom:10px;'>" +
-          "<div style='font-size:22px;font-weight:900;letter-spacing:2px;text-transform:uppercase;'>Adarsh Medicals</div>" +
-          "<div style='font-size:12px;margin-top:3px;'>Khasra No. 157, Thekma, Near Bus Stop, Martinganj, Azamgarh, U.P. – 276303</div>" +
-          "<div style='font-size:12px;'>Mob: 8470900910</div>" +
-          "<div style='font-size:10.5px;margin-top:5px;border-top:1px dashed #bbb;padding-top:4px;color:#333;'>" +
-            "Drug Lic. (Form 20): <strong>RLF20UP2025023538</strong>" +
+        /* ── Teal header ── */
+        "<div style='background:linear-gradient(135deg,#0b6d67 0%,#0d5c80 100%);padding:16px 22px;border-radius:6px 6px 0 0;'>" +
+          "<div style='display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;'>" +
+            "<div>" +
+              "<div style='font-size:23px;font-weight:900;letter-spacing:2.5px;text-transform:uppercase;color:#ffffff;'>Adarsh Medicals</div>" +
+              "<div style='font-size:11px;margin-top:3px;color:rgba(255,255,255,0.75);'>Khasra No. 157, Thekma, Near Bus Stop, Martinganj, Azamgarh, U.P. – 276303</div>" +
+              "<div style='font-size:11px;color:rgba(255,255,255,0.75);'>Mob: 8470900910</div>" +
+            "</div>" +
+            "<div style='text-align:right;'>" +
+              "<div style='font-size:9.5px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.55);'>TAX INVOICE</div>" +
+              "<div style='font-size:15px;font-weight:800;font-family:monospace;color:#8febe4;margin-top:2px;letter-spacing:0.5px;'>" + billNo + "</div>" +
+              "<div style='font-size:11px;color:rgba(255,255,255,0.68);margin-top:3px;'>" + dateStr + " &nbsp;·  " + timeStr + "</div>" +
+            "</div>" +
+          "</div>" +
+          "<div style='margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.2);font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:0.3px;'>" +
+            "Drug Lic. (Form 20): <strong style='color:rgba(255,255,255,0.88);'>RLF20UP2025023538</strong>" +
             "&nbsp;&nbsp;|&nbsp;&nbsp;" +
-            "Drug Lic. (Form 21): <strong>RLF21UP2025023481</strong>" +
+            "Drug Lic. (Form 21): <strong style='color:rgba(255,255,255,0.88);'>RLF21UP2025023481</strong>" +
           "</div>" +
         "</div>" +
 
-        /* ── Invoice title ── */
-        "<div style='text-align:center;font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;color:#333;'>Cash Memo / Retail Invoice</div>" +
-
-        /* ── Bill meta + customer ── */
-        "<div style='display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:12px;'>" +
-          "<div style='border:1px solid #ccc;padding:7px 10px;border-radius:4px;flex:1;'>" +
-            "<div style='font-size:10px;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:4px;letter-spacing:1px;'>Bill To</div>" +
-            "<div style='font-size:13px;font-weight:700;'>" + customer + "</div>" +
-            (phone ? "<div style='margin-top:2px;'>Mob: " + phone + "</div>" : "") +
-          "</div>" +
-          "<div style='border:1px solid #ccc;padding:7px 10px;border-radius:4px;text-align:right;min-width:165px;'>" +
-            "<div style='font-size:10px;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:4px;letter-spacing:1px;'>Bill Details</div>" +
-            "<div><strong>Bill No:</strong> " + billNo + "</div>" +
-            "<div><strong>Date:</strong> " + dateStr + "</div>" +
-            "<div><strong>Time:</strong> " + timeStr + "</div>" +
-          "</div>" +
+        /* ── Bill To band ── */
+        "<div style='border:1px solid #c4e2de;border-top:none;padding:10px 18px;background:#f0faf8;'>" +
+          "<div style='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#5a9490;margin-bottom:4px;'>Bill To</div>" +
+          (customer
+            ? "<div style='font-size:14px;font-weight:700;color:#0d2a28;'>" + customer + "</div>"
+            : "<div style='font-size:13px;color:#7a9a96;font-style:italic;'>—</div>") +
+          (phone ? "<div style='font-size:11.5px;color:#3d6560;margin-top:2px;'>Mob: " + phone + "</div>" : "") +
         "</div>" +
 
         /* ── Items table ── */
-        "<table style='width:100%;border-collapse:collapse;font-size:12px;'>" +
+        "<table style='width:100%;border-collapse:collapse;font-size:12px;margin:0;'>" +
           "<thead>" +
-            "<tr style='background:#f0f4f6;'>" +
-              "<th style='padding:7px;border:1px solid #ccc;text-align:center;width:30px;font-size:11px;'>#</th>" +
-              "<th style='padding:7px 9px;border:1px solid #ccc;text-align:left;'>Medicine Name</th>" +
-              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:68px;'>MRP</th>" +
-              "<th style='padding:7px;border:1px solid #ccc;text-align:center;width:42px;'>Qty</th>" +
-              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:72px;'>Rate</th>" +
-              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:82px;'>Amount</th>" +
+            "<tr style='background:#e4f4f1;'>" +
+              "<th style='padding:8px;border:1px solid #c4e2de;text-align:center;width:28px;font-size:10px;color:#3d6560;'>#</th>" +
+              "<th style='padding:8px 10px;border:1px solid #c4e2de;text-align:left;color:#0d2a28;'>Medicine Name</th>" +
+              "<th style='padding:8px;border:1px solid #c4e2de;text-align:right;width:68px;color:#3d6560;'>MRP</th>" +
+              "<th style='padding:8px;border:1px solid #c4e2de;text-align:center;width:40px;color:#0d2a28;'>Qty</th>" +
+              "<th style='padding:8px;border:1px solid #c4e2de;text-align:right;width:72px;color:#0d2a28;'>Rate</th>" +
+              "<th style='padding:8px;border:1px solid #c4e2de;text-align:right;width:86px;color:#085f59;'>Amount</th>" +
             "</tr>" +
           "</thead>" +
           "<tbody>" + rowsHtml + "</tbody>" +
         "</table>" +
 
-        /* ── Totals block (right-aligned) ── */
-        "<div style='display:flex;justify-content:flex-end;'>" +
-          "<div style='min-width:270px;border:1px solid #ccc;border-top:none;font-size:12.5px;'>" +
-            "<div style='display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #eee;'>" +
-              "<span>Subtotal</span><span>₹" + subtotal.toFixed(2) + "</span>" +
+        /* ── Totals ── */
+        "<div style='display:flex;justify-content:flex-end;border:1px solid #c4e2de;border-top:none;'>" +
+          "<div style='min-width:262px;font-size:12.5px;'>" +
+            "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;'>" +
+              "<span>Subtotal</span><span style='font-family:monospace;'>&#8377;" + subtotal.toFixed(2) + "</span>" +
             "</div>" +
             (gstPct > 0
-              ? "<div style='display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #eee;'>" +
-                  "<span>GST (" + gstPct + "%)</span><span>₹" + gstAmt.toFixed(2) + "</span>" +
+              ? "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;'>" +
+                  "<span>GST (" + gstPct + "%)</span><span style='font-family:monospace;'>&#8377;" + gstAmt.toFixed(2) + "</span>" +
                 "</div>"
               : "") +
-            "<div style='display:flex;justify-content:space-between;padding:7px 10px;font-size:14px;font-weight:800;background:#f0f4f6;border-top:2px solid #000;'>" +
-              "<span>NET AMOUNT</span><span>₹" + grandTotal.toFixed(2) + "</span>" +
+            "<div style='display:flex;justify-content:space-between;padding:8px 12px;font-size:14px;font-weight:800;background:linear-gradient(135deg,#0b6d67,#0d5c80);color:#fff;letter-spacing:0.5px;'>" +
+              "<span>NET AMOUNT</span><span style='font-family:monospace;'>&#8377;" + grandTotal.toFixed(2) + "</span>" +
             "</div>" +
           "</div>" +
         "</div>" +
 
         /* ── Amount in words ── */
-        "<div style='margin-top:8px;font-size:11.5px;border:1px solid #ddd;padding:5px 10px;border-radius:3px;background:#fafafa;'>" +
+        "<div style='margin-top:8px;font-size:11.5px;border:1px solid #c4e2de;padding:6px 12px;border-radius:4px;background:#f0faf8;color:#2a5550;'>" +
           "<strong>Amount in Words:</strong> " + amtWords +
         "</div>" +
 
         /* ── Notes ── */
         (notes
-          ? "<div style='margin-top:6px;font-size:11px;border:1px dashed #bbb;padding:5px 9px;border-radius:3px;color:#444;'>" +
+          ? "<div style='margin-top:5px;font-size:11px;border:1px dashed #a8d4cf;padding:5px 10px;border-radius:4px;color:#3d6560;background:#f8fcfb;'>" +
               "<strong>Note:</strong> " + notes +
             "</div>"
           : "") +
 
         /* ── Footer: terms + signatory ── */
-        "<div style='display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px;font-size:11px;color:#444;gap:16px;'>" +
-          "<div style='line-height:1.7;'>" +
-            "<div>• Medicines once sold will not be returned or exchanged.</div>" +
-            "<div>• Please verify medicines before leaving the counter.</div>" +
-            "<div>• All disputes subject to Azamgarh jurisdiction.</div>" +
+        "<div style='display:flex;justify-content:space-between;align-items:flex-end;margin-top:20px;padding-top:12px;border-top:1.5px solid #c4e2de;font-size:11px;color:#5a8884;gap:16px;'>" +
+          "<div style='line-height:1.9;'>" +
+            "<div>• Goods once sold will not be returned or exchanged.</div>" +
+            "<div>• Please verify expiry date and quantity before accepting.</div>" +
+            "<div>• All disputes subject to Azamgarh jurisdiction only.</div>" +
           "</div>" +
-          "<div style='text-align:center;min-width:140px;'>" +
-            "<div style='height:36px;'></div>" +
-            "<div style='border-top:1px solid #000;padding-top:4px;font-size:11px;'>Authorised Signatory</div>" +
-            "<div style='font-size:10px;color:#555;'>Adarsh Medicals</div>" +
+          "<div style='text-align:center;min-width:140px;flex-shrink:0;'>" +
+            "<div style='height:34px;'></div>" +
+            "<div style='border-top:1.5px solid #0b6d67;padding-top:4px;font-size:11px;color:#0b6d67;font-weight:700;letter-spacing:0.5px;'>Authorised Signatory</div>" +
+            "<div style='font-size:10px;color:#5a8884;margin-top:1px;'>Adarsh Medicals</div>" +
           "</div>" +
         "</div>" +
 
-        /* ── Thank you ── */
-        "<div style='text-align:center;margin-top:12px;padding-top:8px;border-top:1px dashed #bbb;font-size:11.5px;color:#333;'>" +
-          "Thank you for shopping at Adarsh Medicals &nbsp;🙏&nbsp; Get well soon!" +
-        "</div>" +
-        "<div style='text-align:center;margin-top:4px;font-size:10px;color:#999;'>This is a computer generated bill.</div>" +
+        /* ── Computer-generated tag ── */
+        "<div style='text-align:center;margin-top:10px;padding-top:7px;border-top:1px dashed #c4e2de;font-size:10px;color:#9abfbb;letter-spacing:0.3px;'>This is a computer generated tax invoice.</div>" +
 
       "</div>"
     );
@@ -623,9 +691,11 @@
     if (bEl.notes)          bEl.notes.value          = "";
     if (bEl.gstPercent)     bEl.gstPercent.value     = "0";
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
-    if (bEl.printBillButton) bEl.printBillButton.disabled = true;
+    if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
+    if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
 
     setSaveStatus("", "");
+    setSaveCustomerStatus("", "");
     renderLineItems();
     recalcTotals();
     if (bEl.search) bEl.search.focus();
@@ -786,6 +856,11 @@
 
     // Date
     if (bEl.billDateValue) bEl.billDateValue.textContent = todayLong();
+
+    // Saved customers
+    renderCustomerSelect();
+    if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.addEventListener("change", onSavedCustomerChange);
+    if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
 
     // Search events
     if (bEl.search) {

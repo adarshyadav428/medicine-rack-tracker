@@ -70,14 +70,22 @@
           </div>
         </div>
 
+        <!-- Saved customer quick-fill -->
+        <div class="bill-customer-quickfill">
+          <label for="bill-saved-customer-select">Quick-fill from saved customers</label>
+          <select id="bill-saved-customer-select">
+            <option value="">— No saved customers yet —</option>
+          </select>
+        </div>
+
         <!-- Customer fields — 3 columns -->
         <div class="bill-fields-row">
           <div>
-            <label for="bill-customer-name">Customer Name</label>
+            <label for="bill-customer-name">Customer / Business Name</label>
             <input
               id="bill-customer-name"
               type="text"
-              placeholder="Walk-in customer"
+              placeholder="e.g. City Medical Store"
               maxlength="120"
               autocomplete="off"
             />
@@ -93,14 +101,22 @@
             />
           </div>
           <div>
-            <label for="bill-notes">Notes (optional)</label>
+            <label for="bill-notes">Order / Notes</label>
             <input
               id="bill-notes"
               type="text"
-              placeholder="Doctor prescribed, batch no., etc."
+              placeholder="Batch no., order ref., doctor name…"
               maxlength="240"
             />
           </div>
+        </div>
+
+        <!-- Save customer shortcut -->
+        <div class="bill-save-customer-bar">
+          <button id="bill-save-customer-btn" class="btn btn-ghost btn-xs" type="button">
+            + Save as Customer
+          </button>
+          <span id="bill-save-customer-status" class="bill-save-customer-hint"></span>
         </div>
       </section>
 
