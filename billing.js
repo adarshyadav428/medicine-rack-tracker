@@ -276,6 +276,7 @@
       var metaParts = [];
       if (item.location) metaParts.push("📍 " + item.location);
       if (item.mrp !== null && item.mrp !== undefined) metaParts.push("MRP: ₹" + item.mrp);
+      if (purchase !== null) metaParts.push("Buy: ₹" + purchase);
       if (sell !== null) metaParts.push("Sell: ₹" + sell);
       metaParts.push(stockLabel);
 
