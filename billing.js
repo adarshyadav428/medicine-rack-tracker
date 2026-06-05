@@ -308,13 +308,24 @@
       quantity:      1,
     });
 
+    var newRowId = rowId;
+
     renderLineItems();
     recalcTotals();
 
-    if (bEl.search) {
-      bEl.search.value = "";
-      setTimeout(function () { bEl.search.focus(); }, 0);
-    }
+    if (bEl.search) bEl.search.value = "";
+
+    setTimeout(function () {
+      var markupInput = document.getElementById("markup-" + newRowId);
+      var sellInput   = document.getElementById("sell-"   + newRowId);
+      if (markupInput && !markupInput.disabled) {
+        markupInput.focus();
+        markupInput.select();
+      } else if (sellInput) {
+        sellInput.focus();
+        sellInput.select();
+      }
+    }, 0);
   }
 
   function removeLineItem(rowId) {
@@ -395,6 +406,7 @@
         '<td class="num-col bill-purchase-col"><span style="font-family:var(--font-mono);font-size:0.85rem;color:#3a5560;">' + purchaseDisplay + "</span></td>" +
         '<td class="num-col">' +
           '<input id="markup-' + item._rowId + '" class="bill-table-input" type="number"' +
+          ' data-col="markup"' +
           ' min="-100" max="2000" step="0.01"' +
           ' value="' + markupVal + '"' +
           ' placeholder="' + (hasPurchase ? "0" : "N/A") + '"' +
@@ -403,6 +415,7 @@
         "</td>" +
         '<td class="num-col">' +
           '<input id="sell-' + item._rowId + '" class="bill-table-input bill-table-input--sell" type="number"' +
+          ' data-col="sell"' +
           ' min="0" step="0.01"' +
           ' value="' + sellVal + '"' +
           ' placeholder="0"' +
@@ -410,6 +423,7 @@
         "</td>" +
         '<td class="num-col">' +
           '<input id="qty-' + item._rowId + '" class="bill-table-input" type="number"' +
+          ' data-col="qty"' +
           ' min="1" step="1"' +
           ' value="' + item.quantity + '"' +
           ' placeholder="1"' +
@@ -441,12 +455,30 @@
         if (!el) return;
         el.addEventListener("input",  function () { updateLineItemField(item._rowId, field, el.value); });
         el.addEventListener("change", function () { updateLineItemField(item._rowId, field, el.value); });
+        el.addEventListener("keydown", function (e) {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            navigateTableInput(el, e.key === "ArrowDown" ? "down" : "up");
+          }
+        });
       }
 
       bindInput(qtyInput,    "quantity");
       bindInput(sellInput,   "sellPrice");
       bindInput(markupInput, "markupPercent");
     });
+  }
+
+  function navigateTableInput(input, direction) {
+    var col = input.dataset.col;
+    if (!col || !bEl.itemsTbody) return;
+    var siblings = Array.prototype.slice.call(
+      bEl.itemsTbody.querySelectorAll("input[data-col='" + col + "']:not([disabled])")
+    );
+    var idx = siblings.indexOf(input);
+    if (idx === -1) return;
+    var next = siblings[direction === "down" ? idx + 1 : idx - 1];
+    if (next) { next.focus(); next.select(); }
   }
 
   function recalcTotals() {
