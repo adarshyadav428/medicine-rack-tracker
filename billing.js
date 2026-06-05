@@ -197,7 +197,19 @@
   // -------------------------------------------------------------------------
   // Medicine Search (client-side, against state.items)
   // -------------------------------------------------------------------------
-  var searchTimer = null;
+  var searchTimer          = null;
+  var currentDropdownResults = [];
+  var activeDropdownIdx    = -1;
+
+  function setActiveDropdownItem(idx) {
+    if (!bEl.dropdown) return;
+    var items = bEl.dropdown.querySelectorAll(".medicine-dropdown-item:not(.medicine-dropdown-empty)");
+    activeDropdownIdx = Math.max(-1, Math.min(idx, items.length - 1));
+    items.forEach(function (el, i) {
+      el.classList.toggle("medicine-dropdown-item--active", i === activeDropdownIdx);
+      if (i === activeDropdownIdx) el.scrollIntoView({ block: "nearest" });
+    });
+  }
 
   function handleSearchInput() {
     clearTimeout(searchTimer);
@@ -218,6 +230,8 @@
 
   function renderDropdown(results, query) {
     if (!bEl.dropdown) return;
+    currentDropdownResults = results;
+    activeDropdownIdx      = -1;
     bEl.dropdown.textContent = "";
 
     if (!results.length) {
@@ -280,6 +294,8 @@
 
   function hideDropdown() {
     if (bEl.dropdown) bEl.dropdown.classList.add("hidden");
+    activeDropdownIdx      = -1;
+    currentDropdownResults = [];
   }
 
   // -------------------------------------------------------------------------
@@ -451,7 +467,7 @@
       var sellInput   = document.getElementById("sell-"   + item._rowId);
       var markupInput = document.getElementById("markup-" + item._rowId);
 
-      function bindInput(el, field) {
+      function bindInput(el, field, onEnter) {
         if (!el) return;
         el.addEventListener("input",  function () { updateLineItemField(item._rowId, field, el.value); });
         el.addEventListener("change", function () { updateLineItemField(item._rowId, field, el.value); });
@@ -459,13 +475,24 @@
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
             navigateTableInput(el, e.key === "ArrowDown" ? "down" : "up");
+          } else if (e.key === "Enter" && onEnter) {
+            e.preventDefault();
+            onEnter();
           }
         });
       }
 
-      bindInput(qtyInput,    "quantity");
-      bindInput(sellInput,   "sellPrice");
-      bindInput(markupInput, "markupPercent");
+      bindInput(markupInput, "markupPercent", function () {
+        var sell = document.getElementById("sell-" + item._rowId);
+        if (sell) { sell.focus(); sell.select(); }
+      });
+      bindInput(sellInput, "sellPrice", function () {
+        var qty = document.getElementById("qty-" + item._rowId);
+        if (qty) { qty.focus(); qty.select(); }
+      });
+      bindInput(qtyInput, "quantity", function () {
+        if (bEl.search) bEl.search.focus();
+      });
     });
   }
 
@@ -997,7 +1024,25 @@
         setTimeout(function () { hideDropdown(); }, 200);
       });
       bEl.search.addEventListener("keydown", function (e) {
-        if (e.key === "Escape") hideDropdown();
+        var dropdownOpen = bEl.dropdown && !bEl.dropdown.classList.contains("hidden");
+        if (e.key === "Escape") {
+          hideDropdown();
+        } else if (e.key === "ArrowDown") {
+          if (!dropdownOpen) return;
+          e.preventDefault();
+          setActiveDropdownItem(activeDropdownIdx + 1);
+        } else if (e.key === "ArrowUp") {
+          if (!dropdownOpen) return;
+          e.preventDefault();
+          setActiveDropdownItem(activeDropdownIdx - 1);
+        } else if (e.key === "Enter") {
+          if (!dropdownOpen) return;
+          e.preventDefault();
+          if (activeDropdownIdx >= 0 && currentDropdownResults[activeDropdownIdx]) {
+            addLineItem(currentDropdownResults[activeDropdownIdx]);
+            hideDropdown();
+          }
+        }
       });
     }
 

@@ -1027,9 +1027,16 @@ button:focus-visible {
 }
 
 .medicine-dropdown-item:hover,
-.medicine-dropdown-item:focus {
+.medicine-dropdown-item:focus,
+.medicine-dropdown-item--active {
   background: #eef9f7;
   outline: none;
+}
+
+.medicine-dropdown-item--active {
+  background: #ddf5f1;
+  border-left: 3px solid var(--brand);
+  padding-left: calc(0.88rem - 3px);
 }
 
 .medicine-dropdown-item.medicine-dropdown-empty {
