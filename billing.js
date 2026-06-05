@@ -183,7 +183,6 @@
 
   function hideDropdown() {
     if (bEl.dropdown) bEl.dropdown.classList.add("hidden");
-    if (bEl.search) bEl.search.value = "";
   }
 
   // -------------------------------------------------------------------------
@@ -215,8 +214,10 @@
     renderLineItems();
     recalcTotals();
 
-    // Focus search for quick multi-add
-    if (bEl.search) bEl.search.focus();
+    if (bEl.search) {
+      bEl.search.value = "";
+      bEl.search.focus();
+    }
   }
 
   function removeLineItem(rowId) {
