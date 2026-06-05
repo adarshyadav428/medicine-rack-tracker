@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adarsh Medicals | Customers</title>
+    <meta name="description" content="Customer profiles, outstanding balances, and payment history — Adarsh Medicals." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=20260605-customers" />
+  </head>
+  <body data-page="customers">
+    <div class="transition-curtain" aria-hidden="true"></div>
+    <div class="bg-layer" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a href="index.html" class="brand" data-nav>
+        <span class="brand-dot"></span>
+        <span>
+          <strong>Adarsh Medicals</strong>
+          <small>Thekma, Azamgarh</small>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Main">
+        <a href="index.html" data-nav>Home</a>
+        <a href="dashboard.html" data-nav>Medicine Database</a>
+        <a href="billing.html" data-nav>Billing</a>
+        <a href="customers.html" class="active" data-nav>Customers</a>
+        <a href="access.html" data-nav>Access Control</a>
+      </nav>
+
+      <div class="session-chip">
+        <p id="header-user">Not signed in</p>
+        <button id="header-logout" class="btn btn-ghost btn-xs" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+
+      <!-- ── Hero ─────────────────────────────────────────────────── -->
+      <section class="billing-page-hero fade-up">
+        <div class="billing-hero-text">
+          <div class="billing-hero-eyebrow">Adarsh Medicals · Admin Only</div>
+          <h1 class="page-title">Customers</h1>
+          <p>View profiles, track outstanding balances, and record payments.</p>
+        </div>
+        <p id="customers-status" class="status-message is-info">Loading…</p>
+      </section>
+
+      <!-- ── Two-column layout ──────────────────────────────────── -->
+      <div class="customers-layout fade-up delay-1">
+
+        <!-- Left: list panel -->
+        <aside class="panel cust-list-panel">
+          <div class="panel-headline" style="margin-bottom:0.9rem;">
+            <h2>All Customers</h2>
+          </div>
+          <div class="cust-search-wrap">
+            <input
+              id="cust-search"
+              type="search"
+              placeholder="Search by name or phone…"
+              autocomplete="off"
+            />
+          </div>
+          <div id="cust-list" class="cust-list">
+            <p class="cust-empty">Loading…</p>
+          </div>
+        </aside>
+
+        <!-- Right: profile panel -->
+        <section class="panel cust-profile-panel" id="cust-profile-panel">
+          <!-- Empty state — shown when no customer is selected -->
+          <div class="cust-profile-empty" id="cust-profile-empty">
+            <span class="cust-profile-empty-icon">👤</span>
+            <p>Select a customer from the list to view their profile.</p>
+          </div>
+
+          <!-- Profile content — hidden until a customer is selected -->
+          <div class="cust-profile-content hidden" id="cust-profile-content">
+
+            <!-- Header row -->
+            <div class="cust-profile-header">
+              <div class="cust-profile-id">
+                <span id="cust-profile-name" class="cust-profile-name"></span>
+                <span id="cust-profile-phone" class="cust-profile-phone"></span>
+              </div>
+              <div class="cust-profile-header-actions">
+                <button id="cust-edit-btn" class="btn btn-ghost btn-xs" type="button">✏ Edit</button>
+                <button id="cust-delete-btn" class="btn btn-ghost btn-xs cust-delete-btn" type="button">🗑 Delete</button>
+                <button id="cust-profile-close" class="btn btn-ghost btn-xs cust-close-btn" type="button" aria-label="Close profile">✕</button>
+              </div>
+            </div>
+
+            <!-- Balance summary card -->
+            <div class="cust-balance-card">
+              <div class="cust-balance-left">
+                <p class="cust-balance-label">Outstanding Balance</p>
+                <span id="cust-profile-balance" class="cust-profile-balance-value">₹0.00</span>
+              </div>
+              <div class="cust-balance-right">
+                <p class="cust-balance-sub">Total billed across all orders. Deduct payments received.</p>
+              </div>
+            </div>
+
+            <!-- Edit inline form (hidden by default) -->
+            <div class="cust-edit-form hidden" id="cust-edit-form">
+              <div class="cust-edit-fields">
+                <div>
+                  <label for="cust-edit-name-input">Name</label>
+                  <input id="cust-edit-name-input" type="text" maxlength="120" autocomplete="off" />
+                </div>
+                <div>
+                  <label for="cust-edit-phone-input">Phone</label>
+                  <input id="cust-edit-phone-input" type="tel" maxlength="15" autocomplete="off" />
+                </div>
+                <div>
+                  <label for="cust-edit-balance-input">Balance (₹)</label>
+                  <input id="cust-edit-balance-input" type="number" step="0.01" />
+                </div>
+              </div>
+              <div class="cust-edit-actions">
+                <button id="cust-edit-save-btn" class="btn btn-primary btn-xs" type="button">Save Changes</button>
+                <button id="cust-edit-cancel-btn" class="btn btn-ghost btn-xs" type="button">Cancel</button>
+              </div>
+              <p id="cust-edit-status" class="status-message" style="margin-top:0.5rem;"></p>
+            </div>
+
+            <!-- Record payment section -->
+            <div class="cust-pay-section">
+              <div class="cust-pay-heading">Record Payment</div>
+              <div class="cust-pay-row">
+                <div class="cust-pay-field">
+                  <label for="cust-pay-amount">Amount Received (₹)</label>
+                  <input
+                    id="cust-pay-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div class="cust-pay-field">
+                  <label for="cust-pay-note">Note (optional)</label>
+                  <input
+                    id="cust-pay-note"
+                    type="text"
+                    placeholder="Cash / UPI / Cheque…"
+                    maxlength="120"
+                  />
+                </div>
+                <button id="cust-pay-btn" class="btn btn-primary cust-pay-apply-btn" type="button">
+                  ✔ Apply Payment
+                </button>
+              </div>
+              <p id="cust-pay-status" class="status-message" style="margin-top:0.5rem;"></p>
+            </div>
+
+            <!-- Past bills -->
+            <div class="cust-bills-section">
+              <div class="cust-bills-heading">Bill History</div>
+              <div id="cust-bills-container">
+                <p class="cust-empty">Loading…</p>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+      </div>
+
+    </main>
+
+    <script src="sync-config.js"></script>
+    <script src="app.js?v=20260605-customers"></script>
+    <script src="customers.js?v=20260605"></script>
+  </body>
+</html>

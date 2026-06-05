@@ -877,6 +877,18 @@ function enforcePageGuard() {
     }
   }
 
+  if (currentPage === "customers") {
+    if (!isCloudSyncActive() || !isAuthenticated()) {
+      goTo("index.html?next=customers.html");
+      return false;
+    }
+
+    if (!isAdmin()) {
+      goTo("dashboard.html");
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -959,6 +971,13 @@ async function handleAuthSession(session, source = "session") {
       const billingReadyFn = window.__onBillingReady;
       window.__onBillingReady = null;
       billingReadyFn();
+    }
+
+    // Notify customers.js once auth is ready
+    if (currentPage === "customers" && typeof window.__onCustomersReady === "function") {
+      const customersReadyFn = window.__onCustomersReady;
+      window.__onCustomersReady = null;
+      customersReadyFn();
     }
   } catch (error) {
     state.auth.role = "employee";
