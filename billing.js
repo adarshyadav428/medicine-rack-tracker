@@ -239,6 +239,18 @@
       noResult.className = "medicine-dropdown-item medicine-dropdown-empty";
       noResult.textContent = 'No medicines found for "' + query + '"';
       bEl.dropdown.appendChild(noResult);
+
+      var addManualBtn = document.createElement("button");
+      addManualBtn.type = "button";
+      addManualBtn.className = "medicine-dropdown-add-manual";
+      addManualBtn.textContent = "+ Add manually with custom details";
+      addManualBtn.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        hideDropdown();
+        showManualAddModal(bEl.search ? bEl.search.value.trim() : "");
+      });
+      bEl.dropdown.appendChild(addManualBtn);
+
       bEl.dropdown.classList.remove("hidden");
       return;
     }
@@ -296,6 +308,145 @@
     if (bEl.dropdown) bEl.dropdown.classList.add("hidden");
     activeDropdownIdx      = -1;
     currentDropdownResults = [];
+  }
+
+  // -------------------------------------------------------------------------
+  // Manual-add medicine modal
+  // -------------------------------------------------------------------------
+  function showManualAddModal(prefillName) {
+    var existing = document.getElementById("manual-add-overlay");
+    if (existing) existing.parentNode.removeChild(existing);
+
+    var overlay = document.createElement("div");
+    overlay.id = "manual-add-overlay";
+    overlay.className = "manual-add-overlay";
+    overlay.innerHTML = [
+      '<div class="manual-add-modal">',
+        '<div class="manual-add-header">',
+          '<h3>Add Medicine Manually</h3>',
+          '<button class="manual-add-close" id="manual-add-close" type="button" aria-label="Close">✕</button>',
+        '</div>',
+        '<div class="manual-add-body">',
+          '<p class="manual-add-hint">This item will be added to the current bill only — it will not be saved to your inventory.</p>',
+          '<div class="manual-add-fields">',
+            '<div class="manual-add-field manual-add-field--wide">',
+              '<label for="manual-name">Medicine Name *</label>',
+              '<input type="text" id="manual-name" autocomplete="off" maxlength="200" placeholder="e.g. Paracetamol 500mg Tab" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-mrp">MRP (&#8377;)</label>',
+              '<input type="number" id="manual-mrp" min="0" step="0.01" placeholder="0.00" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-purchase">Purchase Price (&#8377;)</label>',
+              '<input type="number" id="manual-purchase" min="0" step="0.01" placeholder="0.00" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-markup">Markup %</label>',
+              '<input type="number" id="manual-markup" min="-100" step="0.01" placeholder="0" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-sell">Sell Price (&#8377;) *</label>',
+              '<input type="number" id="manual-sell" min="0" step="0.01" placeholder="0.00" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-qty">Quantity *</label>',
+              '<input type="number" id="manual-qty" min="1" step="1" value="1" placeholder="1" />',
+            '</div>',
+          '</div>',
+        '</div>',
+        '<div class="manual-add-footer">',
+          '<button class="btn btn-ghost" id="manual-add-cancel" type="button">Cancel</button>',
+          '<button class="btn btn-primary" id="manual-add-submit" type="button">Add to Bill</button>',
+        '</div>',
+      '</div>',
+    ].join("");
+
+    document.body.appendChild(overlay);
+
+    var nameEl     = document.getElementById("manual-name");
+    var mrpEl      = document.getElementById("manual-mrp");
+    var purchaseEl = document.getElementById("manual-purchase");
+    var markupEl   = document.getElementById("manual-markup");
+    var sellEl     = document.getElementById("manual-sell");
+    var qtyEl      = document.getElementById("manual-qty");
+
+    if (prefillName && nameEl) nameEl.value = prefillName;
+
+    function recalcSell() {
+      var purchase = parseFloat(purchaseEl.value);
+      var markup   = parseFloat(markupEl.value);
+      if (!isNaN(purchase) && !isNaN(markup)) {
+        sellEl.value = round2(purchase * (1 + markup / 100));
+      }
+    }
+
+    function recalcMarkup() {
+      var purchase = parseFloat(purchaseEl.value);
+      var sell     = parseFloat(sellEl.value);
+      if (!isNaN(purchase) && purchase > 0 && !isNaN(sell)) {
+        markupEl.value = round2((sell - purchase) / purchase * 100);
+      }
+    }
+
+    purchaseEl.addEventListener("input", recalcSell);
+    markupEl.addEventListener("input", recalcSell);
+    sellEl.addEventListener("input", recalcMarkup);
+
+    function closeModal() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      if (bEl.search) bEl.search.focus();
+    }
+
+    function submitManual() {
+      var name = (nameEl.value || "").trim();
+      if (!name) { nameEl.focus(); return; }
+      var sellRaw = parseFloat(sellEl.value);
+      if (isNaN(sellRaw) || sellRaw < 0) { sellEl.focus(); return; }
+
+      var qty         = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+      var mrpRaw      = parseFloat(mrpEl.value);
+      var purchaseRaw = parseFloat(purchaseEl.value);
+      var markupRaw   = parseFloat(markupEl.value);
+
+      var rowId = "row-" + (bState.nextRowId++);
+      bState.lineItems.push({
+        _rowId:        rowId,
+        medicineId:    null,
+        medicineName:  name,
+        location:      "",
+        mrp:           isNaN(mrpRaw)      ? null : mrpRaw,
+        purchasePrice: isNaN(purchaseRaw) ? null : purchaseRaw,
+        sellPrice:     sellRaw,
+        markupPercent: isNaN(markupRaw)   ? null : markupRaw,
+        quantity:      qty,
+      });
+
+      renderLineItems();
+      recalcTotals();
+
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      if (bEl.search) bEl.search.value = "";
+      setTimeout(function () { if (bEl.search) bEl.search.focus(); }, 0);
+    }
+
+    document.getElementById("manual-add-close").addEventListener("click", closeModal);
+    document.getElementById("manual-add-cancel").addEventListener("click", closeModal);
+    document.getElementById("manual-add-submit").addEventListener("click", submitManual);
+
+    overlay.addEventListener("mousedown", function (e) {
+      if (e.target === overlay) closeModal();
+    });
+
+    overlay.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeModal();
+    });
+
+    qtyEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submitManual(); }
+    });
+
+    setTimeout(function () { if (nameEl) nameEl.focus(); }, 50);
   }
 
   // -------------------------------------------------------------------------
