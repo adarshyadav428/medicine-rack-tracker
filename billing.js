@@ -469,8 +469,11 @@
       "<div style='font-family:\"Courier New\",monospace;font-size:12px;max-width:80mm;margin:0 auto;padding:8px;color:#000;'>" +
         "<div style='text-align:center;margin-bottom:8px;'>" +
           "<div style='font-size:16px;font-weight:bold;letter-spacing:1px;'>ADARSH MEDICALS</div>" +
-          "<div>Thekma, Azamgarh, U.P.</div>" +
+          "<div>Thekma, Azamgarh, U.P. - 276303</div>" +
           "<div>Ph: 8470900910</div>" +
+          "<div style='margin-top:4px;font-size:10px;border-top:1px dashed #ccc;padding-top:3px;'>" +
+            "DL No: RLF20UP2025023538 | RLF21UP2025023481" +
+          "</div>" +
         "</div>" +
         "<div style='border-top:1px dashed #000;border-bottom:1px dashed #000;padding:4px 0;margin-bottom:6px;'>" +
           "<div>Bill No: <strong>" + billNo + "</strong></div>" +
