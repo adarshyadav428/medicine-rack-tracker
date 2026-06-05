@@ -1368,12 +1368,17 @@ button:focus-visible {
   }
 }
 
-/* ── Print receipt (thermal-style) ────────────────────────── */
+/* ── Print bill (A4) ──────────────────────────────────────── */
 .print-receipt-area {
   display: none;
 }
 
 @media print {
+  @page {
+    size: A4;
+    margin: 12mm 14mm;
+  }
+
   body > *:not(.print-receipt-area) {
     display: none !important;
   }

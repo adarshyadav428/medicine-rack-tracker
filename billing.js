@@ -434,76 +434,166 @@
   // -------------------------------------------------------------------------
   // Print Bill
   // -------------------------------------------------------------------------
-  function buildReceiptHtml(overrides) {
-    var customer   = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "") || "Walk-in";
-    var phone      = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-    var notes      = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
-    var gstPct     = (overrides && overrides.gstPercent  !== undefined) ? overrides.gstPercent  : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
-    var items      = (overrides && overrides.items) || bState.lineItems;
-    var billNo     = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
-    var dateStr    = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-    var subtotal = items.reduce(function (s, it) {
+  function numToWords(n) {
+    var ones = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+      "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+    var tens = ["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+    if (n === 0) return "Zero";
+    function two(n) {
+      return n < 20 ? ones[n] : tens[Math.floor(n/10)] + (n%10 ? " " + ones[n%10] : "");
+    }
+    function three(n) {
+      return n >= 100 ? ones[Math.floor(n/100)] + " Hundred" + (n%100 ? " " + two(n%100) : "") : two(n);
+    }
+    var out = "";
+    var cr = Math.floor(n/10000000); n %= 10000000;
+    var lk = Math.floor(n/100000);   n %= 100000;
+    var th = Math.floor(n/1000);     n %= 1000;
+    if (cr) out += three(cr) + " Crore ";
+    if (lk) out += three(lk) + " Lakh ";
+    if (th) out += three(th) + " Thousand ";
+    if (n)  out += three(n);
+    return out.trim();
+  }
+
+  function buildReceiptHtml(overrides) {
+    var customer = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "") || "Walk-in Customer";
+    var phone    = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    var notes    = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
+    var gstPct   = (overrides && overrides.gstPercent !== undefined) ? overrides.gstPercent : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
+    var items    = (overrides && overrides.items) || bState.lineItems;
+    var billNo   = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
+    var now      = new Date();
+    var dateStr  = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    var timeStr  = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+    var subtotal   = round2(items.reduce(function (s, it) {
       return s + round2((it.sell_price !== undefined ? it.sell_price : it.sellPrice) * it.quantity);
-    }, 0);
-    subtotal = round2(subtotal);
-    var gstAmt    = round2(subtotal * gstPct / 100);
+    }, 0));
+    var gstAmt     = round2(subtotal * gstPct / 100);
     var grandTotal = round2(subtotal + gstAmt);
 
-    var rowsHtml = items.map(function (it) {
+    var intPart   = Math.floor(grandTotal);
+    var decPart   = Math.round((grandTotal - intPart) * 100);
+    var amtWords  = "Rupees " + numToWords(intPart) + (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only";
+
+    var rowsHtml = items.map(function (it, idx) {
       var name  = it.medicine_name || it.medicineName || "—";
+      var mrp   = (it.mrp !== null && it.mrp !== undefined) ? "₹" + Number(it.mrp).toFixed(2) : "—";
       var qty   = it.quantity;
       var price = it.sell_price !== undefined ? it.sell_price : it.sellPrice;
       var total = round2(price * qty);
+      var bg    = idx % 2 === 0 ? "#fff" : "#f9fbfc";
       return (
-        "<tr>" +
-          "<td style='padding:2px 4px;border-bottom:1px dashed #ddd;'>" + name + "</td>" +
-          "<td style='padding:2px 4px;border-bottom:1px dashed #ddd;text-align:center;'>" + qty + "</td>" +
-          "<td style='padding:2px 4px;border-bottom:1px dashed #ddd;text-align:right;'>₹" + Number(price).toFixed(2) + "</td>" +
-          "<td style='padding:2px 4px;border-bottom:1px dashed #ddd;text-align:right;'>₹" + Number(total).toFixed(2) + "</td>" +
+        "<tr style='background:" + bg + ";'>" +
+          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:center;color:#666;font-size:11px;'>" + (idx + 1) + "</td>" +
+          "<td style='padding:5px 8px;border:1px solid #dde3e7;font-size:12.5px;font-weight:600;'>" + name + "</td>" +
+          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:11.5px;color:#555;'>" + mrp + "</td>" +
+          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:center;font-size:12.5px;font-weight:700;'>" + qty + "</td>" +
+          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:12px;'>₹" + Number(price).toFixed(2) + "</td>" +
+          "<td style='padding:5px 7px;border:1px solid #dde3e7;text-align:right;font-size:12.5px;font-weight:700;'>₹" + Number(total).toFixed(2) + "</td>" +
         "</tr>"
       );
     }).join("");
 
     return (
-      "<div style='font-family:\"Courier New\",monospace;font-size:12px;max-width:80mm;margin:0 auto;padding:8px;color:#000;'>" +
-        "<div style='text-align:center;margin-bottom:8px;'>" +
-          "<div style='font-size:16px;font-weight:bold;letter-spacing:1px;'>ADARSH MEDICALS</div>" +
-          "<div>Thekma, Azamgarh, U.P. - 276303</div>" +
-          "<div>Ph: 8470900910</div>" +
-          "<div style='margin-top:4px;font-size:10px;border-top:1px dashed #ccc;padding-top:3px;'>" +
-            "DL No: RLF20UP2025023538 | RLF21UP2025023481" +
+      "<div style='font-family:Arial,\"Helvetica Neue\",sans-serif;max-width:720px;margin:0 auto;padding:20px 24px;color:#000;border:1.5px solid #ccc;'>" +
+
+        /* ── Store header ── */
+        "<div style='text-align:center;padding-bottom:10px;border-bottom:2px solid #000;margin-bottom:10px;'>" +
+          "<div style='font-size:22px;font-weight:900;letter-spacing:2px;text-transform:uppercase;'>Adarsh Medicals</div>" +
+          "<div style='font-size:12px;margin-top:3px;'>Khasra No. 157, Thekma, Near Bus Stop, Martinganj, Azamgarh, U.P. – 276303</div>" +
+          "<div style='font-size:12px;'>Mob: 8470900910</div>" +
+          "<div style='font-size:10.5px;margin-top:5px;border-top:1px dashed #bbb;padding-top:4px;color:#333;'>" +
+            "Drug Lic. (Form 20): <strong>RLF20UP2025023538</strong>" +
+            "&nbsp;&nbsp;|&nbsp;&nbsp;" +
+            "Drug Lic. (Form 21): <strong>RLF21UP2025023481</strong>" +
           "</div>" +
         "</div>" +
-        "<div style='border-top:1px dashed #000;border-bottom:1px dashed #000;padding:4px 0;margin-bottom:6px;'>" +
-          "<div>Bill No: <strong>" + billNo + "</strong></div>" +
-          "<div>Date: " + dateStr + "</div>" +
-          "<div>Customer: " + customer + (phone ? " | Ph: " + phone : "") + "</div>" +
+
+        /* ── Invoice title ── */
+        "<div style='text-align:center;font-size:12px;font-weight:700;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;color:#333;'>Cash Memo / Retail Invoice</div>" +
+
+        /* ── Bill meta + customer ── */
+        "<div style='display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:12px;'>" +
+          "<div style='border:1px solid #ccc;padding:7px 10px;border-radius:4px;flex:1;'>" +
+            "<div style='font-size:10px;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:4px;letter-spacing:1px;'>Bill To</div>" +
+            "<div style='font-size:13px;font-weight:700;'>" + customer + "</div>" +
+            (phone ? "<div style='margin-top:2px;'>Mob: " + phone + "</div>" : "") +
+          "</div>" +
+          "<div style='border:1px solid #ccc;padding:7px 10px;border-radius:4px;text-align:right;min-width:165px;'>" +
+            "<div style='font-size:10px;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:4px;letter-spacing:1px;'>Bill Details</div>" +
+            "<div><strong>Bill No:</strong> " + billNo + "</div>" +
+            "<div><strong>Date:</strong> " + dateStr + "</div>" +
+            "<div><strong>Time:</strong> " + timeStr + "</div>" +
+          "</div>" +
         "</div>" +
-        "<table style='width:100%;border-collapse:collapse;margin-bottom:6px;'>" +
+
+        /* ── Items table ── */
+        "<table style='width:100%;border-collapse:collapse;font-size:12px;'>" +
           "<thead>" +
-            "<tr style='border-bottom:1px solid #000;'>" +
-              "<th style='text-align:left;padding:2px 4px;'>Medicine</th>" +
-              "<th style='text-align:center;padding:2px 4px;'>Qty</th>" +
-              "<th style='text-align:right;padding:2px 4px;'>Rate</th>" +
-              "<th style='text-align:right;padding:2px 4px;'>Amount</th>" +
+            "<tr style='background:#f0f4f6;'>" +
+              "<th style='padding:7px;border:1px solid #ccc;text-align:center;width:30px;font-size:11px;'>#</th>" +
+              "<th style='padding:7px 9px;border:1px solid #ccc;text-align:left;'>Medicine Name</th>" +
+              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:68px;'>MRP</th>" +
+              "<th style='padding:7px;border:1px solid #ccc;text-align:center;width:42px;'>Qty</th>" +
+              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:72px;'>Rate</th>" +
+              "<th style='padding:7px;border:1px solid #ccc;text-align:right;width:82px;'>Amount</th>" +
             "</tr>" +
           "</thead>" +
           "<tbody>" + rowsHtml + "</tbody>" +
         "</table>" +
-        "<div style='border-top:1px solid #000;padding-top:4px;'>" +
-          "<div style='display:flex;justify-content:space-between;'><span>Subtotal:</span><span>₹" + subtotal.toFixed(2) + "</span></div>" +
-          (gstPct > 0
-            ? "<div style='display:flex;justify-content:space-between;'><span>GST (" + gstPct + "%):</span><span>₹" + gstAmt.toFixed(2) + "</span></div>"
-            : "") +
-          "<div style='display:flex;justify-content:space-between;font-weight:bold;font-size:14px;border-top:2px solid #000;margin-top:4px;padding-top:4px;'>" +
-            "<span>TOTAL:</span><span>₹" + grandTotal.toFixed(2) + "</span>" +
+
+        /* ── Totals block (right-aligned) ── */
+        "<div style='display:flex;justify-content:flex-end;'>" +
+          "<div style='min-width:270px;border:1px solid #ccc;border-top:none;font-size:12.5px;'>" +
+            "<div style='display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #eee;'>" +
+              "<span>Subtotal</span><span>₹" + subtotal.toFixed(2) + "</span>" +
+            "</div>" +
+            (gstPct > 0
+              ? "<div style='display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #eee;'>" +
+                  "<span>GST (" + gstPct + "%)</span><span>₹" + gstAmt.toFixed(2) + "</span>" +
+                "</div>"
+              : "") +
+            "<div style='display:flex;justify-content:space-between;padding:7px 10px;font-size:14px;font-weight:800;background:#f0f4f6;border-top:2px solid #000;'>" +
+              "<span>NET AMOUNT</span><span>₹" + grandTotal.toFixed(2) + "</span>" +
+            "</div>" +
           "</div>" +
         "</div>" +
-        (notes ? "<div style='margin-top:6px;font-size:11px;border-top:1px dashed #ccc;padding-top:4px;'>Note: " + notes + "</div>" : "") +
-        "<div style='text-align:center;margin-top:10px;font-size:11px;border-top:1px dashed #ccc;padding-top:6px;'>" +
-          "Thank you for your business! 🙏<br>Get well soon." +
+
+        /* ── Amount in words ── */
+        "<div style='margin-top:8px;font-size:11.5px;border:1px solid #ddd;padding:5px 10px;border-radius:3px;background:#fafafa;'>" +
+          "<strong>Amount in Words:</strong> " + amtWords +
         "</div>" +
+
+        /* ── Notes ── */
+        (notes
+          ? "<div style='margin-top:6px;font-size:11px;border:1px dashed #bbb;padding:5px 9px;border-radius:3px;color:#444;'>" +
+              "<strong>Note:</strong> " + notes +
+            "</div>"
+          : "") +
+
+        /* ── Footer: terms + signatory ── */
+        "<div style='display:flex;justify-content:space-between;align-items:flex-end;margin-top:18px;font-size:11px;color:#444;gap:16px;'>" +
+          "<div style='line-height:1.7;'>" +
+            "<div>• Medicines once sold will not be returned or exchanged.</div>" +
+            "<div>• Please verify medicines before leaving the counter.</div>" +
+            "<div>• All disputes subject to Azamgarh jurisdiction.</div>" +
+          "</div>" +
+          "<div style='text-align:center;min-width:140px;'>" +
+            "<div style='height:36px;'></div>" +
+            "<div style='border-top:1px solid #000;padding-top:4px;font-size:11px;'>Authorised Signatory</div>" +
+            "<div style='font-size:10px;color:#555;'>Adarsh Medicals</div>" +
+          "</div>" +
+        "</div>" +
+
+        /* ── Thank you ── */
+        "<div style='text-align:center;margin-top:12px;padding-top:8px;border-top:1px dashed #bbb;font-size:11.5px;color:#333;'>" +
+          "Thank you for shopping at Adarsh Medicals &nbsp;🙏&nbsp; Get well soon!" +
+        "</div>" +
+        "<div style='text-align:center;margin-top:4px;font-size:10px;color:#999;'>This is a computer generated bill.</div>" +
+
       "</div>"
     );
   }
