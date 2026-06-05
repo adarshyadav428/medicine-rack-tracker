@@ -334,28 +334,28 @@
               '<label for="manual-name">Medicine Name *</label>',
               '<input type="text" id="manual-name" autocomplete="off" maxlength="200" placeholder="e.g. Paracetamol 500mg Tab" />',
             '</div>',
-            '<div class="manual-add-field manual-add-field--wide">',
-              '<label for="manual-location">Rack / Location *</label>',
-              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" placeholder="e.g. A3, Shelf 2, Counter" />',
-            '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-mrp">MRP (&#8377;)</label>',
+              '<label for="manual-mrp">MRP (&#8377;) *</label>',
               '<input type="number" id="manual-mrp" min="0" step="0.01" placeholder="0.00" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-purchase">Purchase Price (&#8377;)</label>',
+              '<label for="manual-purchase">Purchase Price (&#8377;) *</label>',
               '<input type="number" id="manual-purchase" min="0" step="0.01" placeholder="0.00" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-markup">Markup %</label>',
-              '<input type="number" id="manual-markup" min="-100" step="0.01" placeholder="0" />',
+              '<label for="manual-markup">Markup % <span class="manual-optional">(optional)</span></label>',
+              '<input type="number" id="manual-markup" min="-100" step="0.01" placeholder="auto" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-sell">Sell Price (&#8377;) *</label>',
-              '<input type="number" id="manual-sell" min="0" step="0.01" placeholder="0.00" />',
+              '<label for="manual-sell">Sell Price (&#8377;) <span class="manual-optional">(optional — defaults to MRP)</span></label>',
+              '<input type="number" id="manual-sell" min="0" step="0.01" placeholder="auto" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-qty">Bill Quantity *</label>',
+              '<label for="manual-location">Rack / Location <span class="manual-optional">(optional)</span></label>',
+              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" placeholder="e.g. A3, Shelf 2" />',
+            '</div>',
+            '<div class="manual-add-field">',
+              '<label for="manual-qty">Bill Quantity <span class="manual-optional">(optional)</span></label>',
               '<input type="number" id="manual-qty" min="1" step="1" value="1" placeholder="1" />',
             '</div>',
           '</div>',
@@ -409,15 +409,21 @@
     async function submitManual() {
       var name = (nameEl.value || "").trim();
       if (!name) { nameEl.focus(); return; }
-      var locationVal = (locationEl.value || "").trim();
-      if (!locationVal) { locationEl.focus(); return; }
-      var sellRaw = parseFloat(sellEl.value);
-      if (isNaN(sellRaw) || sellRaw < 0) { sellEl.focus(); return; }
-
-      var qty         = Math.max(1, parseInt(qtyEl.value, 10) || 1);
       var mrpRaw      = parseFloat(mrpEl.value);
+      if (isNaN(mrpRaw) || mrpRaw < 0) { mrpEl.focus(); return; }
       var purchaseRaw = parseFloat(purchaseEl.value);
+      if (isNaN(purchaseRaw) || purchaseRaw < 0) { purchaseEl.focus(); return; }
+
       var markupRaw   = parseFloat(markupEl.value);
+      // Sell price defaults to MRP if not set
+      var sellRaw     = parseFloat(sellEl.value);
+      if (isNaN(sellRaw) || sellRaw < 0) sellRaw = mrpRaw;
+      // Auto-calc markup if not set but purchase & sell are known
+      if (isNaN(markupRaw) && purchaseRaw > 0) {
+        markupRaw = round2((sellRaw - purchaseRaw) / purchaseRaw * 100);
+      }
+      var locationVal = (locationEl.value || "").trim() || "—";
+      var qty         = Math.max(1, parseInt(qtyEl.value, 10) || 1);
 
       var submitBtn = document.getElementById("manual-add-submit");
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
@@ -431,8 +437,8 @@
             item: {
               medicineName:  name,
               location:      locationVal,
-              mrp:           isNaN(mrpRaw)      ? null : mrpRaw,
-              purchasePrice: isNaN(purchaseRaw) ? null : purchaseRaw,
+              mrp:           mrpRaw,
+              purchasePrice: purchaseRaw,
               sellingPrice:  sellRaw,
               quantity:      null,
             },
@@ -457,10 +463,10 @@
         medicineId:    savedItem ? savedItem.id : null,
         medicineName:  name,
         location:      locationVal,
-        mrp:           isNaN(mrpRaw)      ? null : mrpRaw,
-        purchasePrice: isNaN(purchaseRaw) ? null : purchaseRaw,
+        mrp:           mrpRaw,
+        purchasePrice: purchaseRaw,
         sellPrice:     sellRaw,
-        markupPercent: isNaN(markupRaw)   ? null : markupRaw,
+        markupPercent: isNaN(markupRaw) ? null : markupRaw,
         quantity:      qty,
       });
 
