@@ -1038,8 +1038,9 @@
         } else if (e.key === "Enter") {
           if (!dropdownOpen) return;
           e.preventDefault();
-          if (activeDropdownIdx >= 0 && currentDropdownResults[activeDropdownIdx]) {
-            addLineItem(currentDropdownResults[activeDropdownIdx]);
+          var idx = activeDropdownIdx >= 0 ? activeDropdownIdx : 0;
+          if (currentDropdownResults[idx]) {
+            addLineItem(currentDropdownResults[idx]);
             hideDropdown();
           }
         }
