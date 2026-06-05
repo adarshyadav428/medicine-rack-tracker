@@ -25,6 +25,7 @@
     initialized: false,
     currentCustomerIdx: null,   // index into saved-customers array, or null
     currentCustomerBalance: 0,  // cached previous balance of selected customer
+    balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
   };
 
   // -------------------------------------------------------------------------
@@ -1018,8 +1019,8 @@
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
 
-      // Carry forward balance for the selected saved customer
-      if (bState.currentCustomerIdx !== null) {
+      // Carry forward balance for the selected saved customer — only on first save of this bill
+      if (bState.currentCustomerIdx !== null && !bState.balanceCarriedForward) {
         var received   = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
         var subtotal   = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
         var gstPct     = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
@@ -1031,6 +1032,7 @@
           custList[bState.currentCustomerIdx].balance = newBalance;
           persistSavedCustomers(custList);
           bState.currentCustomerBalance = newBalance;
+          bState.balanceCarriedForward  = true;
           if (bEl.openingBalance) bEl.openingBalance.value = newBalance || "";
           renderCustomerSelect();
           recalcPayment();
@@ -1262,6 +1264,7 @@
     if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
     bState.currentCustomerIdx     = null;
     bState.currentCustomerBalance = 0;
+    bState.balanceCarriedForward  = false;
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
