@@ -64,6 +64,9 @@
     prevBalance:           document.getElementById("summary-prev-balance"),
     totalDue:              document.getElementById("summary-total-due"),
     balanceDue:            document.getElementById("summary-balance-due"),
+    roundOffToggle:        document.getElementById("bill-roundoff-toggle"),
+    roundOffRow:           document.getElementById("roundoff-summary-row"),
+    roundOffAmount:        document.getElementById("summary-roundoff"),
   };
 
   // -------------------------------------------------------------------------
@@ -908,13 +911,29 @@
 
     var gstPct = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
     var gstAmt = round2(subtotalVal * gstPct / 100);
-    var grandTotalVal = round2(subtotalVal + gstAmt);
+    var preRoundTotal = round2(subtotalVal + gstAmt);
+
+    var roundOffEnabled = bEl.roundOffToggle && bEl.roundOffToggle.checked;
+    var roundOffAmt = 0;
+    var grandTotalVal = preRoundTotal;
+    if (roundOffEnabled && preRoundTotal > 0) {
+      var rounded = Math.round(preRoundTotal);
+      roundOffAmt = round2(rounded - preRoundTotal);
+      grandTotalVal = rounded;
+    }
 
     if (bEl.subtotal)   bEl.subtotal.textContent   = fmtMoney(subtotalVal);
     if (bEl.gstAmount)  bEl.gstAmount.textContent  = fmtMoney(gstAmt);
     if (bEl.gstLabel)   bEl.gstLabel.textContent   = "GST (" + gstPct + "%)";
     if (bEl.grandTotal) bEl.grandTotal.textContent = fmtMoney(grandTotalVal);
     if (bEl.itemsCount) bEl.itemsCount.textContent = String(bState.lineItems.length);
+
+    if (bEl.roundOffRow)    bEl.roundOffRow.classList.toggle("hidden", !roundOffEnabled || roundOffAmt === 0);
+    if (bEl.roundOffAmount) {
+      var sign = roundOffAmt > 0 ? "+" : "";
+      bEl.roundOffAmount.textContent = sign + fmtMoney(roundOffAmt);
+      bEl.roundOffAmount.className = "summary-amount " + (roundOffAmt >= 0 ? "summary-amount--muted" : "summary-amount--warn");
+    }
 
     recalcPayment();
   }
@@ -924,7 +943,9 @@
       return sum + round2(item.sellPrice * item.quantity);
     }, 0);
     var gstPct      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-    var grandTotal  = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
+    var preRound    = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
+    var roundOffEnabled = bEl.roundOffToggle && bEl.roundOffToggle.checked;
+    var grandTotal  = (roundOffEnabled && preRound > 0) ? Math.round(preRound) : preRound;
     var prevBal     = bState.currentCustomerBalance || 0;
     var totalDueVal = round2(grandTotal + prevBal);
     var received    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
@@ -1233,6 +1254,7 @@
     if (bEl.customerPhone)  bEl.customerPhone.value  = "";
     if (bEl.notes)          bEl.notes.value          = "";
     if (bEl.gstPercent)     bEl.gstPercent.value     = "0";
+    if (bEl.roundOffToggle) bEl.roundOffToggle.checked = false;
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
     if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
@@ -1476,8 +1498,9 @@
       }
     });
 
-    // GST / received amount recalculation
+    // GST / round-off / received amount recalculation
     if (bEl.gstPercent)     bEl.gstPercent.addEventListener("input",    recalcTotals);
+    if (bEl.roundOffToggle) bEl.roundOffToggle.addEventListener("change", recalcTotals);
     if (bEl.receivedAmount) bEl.receivedAmount.addEventListener("input", recalcPayment);
 
     // Action buttons

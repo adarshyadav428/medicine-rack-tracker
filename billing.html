@@ -203,6 +203,10 @@
                 <span id="gst-label-text">GST (0%)</span>
                 <span id="summary-gst" class="summary-amount">₹0.00</span>
               </div>
+              <div class="bill-breakdown-row bill-roundoff-row hidden" id="roundoff-summary-row">
+                <span>Round Off</span>
+                <span id="summary-roundoff" class="summary-amount summary-amount--muted">₹0.00</span>
+              </div>
               <div class="bill-breakdown-row bill-breakdown-items-row">
                 <span>Line Items</span>
                 <span id="summary-items-count">0</span>
@@ -224,6 +228,11 @@
                 <span class="bill-gst-hint">applied on subtotal</span>
               </div>
             </div>
+
+            <label class="bill-roundoff-label">
+              <input type="checkbox" id="bill-roundoff-toggle" />
+              <span>Round off to nearest ₹1</span>
+            </label>
           </div>
 
           <!-- Right: grand total -->
