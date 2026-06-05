@@ -1409,6 +1409,35 @@
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.addEventListener("change", onSavedCustomerChange);
     if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
 
+    // Opening balance field directly drives recalcPayment
+    if (bEl.openingBalance) {
+      bEl.openingBalance.addEventListener("input", function () {
+        bState.currentCustomerBalance = parseFloat(bEl.openingBalance.value) || 0;
+        recalcPayment();
+      });
+    }
+
+    // Auto-fill balance when customer name matches a saved customer on blur
+    if (bEl.customerName) {
+      bEl.customerName.addEventListener("blur", function () {
+        var typed = (bEl.customerName.value || "").trim().toLowerCase();
+        if (!typed) return;
+        var list = loadSavedCustomers();
+        var idx = list.findIndex(function (c) {
+          return c.name.toLowerCase() === typed;
+        });
+        if (idx >= 0 && bState.currentCustomerIdx !== idx) {
+          var c = list[idx];
+          bState.currentCustomerIdx     = idx;
+          bState.currentCustomerBalance = parseFloat(c.balance) || 0;
+          if (bEl.customerPhone)         bEl.customerPhone.value         = c.phone || "";
+          if (bEl.openingBalance)        bEl.openingBalance.value        = bState.currentCustomerBalance || "";
+          if (bEl.savedCustomerSelect)   bEl.savedCustomerSelect.value   = String(idx);
+          recalcPayment();
+        }
+      });
+    }
+
     // Search events
     if (bEl.search) {
       bEl.search.addEventListener("input", handleSearchInput);
