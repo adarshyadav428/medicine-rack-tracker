@@ -29,6 +29,8 @@
     editOriginalGrandTotal: null,  // grand_total of the bill when loaded for editing
     editOriginalReceived: null,    // received amount stored when that bill was first saved
     editOriginalPrevBalance: null, // opening balance (prev balance snapshot) when loaded for editing
+    customerLastPrices: {},        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
+    customerLastPricesFor: null,   // lowercase customer name these prices belong to
   };
 
   // -------------------------------------------------------------------------
@@ -171,6 +173,7 @@
     if (bEl.customerPhone)  bEl.customerPhone.value  = c.phone || "";
     if (bEl.openingBalance) bEl.openingBalance.value = bState.currentCustomerBalance || "";
     setSaveCustomerStatus("", "");
+    loadCustomerLastPrices(c.name);
     recalcPayment();
   }
 
@@ -316,6 +319,35 @@
     );
   }
 
+  // Fetch and cache the last sell price for each medicine sold to a customer.
+  // Fires async (fire-and-forget) so it never blocks the UI.
+  function loadCustomerLastPrices(custName) {
+    var cname = normalizeString(custName);
+    if (!cname) {
+      bState.customerLastPrices    = {};
+      bState.customerLastPricesFor = null;
+      return;
+    }
+    var key = cname.toLowerCase();
+    if (bState.customerLastPricesFor === key) return; // already cached for this customer
+
+    // Mark immediately so parallel calls don't fire duplicate requests
+    bState.customerLastPricesFor = key;
+
+    requestApi("/api/bills?lastprices=1&customer=" + encodeURIComponent(cname), { method: "GET" })
+      .then(function (result) {
+        // Only apply if the customer hasn't changed while the request was in flight
+        if (bState.customerLastPricesFor === key) {
+          bState.customerLastPrices = result.priceMap || {};
+        }
+      })
+      .catch(function () {
+        if (bState.customerLastPricesFor === key) {
+          bState.customerLastPrices = {};
+        }
+      });
+  }
+
   // -------------------------------------------------------------------------
   // Medicine Search (client-side, against state.items)
   // -------------------------------------------------------------------------
@@ -395,6 +427,9 @@
         ? "Stock: " + item.quantity
         : "Stock: ?";
 
+      var medicineLower = (item.medicineName || "").toLowerCase().trim();
+      var lastPriceInfo = bState.customerLastPrices[medicineLower];
+
       var metaParts = [];
       if (item.location) metaParts.push("📍 " + item.location);
       if (item.mrp !== null && item.mrp !== undefined) metaParts.push("MRP: ₹" + item.mrp);
@@ -404,7 +439,12 @@
 
       el.innerHTML =
         '<div class="medicine-dropdown-item-content">' +
-          '<span class="medicine-dropdown-name">' + item.medicineName + "</span>" +
+          '<div class="medicine-dropdown-name-row">' +
+            '<span class="medicine-dropdown-name">' + item.medicineName + "</span>" +
+            (lastPriceInfo
+              ? '<span class="medicine-last-price-badge">Last sold: ₹' + parseFloat(lastPriceInfo.sellPrice).toFixed(2) + '</span>'
+              : "") +
+          '</div>' +
           '<span class="medicine-dropdown-meta">' + metaParts.join(" · ") + "</span>" +
         '</div>' +
         '<button class="medicine-dropdown-edit-btn" type="button" title="Edit medicine in inventory">✏</button>';
@@ -809,6 +849,15 @@
       : (medicine.sellPrice !== null && medicine.sellPrice !== undefined ? medicine.sellPrice
       : (medicine.mrp !== null && medicine.mrp !== undefined ? medicine.mrp : 0));
 
+    // Override with last price for this customer if available
+    var medicineLower = (medicine.medicineName || "").toLowerCase().trim();
+    var lastPriceInfo = bState.customerLastPrices[medicineLower];
+    var markupPct = null;
+    if (lastPriceInfo) {
+      sell = lastPriceInfo.sellPrice;
+      markupPct = lastPriceInfo.markupPercent;
+    }
+
     var rowId = "row-" + (bState.nextRowId++);
 
     bState.lineItems.push({
@@ -819,7 +868,7 @@
       mrp:           medicine.mrp !== null && medicine.mrp !== undefined ? Number(medicine.mrp) : null,
       purchasePrice: purchase !== null ? Number(purchase) : null,
       sellPrice:     Number(sell) || 0,
-      markupPercent: null,
+      markupPercent: markupPct,
       quantity:      1,
     });
 
@@ -1473,6 +1522,8 @@
     bState.editOriginalReceived    = null;
     bState.editOriginalPrevBalance = null;
     bState.balanceCarriedForward   = false;
+    bState.customerLastPrices      = {};
+    bState.customerLastPricesFor   = null;
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
@@ -1814,6 +1865,7 @@
           return c.name.toLowerCase() === bill.customer_name.toLowerCase();
         });
         if (_ci2 >= 0) bState.currentCustomerIdx = _ci2;
+        loadCustomerLastPrices(bill.customer_name);
       }
 
       renderLineItems();
@@ -1915,6 +1967,7 @@
         if (bEl.customerPhone)       bEl.customerPhone.value       = c.phone || "";
         if (bEl.openingBalance)      bEl.openingBalance.value      = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
         if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = String(idx);
+        loadCustomerLastPrices(c.name);
         recalcPayment();
       }
     }

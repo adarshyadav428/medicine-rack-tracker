@@ -129,6 +129,55 @@ module.exports = async (req, res) => {
 
       const id = normalizeString(req.query?.id);
 
+      // Last-prices query: return price map for a specific customer
+      if (req.query?.lastprices === "1") {
+        const customer = normalizeString(req.query?.customer);
+        if (!customer) {
+          sendJson(res, 400, { error: "customer is required for lastprices query." });
+          return;
+        }
+
+        // Step 1: get bill IDs for this customer
+        const billRows = await callSupabaseRest(
+          config,
+          `${BILLS_TABLE}?customer_name=eq.${encodeURIComponent(customer)}&select=id`,
+          { method: "GET" }
+        );
+        const billIds = Array.isArray(billRows) ? billRows.map(b => b.id) : [];
+
+        if (!billIds.length) {
+          sendJson(res, 200, { priceMap: {} });
+          return;
+        }
+
+        // Step 2: get all items for those bills, most recent first
+        const encodedIds = billIds.map(id => encodeURIComponent(id)).join(",");
+        const itemRows = await callSupabaseRest(
+          config,
+          `${ITEMS_TABLE}?bill_id=in.(${encodedIds})&select=medicine_name,sell_price,markup_percent,created_at&order=created_at.desc&limit=500`,
+          { method: "GET" }
+        );
+
+        // Build map: first occurrence = most recent price per medicine
+        const priceMap = {};
+        if (Array.isArray(itemRows)) {
+          for (const item of itemRows) {
+            const key = (item.medicine_name || "").toLowerCase().trim();
+            if (key && !priceMap[key]) {
+              priceMap[key] = {
+                sellPrice: parseFloat(item.sell_price) ?? 0,
+                markupPercent: item.markup_percent != null
+                  ? parseFloat(item.markup_percent)
+                  : null,
+              };
+            }
+          }
+        }
+
+        sendJson(res, 200, { priceMap });
+        return;
+      }
+
       if (id) {
         // Single bill + its line items
         const bills = await callSupabaseRest(

@@ -1126,10 +1126,27 @@ button:focus-visible {
   background: var(--brand-soft);
 }
 
+.medicine-dropdown-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .medicine-dropdown-name {
   font-weight: 700;
   font-size: 0.93rem;
   color: var(--ink);
+}
+
+.medicine-last-price-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fff;
+  background: #16a34a;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  white-space: nowrap;
 }
 
 .medicine-dropdown-meta {
