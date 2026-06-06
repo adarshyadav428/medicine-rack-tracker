@@ -62,6 +62,7 @@
     printArea:             document.getElementById("print-receipt-area"),
     savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
     saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
+    repairBalanceBtn:      document.getElementById("bill-repair-balance-btn"),
     saveCustomerStatus:    document.getElementById("bill-save-customer-status"),
     openingBalance:        document.getElementById("bill-opening-balance"),
     receivedAmount:        document.getElementById("bill-received-amount"),
@@ -238,6 +239,81 @@
       }
       runningBal = prevBal;
     }
+  }
+
+  // Re-chain all Previous Balance snapshots for a customer from their oldest bill
+  // forward, then set the customer's stored running balance to the computed total.
+  // The first bill's existing snapshot is used as the starting anchor (ground truth).
+  // All subsequent bills have their snapshots overwritten with the correct value.
+  function reconcileCustomerBalance() {
+    var custName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
+    if (!custName) {
+      setSaveCustomerStatus("Select or enter a customer name first.", "is-warn");
+      return;
+    }
+    if (!bState.billHistory.length) {
+      setSaveCustomerStatus("Bill history not loaded. Try again shortly.", "is-warn");
+      return;
+    }
+
+    var cname = custName.toLowerCase();
+    var customerBills = bState.billHistory
+      .filter(function (b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
+      .sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }); // oldest first
+
+    if (!customerBills.length) {
+      setSaveCustomerStatus("No bills found for \"" + custName + "\".", "is-warn");
+      return;
+    }
+
+    // Anchor: whatever is stored for the FIRST (oldest) bill — user should have
+    // already corrected this if it was wrong (e.g. via Edit bill + change Opening Balance).
+    var firstBill = customerBills[0];
+    var startingBalance = parseFloat(localStorage.getItem("am.billPrev." + firstBill.id) || "0") || 0;
+
+    // Walk forward: set each bill's snapshot, then advance by (grandTotal - received)
+    var runningBalance = startingBalance;
+    for (var i = 0; i < customerBills.length; i++) {
+      var bill = customerBills[i];
+      var grandTotal = Math.ceil(bill.grand_total);
+      var received   = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
+
+      try { localStorage.setItem("am.billPrev." + bill.id, String(runningBalance)); } catch (_e) {}
+
+      runningBalance = round2(runningBalance + grandTotal - received);
+    }
+
+    // Persist the corrected customer balance
+    var custList = loadSavedCustomers();
+    var cidx = bState.currentCustomerIdx;
+    if (cidx === null || cidx === undefined) {
+      cidx = custList.findIndex(function (c) { return c.name.toLowerCase() === cname; });
+    }
+    if (cidx >= 0) {
+      custList[cidx].balance = runningBalance;
+      persistSavedCustomers(custList);
+      bState.currentCustomerIdx     = cidx;
+      bState.currentCustomerBalance = runningBalance;
+      renderCustomerSelect();
+    }
+
+    // Update the opening balance field:
+    // — in edit mode: show the corrected snapshot for the bill being edited
+    // — in new-bill mode: show the customer's running total (= prev balance for next bill)
+    if (bState.currentBillId) {
+      var thisBillPrev = parseFloat(localStorage.getItem("am.billPrev." + bState.currentBillId) || "0") || 0;
+      bState.editOriginalPrevBalance = thisBillPrev;
+      bState.currentCustomerBalance  = thisBillPrev;
+      if (bEl.openingBalance) bEl.openingBalance.value = thisBillPrev > 0 ? String(thisBillPrev) : "";
+    } else {
+      if (bEl.openingBalance) bEl.openingBalance.value = runningBalance > 0 ? String(runningBalance) : "";
+    }
+
+    recalcPayment();
+    setSaveCustomerStatus(
+      "✅ " + customerBills.length + " bill(s) re-chained. Balance: ₹" + runningBalance,
+      "is-ok"
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1811,6 +1887,7 @@
     renderCustomerSelect();
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.addEventListener("change", onSavedCustomerChange);
     if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
+    if (bEl.repairBalanceBtn)    bEl.repairBalanceBtn.addEventListener("click", reconcileCustomerBalance);
 
     // Opening balance field directly drives recalcPayment
     if (bEl.openingBalance) {
