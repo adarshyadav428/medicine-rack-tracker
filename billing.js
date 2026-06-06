@@ -1041,10 +1041,14 @@
             });
           }
 
-          // Always read the stored previous balance directly from localStorage — do NOT
-          // trust bState.currentCustomerBalance which may be stale (e.g. auto-fill
-          // never fired because the user didn't blur the name field).
-          var prevBal = (idx >= 0 && custList[idx]) ? (parseFloat(custList[idx].balance) || 0) : 0;
+          // Existing customer → use the stored balance (authoritative running ledger).
+          // New customer (not yet in localStorage) → fall back to the Opening Balance
+          // field, which is the ONLY place the user's manually-entered opening amount lives.
+          // This was the root bug: idx < 0 was always returning 0, silently discarding
+          // whatever the user typed in the Opening Balance input.
+          var prevBal = (idx >= 0 && custList[idx])
+            ? (parseFloat(custList[idx].balance) || 0)
+            : (parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0);
 
           // Snapshot prevBal + received for this bill so history view can reconstruct
           // the exact receipt instead of using stale current-form state.
