@@ -1341,30 +1341,60 @@
 
   async function shareModalBill() {
     if (!modalBillData) return;
-    var bn       = modalBillData.billNumber;
-    var fullHtml =
-      "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>" +
-      "<meta name='viewport' content='width=device-width,initial-scale=1.0'>" +
-      "<title>Bill " + bn + " — Adarsh Medicals</title></head><body>" +
-      modalBillData.receiptHtml + "</body></html>";
+    var bn      = modalBillData.billNumber;
+    var shareBtn = bEl.receiptModalShare;
+    var origText = shareBtn ? shareBtn.textContent : "";
+    if (shareBtn) { shareBtn.disabled = true; shareBtn.textContent = "Generating PDF…"; }
 
-    if (window.navigator.share) {
-      try {
-        var file = new File([fullHtml], "Bill-" + bn + ".html", { type: "text/html" });
-        if (window.navigator.canShare && window.navigator.canShare({ files: [file] })) {
-          await window.navigator.share({ files: [file], title: "Bill " + bn + " — Adarsh Medicals" });
+    try {
+      // Render receipt HTML into a temporary off-screen container
+      var container = document.createElement("div");
+      container.style.cssText = "position:fixed;left:-9999px;top:0;width:740px;background:#fff;";
+      container.innerHTML = modalBillData.receiptHtml;
+      document.body.appendChild(container);
+
+      var pdfBlob = await window.html2pdf()
+        .set({
+          margin:     [8, 8, 8, 8],
+          filename:   "Bill-" + bn + ".pdf",
+          image:      { type: "jpeg", quality: 0.97 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF:      { unit: "mm", format: "a4", orientation: "portrait" },
+        })
+        .from(container)
+        .outputPdf("blob");
+
+      document.body.removeChild(container);
+
+      var fileName = "Bill-" + bn + ".pdf";
+      var pdfFile  = new File([pdfBlob], fileName, { type: "application/pdf" });
+
+      // Try Web Share API (works on mobile / supported desktop browsers)
+      if (window.navigator.share && window.navigator.canShare && window.navigator.canShare({ files: [pdfFile] })) {
+        try {
+          await window.navigator.share({ files: [pdfFile], title: "Bill " + bn + " — Adarsh Medicals" });
           return;
+        } catch (e) {
+          if (e.name === "AbortError") return;
+          // Fall through to download
         }
-        await window.navigator.share({ title: "Bill " + bn + " — Adarsh Medicals", text: fullHtml });
-        return;
-      } catch (e) {
-        if (e.name === "AbortError") return;
       }
+
+      // Fallback: trigger a direct PDF download
+      var url = URL.createObjectURL(pdfBlob);
+      var a   = document.createElement("a");
+      a.href     = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+
+    } catch (err) {
+      window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
+    } finally {
+      if (shareBtn) { shareBtn.disabled = false; shareBtn.textContent = origText; }
     }
-    // Fallback: open receipt in a new tab
-    var blob = URL.createObjectURL(new Blob([fullHtml], { type: "text/html" }));
-    var win  = window.open(blob, "_blank");
-    if (win) setTimeout(function () { URL.revokeObjectURL(blob); }, 30000);
   }
 
   async function viewBillInModal(billId) {
