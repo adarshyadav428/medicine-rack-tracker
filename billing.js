@@ -1020,50 +1020,49 @@
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
 
-      // Always carry forward balance for any billed customer — auto-creates the entry if needed
+      // Carry forward balance — only on first save of each bill (not on edits/re-saves)
       if (!bState.balanceCarriedForward) {
         var custName  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
         var custPhone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-        var received   = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
-        var subtotal   = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
-        var gstPct     = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-        var grandTot   = Math.ceil(round2(round2(subtotal) + round2(round2(subtotal) * gstPct / 100)));
-        var totalDue   = round2(grandTot + (bState.currentCustomerBalance || 0));
-        var newBalance = round2(totalDue - received);
+        var received  = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+        var _sub      = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
+        var _gst      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
+        var grandTot  = Math.ceil(round2(round2(_sub) + round2(round2(_sub) * _gst / 100)));
 
         if (custName) {
           var custList = loadSavedCustomers();
+
+          // Resolve customer index: prefer current state, fallback to name/phone lookup
           var idx = bState.currentCustomerIdx;
           if (idx === null) {
             idx = custList.findIndex(function (c) {
               return c.name.toLowerCase() === custName.toLowerCase() ||
                 (custPhone && c.phone && c.phone === custPhone);
             });
-            if (idx >= 0) {
-              // Customer exists in localStorage — load their stored balance in case the
-              // user typed the name without blurring (so auto-fill never fired)
-              var storedBal = parseFloat(custList[idx].balance) || 0;
-              if (bState.currentCustomerBalance !== storedBal) {
-                bState.currentCustomerBalance = storedBal;
-                // Recompute newBalance with the correct previous balance
-                var totalDue2   = round2(grandTot + storedBal);
-                newBalance = round2(totalDue2 - received);
-              }
-            } else {
-              custList.push({ name: custName, phone: custPhone || "", balance: newBalance });
-              idx = custList.length - 1;
-            }
           }
-          if (custList[idx]) {
+
+          // Always read the stored previous balance directly from localStorage — do NOT
+          // trust bState.currentCustomerBalance which may be stale (e.g. auto-fill
+          // never fired because the user didn't blur the name field).
+          var prevBal = (idx >= 0 && custList[idx]) ? (parseFloat(custList[idx].balance) || 0) : 0;
+
+          var newBalance = round2(grandTot + prevBal - received);
+
+          if (idx < 0) {
+            // New customer — create entry
+            custList.push({ name: custName, phone: custPhone || "", balance: newBalance });
+            idx = custList.length - 1;
+          } else {
             custList[idx].balance = newBalance;
-            persistSavedCustomers(custList);
-            bState.currentCustomerIdx     = idx;
-            bState.currentCustomerBalance = newBalance;
-            bState.balanceCarriedForward  = true;
-            if (bEl.openingBalance) bEl.openingBalance.value = newBalance > 0 ? newBalance : "";
-            renderCustomerSelect();
-            recalcPayment();
           }
+
+          persistSavedCustomers(custList);
+          bState.currentCustomerIdx     = idx;
+          bState.currentCustomerBalance = newBalance;
+          bState.balanceCarriedForward  = true;
+          if (bEl.openingBalance) bEl.openingBalance.value = newBalance > 0 ? newBalance : "";
+          renderCustomerSelect();
+          recalcPayment();
         }
       }
 
@@ -1652,6 +1651,15 @@
     }
     if (bEl.customerName)  bEl.customerName.addEventListener("blur",  tryAutoFillCustomer);
     if (bEl.customerPhone) bEl.customerPhone.addEventListener("blur", tryAutoFillCustomer);
+
+    // Also trigger on input with debounce so the balance row updates as the user types
+    var _autoFillTimer = null;
+    function debouncedAutoFill() {
+      clearTimeout(_autoFillTimer);
+      _autoFillTimer = setTimeout(tryAutoFillCustomer, 400);
+    }
+    if (bEl.customerName)  bEl.customerName.addEventListener("input",  debouncedAutoFill);
+    if (bEl.customerPhone) bEl.customerPhone.addEventListener("input", debouncedAutoFill);
 
     // Search events
     if (bEl.search) {
