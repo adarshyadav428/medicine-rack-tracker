@@ -1467,10 +1467,11 @@
           '<td class="num-col"><span class="bill-history-total">' + fmtMoney(Math.ceil(bill.grand_total)) + "</span></td>" +
           "<td>" +
             '<div style="display:flex;gap:0.4rem;justify-content:flex-end;flex-wrap:wrap;">' +
-              '<button class="btn btn-ghost btn-xs" data-view-bill="'  + bill.id + '" type="button">👁 View</button>' +
-              '<button class="btn btn-ghost btn-xs" data-share-bill="' + bill.id + '" type="button">📤 Share</button>' +
-              '<button class="btn btn-ghost btn-xs" data-edit-bill="'  + bill.id + '" type="button">✏️ Edit</button>' +
+              '<button class="btn btn-ghost btn-xs" data-view-bill="'   + bill.id + '" type="button">👁 View</button>' +
+              '<button class="btn btn-ghost btn-xs" data-share-bill="'  + bill.id + '" type="button">📤 Share</button>' +
+              '<button class="btn btn-ghost btn-xs" data-edit-bill="'   + bill.id + '" type="button">✏️ Edit</button>' +
               '<button class="btn btn-secondary btn-xs" data-print-bill="' + bill.id + '" type="button">🖨️</button>' +
+              '<button class="btn btn-ghost btn-xs bill-delete-btn" data-delete-bill="' + bill.id + '" data-bill-number="' + bill.bill_number + '" type="button">🗑️</button>' +
             "</div>" +
           "</td>" +
         "</tr>"
@@ -1507,6 +1508,28 @@
     bEl.historyContainer.querySelectorAll("[data-print-bill]").forEach(function (btn) {
       btn.addEventListener("click", function () { loadAndPrintBill(btn.dataset.printBill); });
     });
+
+    bEl.historyContainer.querySelectorAll("[data-delete-bill]").forEach(function (btn) {
+      btn.addEventListener("click", function () { deleteBill(btn.dataset.deleteBill, btn.dataset.billNumber); });
+    });
+  }
+
+  async function deleteBill(billId, billNumber) {
+    if (!window.confirm("Delete bill " + billNumber + "? This cannot be undone.")) return;
+    try {
+      await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "DELETE" });
+      // If the deleted bill is the one currently being edited, reset the form
+      if (bState.currentBillId === billId) {
+        bState.currentBillId     = null;
+        bState.currentBillNumber = null;
+        if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
+        if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
+        setSaveStatus("Deleted bill " + billNumber + ".", "is-info");
+      }
+      await loadBillHistory();
+    } catch (err) {
+      window.alert("Could not delete bill: " + (err.message || "Unknown error"));
+    }
   }
 
   async function loadBillForEdit(billId) {
