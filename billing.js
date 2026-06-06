@@ -1028,23 +1028,40 @@
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
 
-      // Carry forward balance for the selected saved customer — only on first save of this bill
-      if (bState.currentCustomerIdx !== null && !bState.balanceCarriedForward) {
+      // Always carry forward balance for any billed customer — auto-creates the entry if needed
+      if (!bState.balanceCarriedForward) {
+        var custName  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
+        var custPhone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
         var received   = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
         var subtotal   = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
         var gstPct     = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
         var grandTot   = round2(round2(subtotal) + round2(round2(subtotal) * gstPct / 100));
         var totalDue   = round2(grandTot + (bState.currentCustomerBalance || 0));
         var newBalance = round2(totalDue - received);
-        var custList   = loadSavedCustomers();
-        if (custList[bState.currentCustomerIdx]) {
-          custList[bState.currentCustomerIdx].balance = newBalance;
-          persistSavedCustomers(custList);
-          bState.currentCustomerBalance = newBalance;
-          bState.balanceCarriedForward  = true;
-          if (bEl.openingBalance) bEl.openingBalance.value = newBalance || "";
-          renderCustomerSelect();
-          recalcPayment();
+
+        if (custName) {
+          var custList = loadSavedCustomers();
+          var idx = bState.currentCustomerIdx;
+          if (idx === null) {
+            idx = custList.findIndex(function (c) {
+              return c.name.toLowerCase() === custName.toLowerCase() ||
+                (custPhone && c.phone && c.phone === custPhone);
+            });
+            if (idx === -1) {
+              custList.push({ name: custName, phone: custPhone || "", balance: newBalance });
+              idx = custList.length - 1;
+            }
+          }
+          if (custList[idx]) {
+            custList[idx].balance = newBalance;
+            persistSavedCustomers(custList);
+            bState.currentCustomerIdx     = idx;
+            bState.currentCustomerBalance = newBalance;
+            bState.balanceCarriedForward  = true;
+            if (bEl.openingBalance) bEl.openingBalance.value = newBalance > 0 ? newBalance : "";
+            renderCustomerSelect();
+            recalcPayment();
+          }
         }
       }
 
@@ -1551,26 +1568,29 @@
       });
     }
 
-    // Auto-fill balance when customer name matches a saved customer on blur
-    if (bEl.customerName) {
-      bEl.customerName.addEventListener("blur", function () {
-        var typed = (bEl.customerName.value || "").trim().toLowerCase();
-        if (!typed) return;
-        var list = loadSavedCustomers();
-        var idx = list.findIndex(function (c) {
-          return c.name.toLowerCase() === typed;
-        });
-        if (idx >= 0 && bState.currentCustomerIdx !== idx) {
-          var c = list[idx];
-          bState.currentCustomerIdx     = idx;
-          bState.currentCustomerBalance = parseFloat(c.balance) || 0;
-          if (bEl.customerPhone)         bEl.customerPhone.value         = c.phone || "";
-          if (bEl.openingBalance)        bEl.openingBalance.value        = bState.currentCustomerBalance || "";
-          if (bEl.savedCustomerSelect)   bEl.savedCustomerSelect.value   = String(idx);
-          recalcPayment();
-        }
+    // Auto-fill balance when customer name or phone matches a saved customer on blur
+    function tryAutoFillCustomer() {
+      var name  = (bEl.customerName  ? bEl.customerName.value  : "").trim().toLowerCase();
+      var phone = (bEl.customerPhone ? bEl.customerPhone.value : "").trim();
+      if (!name && !phone) return;
+      var list = loadSavedCustomers();
+      var idx  = list.findIndex(function (c) {
+        return (name  && c.name.toLowerCase()  === name)  ||
+               (phone && c.phone               === phone);
       });
+      if (idx >= 0 && bState.currentCustomerIdx !== idx) {
+        var c = list[idx];
+        bState.currentCustomerIdx     = idx;
+        bState.currentCustomerBalance = parseFloat(c.balance) || 0;
+        if (bEl.customerName)        bEl.customerName.value        = c.name  || "";
+        if (bEl.customerPhone)       bEl.customerPhone.value       = c.phone || "";
+        if (bEl.openingBalance)      bEl.openingBalance.value      = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
+        if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = String(idx);
+        recalcPayment();
+      }
     }
+    if (bEl.customerName)  bEl.customerName.addEventListener("blur",  tryAutoFillCustomer);
+    if (bEl.customerPhone) bEl.customerPhone.addEventListener("blur", tryAutoFillCustomer);
 
     // Search events
     if (bEl.search) {
