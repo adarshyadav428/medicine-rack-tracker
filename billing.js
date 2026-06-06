@@ -1416,13 +1416,46 @@
     }
   }
 
+  // Walk backwards through bill history for a customer to infer what prevBal was
+  // at the time a specific bill was created. Uses the customer's current stored
+  // balance as the starting point and subtracts grand_totals going backwards.
+  // Only used for old bills that predate the per-bill localStorage snapshot.
+  function inferPrevBalanceFromHistory(bill) {
+    if (!bill || !bill.customer_name) return 0;
+    var cname = bill.customer_name.toLowerCase();
+    var custList = loadSavedCustomers();
+    var custIdx = custList.findIndex(function(c) { return c.name.toLowerCase() === cname; });
+    if (custIdx < 0) return 0;
+    var currentBalance = parseFloat(custList[custIdx].balance) || 0;
+    // Sort this customer's bills most-recent first
+    var customerBills = (bState.billHistory || [])
+      .filter(function(b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
+      .sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    // Walk backwards: prevBal_for_bill = runningBalance - ceil(grandTotal) + received
+    var runningBal = currentBalance;
+    for (var i = 0; i < customerBills.length; i++) {
+      var b = customerBills[i];
+      var billRecv = parseFloat(localStorage.getItem("am.billRecv." + b.id) || "0") || 0;
+      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
+      if (b.id === bill.id) return Math.max(0, prevBal);
+      runningBal = prevBal;
+    }
+    return 0;
+  }
+
   async function viewBillInModal(billId) {
     try {
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
       var items  = result.items || [];
-      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
-      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      var prevBal, received;
+      if (localStorage.getItem("am.billPrev." + billId) !== null) {
+        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
+        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      } else {
+        prevBal  = inferPrevBalanceFromHistory(bill);
+        received = 0;
+      }
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
@@ -1444,8 +1477,14 @@
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
       var items  = result.items || [];
-      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
-      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      var prevBal, received;
+      if (localStorage.getItem("am.billPrev." + billId) !== null) {
+        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
+        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      } else {
+        prevBal  = inferPrevBalanceFromHistory(bill);
+        received = 0;
+      }
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
@@ -1603,8 +1642,14 @@
       var items = result.items || [];
 
       if (!bEl.printArea) return;
-      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
-      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      var prevBal, received;
+      if (localStorage.getItem("am.billPrev." + billId) !== null) {
+        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
+        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      } else {
+        prevBal  = inferPrevBalanceFromHistory(bill);
+        received = 0;
+      }
       bEl.printArea.innerHTML = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
