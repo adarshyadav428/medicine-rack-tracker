@@ -203,8 +203,38 @@
       setSaveCustomerStatus("Customer saved.", "is-ok");
     }
     persistSavedCustomers(list);
+
+    // Backfill missing am.billPrev snapshots for this customer's historical bills
+    // so that viewing old bills from history always shows the correct Previous Balance
+    // without relying on live inference every time.
+    var finalBalance = (idx >= 0 ? list[idx].balance : list[list.length - 1].balance) || 0;
+    if (finalBalance > 0) reconstructBillSnapshots(name, finalBalance);
+
     renderCustomerSelect();
     recalcPayment();
+  }
+
+  // Walk backwards through bill history for a customer and fill in any missing
+  // am.billPrev.<id> localStorage snapshots, using currentBalance as the anchor.
+  // Existing snapshots are never overwritten.
+  function reconstructBillSnapshots(custName, currentBalance) {
+    var cname = custName.toLowerCase();
+    var balance = parseFloat(currentBalance) || 0;
+    if (!bState.billHistory.length) return;
+    var customerBills = bState.billHistory
+      .filter(function (b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
+      .sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    if (!customerBills.length) return;
+    var runningBal = balance;
+    for (var i = 0; i < customerBills.length; i++) {
+      var b = customerBills[i];
+      var billRecv = parseFloat(localStorage.getItem("am.billRecv." + b.id) || "0") || 0;
+      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
+      if (localStorage.getItem("am.billPrev." + b.id) === null) {
+        try { localStorage.setItem("am.billPrev." + b.id, String(Math.max(0, prevBal))); } catch (_e) {}
+      }
+      runningBal = prevBal;
+    }
   }
 
   // -------------------------------------------------------------------------
