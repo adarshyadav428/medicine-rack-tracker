@@ -407,7 +407,7 @@
             '</div>',
             '<div class="manual-add-field">',
               '<label for="manual-qty">Bill Quantity <span class="manual-optional">(optional)</span></label>',
-              '<input type="number" id="manual-qty" min="1" step="1" value="1" placeholder="1" />',
+              '<input type="number" id="manual-qty" min="0.001" step="0.001" value="1" placeholder="1" />',
             '</div>',
           '</div>',
           '<p class="manual-add-save-status" id="manual-add-save-status"></p>',
@@ -474,7 +474,7 @@
         markupRaw = round2((sellRaw - purchaseRaw) / purchaseRaw * 100);
       }
       var locationVal = (locationEl.value || "").trim() || "—";
-      var qty         = Math.max(1, parseInt(qtyEl.value, 10) || 1);
+      var qty         = Math.max(0.001, parseFloat(qtyEl.value) || 0.001);
 
       var submitBtn = document.getElementById("manual-add-submit");
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
@@ -777,7 +777,7 @@
     if (!item) return;
 
     if (field === "quantity") {
-      item.quantity = Math.max(1, parseInt(rawValue, 10) || 1);
+      item.quantity = Math.max(0.001, parseFloat(rawValue) || 0.001);
 
     } else if (field === "sellPrice") {
       var sp = parseFloat(rawValue);
@@ -860,7 +860,7 @@
         '<td class="num-col">' +
           '<input id="qty-' + item._rowId + '" class="bill-table-input" type="number"' +
           ' data-col="qty"' +
-          ' min="1" step="1"' +
+          ' min="0.001" step="0.001"' +
           ' value="' + item.quantity + '"' +
           ' placeholder="1"' +
           " />" +
