@@ -26,8 +26,9 @@
     currentCustomerIdx: null,   // index into saved-customers array, or null
     currentCustomerBalance: 0,  // cached previous balance of selected customer
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
-    editOriginalGrandTotal: null, // grand_total of the bill when loaded for editing
-    editOriginalReceived: null,   // received amount stored when that bill was first saved
+    editOriginalGrandTotal: null,  // grand_total of the bill when loaded for editing
+    editOriginalReceived: null,    // received amount stored when that bill was first saved
+    editOriginalPrevBalance: null, // opening balance (prev balance snapshot) when loaded for editing
   };
 
   // -------------------------------------------------------------------------
@@ -1058,41 +1059,44 @@
         await requestApi("/api/bills", { method: "PUT", body: payload });
         setSaveStatus("✅ Bill " + bState.currentBillNumber + " updated successfully.", "is-ok");
 
-        // Adjust customer balance by the difference between old and new amounts
+        // Adjust customer balance for changes in bill total, received, or opening balance
         var _editCustName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
         if (_editCustName && bState.editOriginalGrandTotal !== null) {
-          var _newRecv = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+          var _newRecv    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+          var _newPrevBal = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
           var _sub2  = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
           var _gst2  = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
           var _newGT = Math.ceil(round2(round2(_sub2) + round2(round2(_sub2) * _gst2 / 100)));
-          var _oldContrib = bState.editOriginalGrandTotal - bState.editOriginalReceived;
-          var _newContrib = _newGT - _newRecv;
-          var _adj = round2(_newContrib - _oldContrib);
 
-          if (_adj !== 0) {
+          // Delta from bill amount / received changes
+          var _billAdj = round2((_newGT - _newRecv) - (bState.editOriginalGrandTotal - bState.editOriginalReceived));
+          // Delta from opening balance correction (e.g. user fixing a wrong prev balance)
+          var _prevAdj = round2(_newPrevBal - (bState.editOriginalPrevBalance || 0));
+          var _totalAdj = round2(_billAdj + _prevAdj);
+
+          if (_totalAdj !== 0) {
             var _cl  = loadSavedCustomers();
             var _cidx = bState.currentCustomerIdx;
             if (_cidx === null) {
               _cidx = _cl.findIndex(function (c) { return c.name.toLowerCase() === _editCustName.toLowerCase(); });
             }
             if (_cidx >= 0) {
-              _cl[_cidx].balance = round2((parseFloat(_cl[_cidx].balance) || 0) + _adj);
+              _cl[_cidx].balance = round2((parseFloat(_cl[_cidx].balance) || 0) + _totalAdj);
               persistSavedCustomers(_cl);
               bState.currentCustomerBalance = _cl[_cidx].balance;
-              if (bEl.openingBalance) bEl.openingBalance.value = _cl[_cidx].balance > 0 ? _cl[_cidx].balance : "";
               renderCustomerSelect();
               recalcPayment();
             }
           }
 
-          // Update both snapshots for this bill so the receipt reflects corrections
+          // Persist snapshots for this bill (opening balance stays as what user typed)
           var _bid = bState.currentBillId;
-          var _correctedPrev = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
-          try { localStorage.setItem("am.billPrev." + _bid, String(_correctedPrev)); } catch (_e) {}
+          try { localStorage.setItem("am.billPrev." + _bid, String(_newPrevBal)); } catch (_e) {}
           try { localStorage.setItem("am.billRecv." + _bid, String(_newRecv)); } catch (_e) {}
           // Update originals so a second re-save doesn't double-adjust
-          bState.editOriginalGrandTotal = _newGT;
-          bState.editOriginalReceived   = _newRecv;
+          bState.editOriginalGrandTotal  = _newGT;
+          bState.editOriginalReceived    = _newRecv;
+          bState.editOriginalPrevBalance = _newPrevBal;
         }
       } else {
         // Create new bill
@@ -1389,9 +1393,10 @@
     if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
     bState.currentCustomerIdx     = null;
     bState.currentCustomerBalance = 0;
-    bState.editOriginalGrandTotal = null;
-    bState.editOriginalReceived   = null;
-    bState.balanceCarriedForward  = false;
+    bState.editOriginalGrandTotal  = null;
+    bState.editOriginalReceived    = null;
+    bState.editOriginalPrevBalance = null;
+    bState.balanceCarriedForward   = false;
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
@@ -1720,7 +1725,8 @@
       // correct "Previous Balance" for this specific bill. The user can correct
       // it in the Opening Balance field and re-save to fix historical receipts.
       var _storedPrev = parseFloat(localStorage.getItem("am.billPrev." + bill.id) || "0") || 0;
-      bState.currentCustomerBalance = _storedPrev;
+      bState.currentCustomerBalance  = _storedPrev;
+      bState.editOriginalPrevBalance = _storedPrev;
       if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
 
       // Mark the customer as already resolved so tryAutoFillCustomer doesn't
