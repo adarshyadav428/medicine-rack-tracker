@@ -1085,8 +1085,10 @@
             }
           }
 
-          // Update the received-amount snapshot for this bill
+          // Update both snapshots for this bill so the receipt reflects corrections
           var _bid = bState.currentBillId;
+          var _correctedPrev = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
+          try { localStorage.setItem("am.billPrev." + _bid, String(_correctedPrev)); } catch (_e) {}
           try { localStorage.setItem("am.billRecv." + _bid, String(_newRecv)); } catch (_e) {}
           // Update originals so a second re-save doesn't double-adjust
           bState.editOriginalGrandTotal = _newGT;
@@ -1713,6 +1715,13 @@
       if (bEl.gstPercent)     bEl.gstPercent.value     = bill.gst_percent    || "0";
       if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bill.bill_number;
       if (bEl.printBillButton)   bEl.printBillButton.disabled = false;
+
+      // Restore the previous-balance snapshot so the form & receipt show the
+      // correct "Previous Balance" for this specific bill. The user can correct
+      // it in the Opening Balance field and re-save to fix historical receipts.
+      var _storedPrev = parseFloat(localStorage.getItem("am.billPrev." + bill.id) || "0") || 0;
+      bState.currentCustomerBalance = _storedPrev;
+      if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
 
       renderLineItems();
       recalcTotals();
