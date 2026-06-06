@@ -923,14 +923,8 @@
     var gstAmt = round2(subtotalVal * gstPct / 100);
     var preRoundTotal = round2(subtotalVal + gstAmt);
 
-    var roundOffEnabled = bEl.roundOffToggle && bEl.roundOffToggle.checked;
-    var roundOffAmt = 0;
-    var grandTotalVal = preRoundTotal;
-    if (roundOffEnabled && preRoundTotal > 0) {
-      var rounded = Math.round(preRoundTotal);
-      roundOffAmt = round2(rounded - preRoundTotal);
-      grandTotalVal = rounded;
-    }
+    var grandTotalVal = Math.ceil(preRoundTotal);
+    var roundOffAmt   = round2(grandTotalVal - preRoundTotal);
 
     if (bEl.subtotal)   bEl.subtotal.textContent   = fmtMoney(subtotalVal);
     if (bEl.gstAmount)  bEl.gstAmount.textContent  = fmtMoney(gstAmt);
@@ -938,11 +932,10 @@
     if (bEl.grandTotal) bEl.grandTotal.textContent = fmtMoney(grandTotalVal);
     if (bEl.itemsCount) bEl.itemsCount.textContent = String(bState.lineItems.length);
 
-    if (bEl.roundOffRow)    bEl.roundOffRow.classList.toggle("hidden", !roundOffEnabled || roundOffAmt === 0);
+    if (bEl.roundOffRow)    bEl.roundOffRow.classList.toggle("hidden", roundOffAmt === 0);
     if (bEl.roundOffAmount) {
-      var sign = roundOffAmt > 0 ? "+" : "";
-      bEl.roundOffAmount.textContent = sign + fmtMoney(roundOffAmt);
-      bEl.roundOffAmount.className = "summary-amount " + (roundOffAmt >= 0 ? "summary-amount--muted" : "summary-amount--warn");
+      bEl.roundOffAmount.textContent = "+" + fmtMoney(roundOffAmt);
+      bEl.roundOffAmount.className   = "summary-amount summary-amount--muted";
     }
 
     recalcPayment();
@@ -953,9 +946,8 @@
       return sum + round2(item.sellPrice * item.quantity);
     }, 0);
     var gstPct      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-    var preRound    = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
-    var roundOffEnabled = bEl.roundOffToggle && bEl.roundOffToggle.checked;
-    var grandTotal  = (roundOffEnabled && preRound > 0) ? Math.round(preRound) : preRound;
+    var preRound   = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
+    var grandTotal = Math.ceil(preRound);
     var prevBal     = bState.currentCustomerBalance || 0;
     var totalDueVal = round2(grandTotal + prevBal);
     var received    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
@@ -1035,7 +1027,7 @@
         var received   = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
         var subtotal   = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
         var gstPct     = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-        var grandTot   = round2(round2(subtotal) + round2(round2(subtotal) * gstPct / 100));
+        var grandTot   = Math.ceil(round2(round2(subtotal) + round2(round2(subtotal) * gstPct / 100)));
         var totalDue   = round2(grandTot + (bState.currentCustomerBalance || 0));
         var newBalance = round2(totalDue - received);
 
@@ -1117,7 +1109,7 @@
       return s + round2((it.sell_price !== undefined ? it.sell_price : it.sellPrice) * it.quantity);
     }, 0));
     var gstAmt     = round2(subtotal * gstPct / 100);
-    var grandTotal = round2(subtotal + gstAmt);
+    var grandTotal = Math.ceil(round2(subtotal + gstAmt));
 
     var totalDue    = round2(grandTotal + prevBal);
     var balanceDue  = round2(totalDue - received);

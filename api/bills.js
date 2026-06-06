@@ -77,7 +77,7 @@ function calcTotals(items, gstPercent) {
   }, 0);
   const gstPct = Math.max(0, toDecimalOrNull(gstPercent) ?? 0);
   const gstAmount = round2(subtotal * gstPct / 100);
-  const grandTotal = round2(subtotal + gstAmount);
+  const grandTotal = Math.ceil(round2(subtotal + gstAmount));
   return { subtotal: round2(subtotal), gstAmount, grandTotal, gstPct };
 }
 
