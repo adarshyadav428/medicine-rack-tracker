@@ -1723,6 +1723,17 @@
       bState.currentCustomerBalance = _storedPrev;
       if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
 
+      // Mark the customer as already resolved so tryAutoFillCustomer doesn't
+      // fire on blur and overwrite the opening balance with the customer's
+      // current stored balance.
+      if (bill.customer_name) {
+        var _cl2 = loadSavedCustomers();
+        var _ci2 = _cl2.findIndex(function (c) {
+          return c.name.toLowerCase() === bill.customer_name.toLowerCase();
+        });
+        if (_ci2 >= 0) bState.currentCustomerIdx = _ci2;
+      }
+
       renderLineItems();
       recalcTotals();
 
