@@ -1391,21 +1391,26 @@
 
     var el = null;
     try {
-      // Append element to DOM so html2canvas can compute styles
+      // Place element at the bottom of the document at x=0 so html2canvas can
+      // find and render it. Positioning at left:-9999px causes a blank PDF
+      // because html2canvas clips to the horizontal capture window starting at 0.
       el = document.createElement("div");
-      el.style.cssText = "position:absolute;top:0;left:-9999px;width:740px;background:#fff;";
+      var docBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 0);
+      el.style.cssText = "position:absolute;top:" + docBottom + "px;left:0;width:740px;background:#fff;";
       el.innerHTML = modalBillData.receiptHtml;
       document.body.appendChild(el);
+
+      // One paint cycle so the browser fully renders the element before html2canvas reads it
+      await new Promise(function (r) { setTimeout(r, 80); });
 
       var opt = {
         margin:      [8, 8, 8, 8],
         filename:    "Bill-" + bn + ".pdf",
         image:       { type: "jpeg", quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, backgroundColor: "#ffffff" },
+        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, windowWidth: 760, scrollX: 0, scrollY: 0, backgroundColor: "#ffffff" },
         jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
       };
 
-      // Use toPdf().get('pdf') to obtain the jsPDF instance reliably
       var jsPdfInstance = await new Promise(function (resolve, reject) {
         window.html2pdf().set(opt).from(el).toPdf().get("pdf")
           .then(resolve)
