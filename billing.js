@@ -26,6 +26,8 @@
     currentCustomerIdx: null,   // index into saved-customers array, or null
     currentCustomerBalance: 0,  // cached previous balance of selected customer
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
+    editOriginalGrandTotal: null, // grand_total of the bill when loaded for editing
+    editOriginalReceived: null,   // received amount stored when that bill was first saved
   };
 
   // -------------------------------------------------------------------------
@@ -1055,6 +1057,41 @@
         payload.id = bState.currentBillId;
         await requestApi("/api/bills", { method: "PUT", body: payload });
         setSaveStatus("✅ Bill " + bState.currentBillNumber + " updated successfully.", "is-ok");
+
+        // Adjust customer balance by the difference between old and new amounts
+        var _editCustName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
+        if (_editCustName && bState.editOriginalGrandTotal !== null) {
+          var _newRecv = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+          var _sub2  = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
+          var _gst2  = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
+          var _newGT = Math.ceil(round2(round2(_sub2) + round2(round2(_sub2) * _gst2 / 100)));
+          var _oldContrib = bState.editOriginalGrandTotal - bState.editOriginalReceived;
+          var _newContrib = _newGT - _newRecv;
+          var _adj = round2(_newContrib - _oldContrib);
+
+          if (_adj !== 0) {
+            var _cl  = loadSavedCustomers();
+            var _cidx = bState.currentCustomerIdx;
+            if (_cidx === null) {
+              _cidx = _cl.findIndex(function (c) { return c.name.toLowerCase() === _editCustName.toLowerCase(); });
+            }
+            if (_cidx >= 0) {
+              _cl[_cidx].balance = round2((parseFloat(_cl[_cidx].balance) || 0) + _adj);
+              persistSavedCustomers(_cl);
+              bState.currentCustomerBalance = _cl[_cidx].balance;
+              if (bEl.openingBalance) bEl.openingBalance.value = _cl[_cidx].balance > 0 ? _cl[_cidx].balance : "";
+              renderCustomerSelect();
+              recalcPayment();
+            }
+          }
+
+          // Update the received-amount snapshot for this bill
+          var _bid = bState.currentBillId;
+          try { localStorage.setItem("am.billRecv." + _bid, String(_newRecv)); } catch (_e) {}
+          // Update originals so a second re-save doesn't double-adjust
+          bState.editOriginalGrandTotal = _newGT;
+          bState.editOriginalReceived   = _newRecv;
+        }
       } else {
         // Create new bill
         var result = await requestApi("/api/bills", { method: "POST", body: payload });
@@ -1350,6 +1387,8 @@
     if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
     bState.currentCustomerIdx     = null;
     bState.currentCustomerBalance = 0;
+    bState.editOriginalGrandTotal = null;
+    bState.editOriginalReceived   = null;
     bState.balanceCarriedForward  = false;
 
     setSaveStatus("", "");
@@ -1650,6 +1689,9 @@
 
       bState.currentBillId     = bill.id;
       bState.currentBillNumber = bill.bill_number;
+      bState.balanceCarriedForward  = true; // prevent new-bill balance logic on re-save
+      bState.editOriginalGrandTotal = Math.ceil(bill.grand_total);
+      bState.editOriginalReceived   = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
 
       bState.lineItems = items.map(function (it) {
         return {
