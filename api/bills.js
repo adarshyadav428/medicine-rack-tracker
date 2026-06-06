@@ -205,14 +205,25 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Insert line items
+      // Insert line items — if this fails, delete the bill header to avoid orphans
       const itemRows = buildItemRows(savedBill.id, items);
       if (itemRows.length) {
-        await callSupabaseRest(config, ITEMS_TABLE, {
-          method: "POST",
-          body: itemRows,
-          prefer: "return=minimal",
-        });
+        try {
+          await callSupabaseRest(config, ITEMS_TABLE, {
+            method: "POST",
+            body: itemRows,
+            prefer: "return=minimal",
+          });
+        } catch (itemErr) {
+          try {
+            await callSupabaseRest(
+              config,
+              `${BILLS_TABLE}?id=eq.${encodeURIComponent(savedBill.id)}`,
+              { method: "DELETE" }
+            );
+          } catch (_) {}
+          throw itemErr;
+        }
       }
 
       sendJson(res, 200, {
