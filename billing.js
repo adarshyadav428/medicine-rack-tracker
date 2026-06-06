@@ -776,7 +776,12 @@
     var item = bState.lineItems.find(function (r) { return r._rowId === rowId; });
     if (!item) return;
 
-    if (field === "quantity") {
+    if (field === "mrp") {
+      var mrp = parseFloat(rawValue);
+      item.mrp = isNaN(mrp) ? null : mrp;
+      return; // MRP doesn't affect totals
+
+    } else if (field === "quantity") {
       item.quantity = Math.max(0.001, parseFloat(rawValue) || 0.001);
 
     } else if (field === "sellPrice") {
@@ -830,7 +835,7 @@
         ? item.markupPercent : "";
       var sellVal = item.sellPrice !== null && item.sellPrice !== undefined
         ? item.sellPrice : "";
-      var mrpDisplay = item.mrp !== null ? fmtMoney(item.mrp) : "—";
+      var mrpVal = item.mrp !== null && item.mrp !== undefined ? item.mrp : "";
       var purchaseDisplay = hasPurchase ? fmtMoney(item.purchasePrice) : "—";
 
       tr.innerHTML =
@@ -838,7 +843,14 @@
           '<div class="bill-item-name" title="' + item.medicineName + '">' + item.medicineName + "</div>" +
           '<div class="bill-item-location">' + (item.location || "—") + "</div>" +
         "</td>" +
-        '<td class="num-col"><span class="bill-item-mrp">' + mrpDisplay + "</span></td>" +
+        '<td class="num-col">' +
+          '<input id="mrp-' + item._rowId + '" class="bill-table-input" type="number"' +
+          ' data-col="mrp"' +
+          ' min="0" step="0.01"' +
+          ' value="' + mrpVal + '"' +
+          ' placeholder="—"' +
+          " />" +
+        "</td>" +
         '<td class="num-col bill-purchase-col"><span style="font-family:var(--font-mono);font-size:0.85rem;color:#3a5560;">' + purchaseDisplay + "</span></td>" +
         '<td class="num-col">' +
           '<input id="markup-' + item._rowId + '" class="bill-table-input" type="number"' +
@@ -898,6 +910,7 @@
     });
 
     bState.lineItems.forEach(function (item) {
+      var mrpInput    = document.getElementById("mrp-"    + item._rowId);
       var qtyInput    = document.getElementById("qty-"    + item._rowId);
       var sellInput   = document.getElementById("sell-"   + item._rowId);
       var markupInput = document.getElementById("markup-" + item._rowId);
@@ -917,6 +930,10 @@
         });
       }
 
+      bindInput(mrpInput, "mrp", function () {
+        if (markupInput && !markupInput.disabled) { markupInput.focus(); markupInput.select(); }
+        else if (sellInput) { sellInput.focus(); sellInput.select(); }
+      });
       bindInput(markupInput, "markupPercent", function () {
         var sell = document.getElementById("sell-" + item._rowId);
         if (sell) { sell.focus(); sell.select(); }
