@@ -53,7 +53,7 @@ async function generateBillNumber(config) {
 function buildItemRows(billId, items) {
   return items.map((item) => {
     const sellPrice = toDecimalOrNull(item.sellPrice) ?? 0;
-    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const qty = Math.max(0.001, parseFloat(item.quantity) || 0.001);
     return {
       bill_id: billId,
       medicine_id: normalizeString(item.medicineId) || null,
@@ -72,7 +72,7 @@ function buildItemRows(billId, items) {
 function calcTotals(items, gstPercent) {
   const subtotal = items.reduce((sum, item) => {
     const sp = toDecimalOrNull(item.sellPrice) ?? 0;
-    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const qty = Math.max(0.001, parseFloat(item.quantity) || 0.001);
     return sum + sp * qty;
   }, 0);
   const gstPct = Math.max(0, toDecimalOrNull(gstPercent) ?? 0);
@@ -91,9 +91,9 @@ function validateItems(items, res) {
       sendJson(res, 400, { error: "Each item must have a medicine name." });
       return false;
     }
-    const qty = parseInt(item.quantity, 10);
-    if (isNaN(qty) || qty < 1) {
-      sendJson(res, 400, { error: "Each item must have a quantity of at least 1." });
+    const qty = parseFloat(item.quantity);
+    if (isNaN(qty) || qty < 0.001) {
+      sendJson(res, 400, { error: "Each item must have a quantity of at least 0.001." });
       return false;
     }
     const sp = toDecimalOrNull(item.sellPrice);
