@@ -1046,6 +1046,14 @@
           // never fired because the user didn't blur the name field).
           var prevBal = (idx >= 0 && custList[idx]) ? (parseFloat(custList[idx].balance) || 0) : 0;
 
+          // Snapshot prevBal + received for this bill so history view can reconstruct
+          // the exact receipt instead of using stale current-form state.
+          var _sid = bState.currentBillId;
+          if (_sid) {
+            try { localStorage.setItem("am.billPrev." + _sid, String(prevBal)); } catch (_e) {}
+            try { localStorage.setItem("am.billRecv." + _sid, String(received)); } catch (_e) {}
+          }
+
           var newBalance = round2(grandTot + prevBal - received);
 
           if (idx < 0) {
@@ -1409,6 +1417,8 @@
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
       var items  = result.items || [];
+      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
+      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
@@ -1416,6 +1426,8 @@
         notes:         bill.notes,
         gstPercent:    bill.gst_percent,
         items:         items,
+        prevBalance:   prevBal,
+        received:      received,
       });
       openReceiptModal(bill.bill_number, html);
     } catch (err) {
@@ -1428,6 +1440,8 @@
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
       var items  = result.items || [];
+      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
+      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
@@ -1435,6 +1449,8 @@
         notes:         bill.notes,
         gstPercent:    bill.gst_percent,
         items:         items,
+        prevBalance:   prevBal,
+        received:      received,
       });
       // Open the modal first so user can also print, then share
       openReceiptModal(bill.bill_number, html);
@@ -1583,6 +1599,8 @@
       var items = result.items || [];
 
       if (!bEl.printArea) return;
+      var prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId) || "0") || 0;
+      var received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
       bEl.printArea.innerHTML = buildReceiptHtml({
         billNumber:    bill.bill_number,
         customerName:  bill.customer_name,
@@ -1590,6 +1608,8 @@
         notes:         bill.notes,
         gstPercent:    bill.gst_percent,
         items:         items,
+        prevBalance:   prevBal,
+        received:      received,
       });
       window.print();
     } catch (error) {
