@@ -1390,37 +1390,43 @@
     if (shareBtn) { shareBtn.disabled = true; shareBtn.textContent = "Generating PDF…"; }
 
     var el = null;
+    // The modal sets document.body.style.overflow = "hidden" to prevent page scroll.
+    // html2canvas cannot render elements that are clipped by body overflow, so we
+    // must temporarily remove the restriction and restore it after PDF generation.
+    var savedBodyOverflow = document.body.style.overflow;
+
     try {
-      // Place element at the bottom of the document at x=0 so html2canvas can
-      // find and render it. Positioning at left:-9999px causes a blank PDF
-      // because html2canvas clips to the horizontal capture window starting at 0.
+      document.body.style.overflow = "";
+
       el = document.createElement("div");
-      var docBottom = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 0);
-      el.style.cssText = "position:absolute;top:" + docBottom + "px;left:0;width:740px;background:#fff;";
+      // position:fixed keeps the element within viewport coordinates regardless of
+      // page scroll. z-index:-1 hides it visually behind the modal backdrop (which
+      // has a higher z-index) while still allowing html2canvas to capture it.
+      el.style.cssText = "position:fixed;top:0;left:0;width:740px;background:#fff;z-index:-1;pointer-events:none;";
       el.innerHTML = modalBillData.receiptHtml;
       document.body.appendChild(el);
 
-      // One paint cycle so the browser fully renders the element before html2canvas reads it
-      await new Promise(function (r) { setTimeout(r, 80); });
+      // Two rAF ticks ensure the browser has painted the element before html2canvas reads it
+      await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
 
       var opt = {
         margin:      [8, 8, 8, 8],
         filename:    "Bill-" + bn + ".pdf",
         image:       { type: "jpeg", quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, windowWidth: 760, scrollX: 0, scrollY: 0, backgroundColor: "#ffffff" },
+        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
       };
 
-      var jsPdfInstance = await new Promise(function (resolve, reject) {
-        window.html2pdf().set(opt).from(el).toPdf().get("pdf")
+      var pdfBlob = await new Promise(function (resolve, reject) {
+        window.html2pdf().set(opt).from(el).outputPdf("blob")
           .then(resolve)
           .catch(reject);
       });
 
       if (el && el.parentNode) el.parentNode.removeChild(el);
       el = null;
+      document.body.style.overflow = savedBodyOverflow;
 
-      var pdfBlob = jsPdfInstance.output("blob");
       var fileName = "Bill-" + bn + ".pdf";
       var pdfFile  = new File([pdfBlob], fileName, { type: "application/pdf" });
 
@@ -1445,6 +1451,7 @@
 
     } catch (err) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
+      document.body.style.overflow = savedBodyOverflow;
       window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
     } finally {
       if (shareBtn) { shareBtn.disabled = false; shareBtn.textContent = origText; }
