@@ -1039,7 +1039,17 @@
               return c.name.toLowerCase() === custName.toLowerCase() ||
                 (custPhone && c.phone && c.phone === custPhone);
             });
-            if (idx === -1) {
+            if (idx >= 0) {
+              // Customer exists in localStorage — load their stored balance in case the
+              // user typed the name without blurring (so auto-fill never fired)
+              var storedBal = parseFloat(custList[idx].balance) || 0;
+              if (bState.currentCustomerBalance !== storedBal) {
+                bState.currentCustomerBalance = storedBal;
+                // Recompute newBalance with the correct previous balance
+                var totalDue2   = round2(grandTot + storedBal);
+                newBalance = round2(totalDue2 - received);
+              }
+            } else {
               custList.push({ name: custName, phone: custPhone || "", balance: newBalance });
               idx = custList.length - 1;
             }
@@ -1333,30 +1343,22 @@
 
   async function shareModalBill() {
     if (!modalBillData) return;
-    var bn      = modalBillData.billNumber;
+    var bn       = modalBillData.billNumber;
     var shareBtn = bEl.receiptModalShare;
     var origText = shareBtn ? shareBtn.textContent : "";
     if (shareBtn) { shareBtn.disabled = true; shareBtn.textContent = "Generating PDF…"; }
 
     try {
-      // Render receipt HTML into a temporary off-screen container
-      var container = document.createElement("div");
-      container.style.cssText = "position:fixed;left:-9999px;top:0;width:740px;background:#fff;";
-      container.innerHTML = modalBillData.receiptHtml;
-      document.body.appendChild(container);
-
       var pdfBlob = await window.html2pdf()
         .set({
-          margin:     [8, 8, 8, 8],
-          filename:   "Bill-" + bn + ".pdf",
-          image:      { type: "jpeg", quality: 0.97 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF:      { unit: "mm", format: "a4", orientation: "portrait" },
+          margin:      [8, 8, 8, 8],
+          filename:    "Bill-" + bn + ".pdf",
+          image:       { type: "jpeg", quality: 0.97 },
+          html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 740 },
+          jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
         })
-        .from(container)
+        .from(modalBillData.receiptHtml, "string")
         .outputPdf("blob");
-
-      document.body.removeChild(container);
 
       var fileName = "Bill-" + bn + ".pdf";
       var pdfFile  = new File([pdfBlob], fileName, { type: "application/pdf" });
