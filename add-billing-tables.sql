@@ -26,7 +26,7 @@ create table if not exists bill_items (
   medicine_id    uuid,
   medicine_name  text          not null,
   location       text          not null default '',
-  quantity       integer       not null default 1,
+  quantity       numeric(10,3) not null default 1,
   mrp            numeric(10,2),
   purchase_price numeric(10,2),
   sell_price     numeric(10,2) not null,

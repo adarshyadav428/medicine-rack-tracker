@@ -1657,7 +1657,11 @@
 
       renderLineItems();
       recalcTotals();
-      setSaveStatus("Bill loaded for editing. Make changes then click Save Bill.", "is-info");
+
+      var editMsg = items.length === 0
+        ? "Bill loaded for editing. No saved line items found — please re-add medicines above, then click Save Bill."
+        : "Bill loaded for editing. Make changes then click Save Bill.";
+      setSaveStatus(editMsg, "is-info");
       setBillingStatus("", "");
 
       // Scroll to top of form
