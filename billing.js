@@ -1389,42 +1389,35 @@
     var origText = shareBtn ? shareBtn.textContent : "";
     if (shareBtn) { shareBtn.disabled = true; shareBtn.textContent = "Generating PDF…"; }
 
-    var el = null;
-    // The modal sets document.body.style.overflow = "hidden" to prevent page scroll.
-    // html2canvas cannot render elements that are clipped by body overflow, so we
-    // must temporarily remove the restriction and restore it after PDF generation.
+    // The modal sets body.overflow=hidden. Clear it so html2pdf's internal
+    // container (position:absolute;top:0;left:0) is fully renderable by html2canvas.
     var savedBodyOverflow = document.body.style.overflow;
 
     try {
       document.body.style.overflow = "";
 
-      el = document.createElement("div");
-      // position:fixed keeps the element within viewport coordinates regardless of
-      // page scroll. z-index:-1 hides it visually behind the modal backdrop (which
-      // has a higher z-index) while still allowing html2canvas to capture it.
-      el.style.cssText = "position:fixed;top:0;left:0;width:740px;background:#fff;z-index:-1;pointer-events:none;";
-      el.innerHTML = modalBillData.receiptHtml;
-      document.body.appendChild(el);
-
-      // Two rAF ticks ensure the browser has painted the element before html2canvas reads it
+      // Wait two frames so the browser applies the overflow change before capture
       await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r); }); });
 
       var opt = {
         margin:      [8, 8, 8, 8],
         filename:    "Bill-" + bn + ".pdf",
         image:       { type: "jpeg", quality: 0.97 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0 },
+        html2canvas: { scale: 2, useCORS: true, logging: false, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0 },
         jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
       };
 
+      // Pass the HTML string — NOT a pre-positioned DOM element.
+      // When a DOM element with position:fixed/absolute is passed, html2pdf clones
+      // it with those same styles, causing the clone to escape html2pdf's rendering
+      // container. html2canvas then captures an empty container → blank PDF.
+      // With a string, html2pdf creates its own neutrally-positioned element internally.
       var pdfBlob = await new Promise(function (resolve, reject) {
-        window.html2pdf().set(opt).from(el).outputPdf("blob")
+        window.html2pdf().set(opt).from(modalBillData.receiptHtml).outputPdf("blob")
           .then(resolve)
           .catch(reject);
       });
 
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-      el = null;
       document.body.style.overflow = savedBodyOverflow;
 
       var fileName = "Bill-" + bn + ".pdf";
@@ -1450,7 +1443,6 @@
       setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
 
     } catch (err) {
-      if (el && el.parentNode) el.parentNode.removeChild(el);
       document.body.style.overflow = savedBodyOverflow;
       window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
     } finally {
