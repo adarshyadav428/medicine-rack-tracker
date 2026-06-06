@@ -1348,43 +1348,57 @@
     var origText = shareBtn ? shareBtn.textContent : "";
     if (shareBtn) { shareBtn.disabled = true; shareBtn.textContent = "Generating PDF…"; }
 
+    var el = null;
     try {
-      var pdfBlob = await window.html2pdf()
-        .set({
-          margin:      [8, 8, 8, 8],
-          filename:    "Bill-" + bn + ".pdf",
-          image:       { type: "jpeg", quality: 0.97 },
-          html2canvas: { scale: 2, useCORS: true, logging: false, windowWidth: 740 },
-          jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
-        })
-        .from(modalBillData.receiptHtml, "string")
-        .outputPdf("blob");
+      // Append element to DOM so html2canvas can compute styles
+      el = document.createElement("div");
+      el.style.cssText = "position:absolute;top:0;left:-9999px;width:740px;background:#fff;";
+      el.innerHTML = modalBillData.receiptHtml;
+      document.body.appendChild(el);
 
+      var opt = {
+        margin:      [8, 8, 8, 8],
+        filename:    "Bill-" + bn + ".pdf",
+        image:       { type: "jpeg", quality: 0.97 },
+        html2canvas: { scale: 2, useCORS: true, logging: false, width: 740, backgroundColor: "#ffffff" },
+        jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
+      };
+
+      // Use toPdf().get('pdf') to obtain the jsPDF instance reliably
+      var jsPdfInstance = await new Promise(function (resolve, reject) {
+        window.html2pdf().set(opt).from(el).toPdf().get("pdf")
+          .then(resolve)
+          .catch(reject);
+      });
+
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      el = null;
+
+      var pdfBlob = jsPdfInstance.output("blob");
       var fileName = "Bill-" + bn + ".pdf";
       var pdfFile  = new File([pdfBlob], fileName, { type: "application/pdf" });
 
-      // Try Web Share API (works on mobile / supported desktop browsers)
+      // Try Web Share API (mobile / supported desktop)
       if (window.navigator.share && window.navigator.canShare && window.navigator.canShare({ files: [pdfFile] })) {
         try {
           await window.navigator.share({ files: [pdfFile], title: "Bill " + bn + " — Adarsh Medicals" });
           return;
         } catch (e) {
           if (e.name === "AbortError") return;
-          // Fall through to download
         }
       }
 
-      // Fallback: trigger a direct PDF download
+      // Fallback: direct download
       var url = URL.createObjectURL(pdfBlob);
       var a   = document.createElement("a");
-      a.href     = url;
-      a.download = fileName;
+      a.href = url; a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
 
     } catch (err) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
       window.alert("Could not generate PDF: " + (err.message || "Unknown error"));
     } finally {
       if (shareBtn) { shareBtn.disabled = false; shareBtn.textContent = origText; }
@@ -1450,7 +1464,7 @@
           '<td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--muted);">' +
             bill.created_by +
           "</td>" +
-          '<td class="num-col"><span class="bill-history-total">' + fmtMoney(bill.grand_total) + "</span></td>" +
+          '<td class="num-col"><span class="bill-history-total">' + fmtMoney(Math.ceil(bill.grand_total)) + "</span></td>" +
           "<td>" +
             '<div style="display:flex;gap:0.4rem;justify-content:flex-end;flex-wrap:wrap;">' +
               '<button class="btn btn-ghost btn-xs" data-view-bill="'  + bill.id + '" type="button">👁 View</button>' +
