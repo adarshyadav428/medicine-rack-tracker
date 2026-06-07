@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260603-billing" />
+    <link rel="stylesheet" href="styles.css?v=20260605-rollback2" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -30,6 +30,7 @@
         <a href="index.html" data-nav>Home</a>
         <a href="dashboard.html" data-nav>Medicine Database</a>
         <a href="billing.html" class="active" data-nav>Billing</a>
+        <a href="customers.html" data-nav>Customers</a>
         <a href="access.html" data-nav>Access Control</a>
       </nav>
 
@@ -41,35 +42,51 @@
 
     <main class="page-shell">
 
-      <!-- Page header + status -->
-      <section class="panel fade-up">
-        <div class="panel-headline">
+      <!-- ── Page hero banner ───────────────────────────────────────── -->
+      <section class="billing-page-hero fade-up">
+        <div class="billing-hero-text">
+          <div class="billing-hero-eyebrow">Adarsh Medicals · Admin Only</div>
           <h1 class="page-title">Billing</h1>
-          <p>Create and manage bills directly from your inventory. Admin access only.</p>
+          <p>Create bills from your live inventory, track history, and print receipts.</p>
         </div>
         <p id="billing-status" class="status-message is-info">Loading…</p>
       </section>
 
-      <!-- ── Bill Header ─────────────────────────────────────────────── -->
-      <section id="bill-form-section" class="panel fade-up delay-1">
-        <div class="bill-form-header">
-          <div class="bill-number-display">
-            <span class="bill-meta-label">Bill No.</span>
+      <!-- ── Bill form card ─────────────────────────────────────────── -->
+      <section id="bill-form-section" class="panel billing-form-card fade-up delay-1">
+        <!-- Bill number + date bar -->
+        <div class="bill-header-row">
+          <div class="bill-num-block">
+            <span class="bill-num-chip">Bill No.</span>
             <span id="bill-number-preview" class="bill-number-value">New Bill</span>
           </div>
-          <div class="bill-number-display">
-            <span class="bill-meta-label">Date</span>
-            <span id="bill-date-value" class="bill-number-value bill-date-text"></span>
+          <div class="bill-header-right">
+            <div class="bill-date-block">
+              <span class="bill-meta-label">Date</span>
+              <span id="bill-date-value" class="bill-date-text"></span>
+            </div>
+            <div class="bill-dl-badge">
+              DL: RLF20UP2025023538 &nbsp;|&nbsp; RLF21UP2025023481
+            </div>
           </div>
         </div>
 
-        <div class="two-col-fields bill-customer-grid">
+        <!-- Saved customer quick-fill -->
+        <div class="bill-customer-quickfill">
+          <label for="bill-saved-customer-select">Quick-fill from saved customers</label>
+          <select id="bill-saved-customer-select">
+            <option value="">— No saved customers yet —</option>
+          </select>
+        </div>
+
+        <!-- Customer fields — 3 columns -->
+        <div class="bill-fields-row">
           <div>
-            <label for="bill-customer-name">Customer Name</label>
+            <label for="bill-customer-name">Customer / Business Name</label>
             <input
               id="bill-customer-name"
               type="text"
-              placeholder="Walk-in customer"
+              placeholder="e.g. City Medical Store"
               maxlength="120"
               autocomplete="off"
             />
@@ -84,33 +101,54 @@
               autocomplete="off"
             />
           </div>
+          <div>
+            <label for="bill-notes">Order / Notes</label>
+            <input
+              id="bill-notes"
+              type="text"
+              placeholder="Batch no., order ref., doctor name…"
+              maxlength="240"
+            />
+          </div>
         </div>
 
-        <div style="margin-top: 0.64rem;">
-          <label for="bill-notes">Notes (optional)</label>
+        <!-- Save customer shortcut -->
+        <div class="bill-save-customer-bar">
           <input
-            id="bill-notes"
-            type="text"
-            placeholder="e.g. Doctor prescribed, batch no., etc."
-            maxlength="240"
+            id="bill-opening-balance"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Balance ₹0"
+            class="bill-opening-balance-input"
+            title="Opening / current balance for this customer"
           />
+          <button id="bill-save-customer-btn" class="btn btn-ghost btn-xs" type="button">
+            + Save as Customer
+          </button>
+          <button id="bill-repair-balance-btn" class="btn btn-ghost btn-xs" type="button"
+            title="Recalculate all previous balances for this customer from their first bill">
+            Repair Balance
+          </button>
+          <span id="bill-save-customer-status" class="bill-save-customer-hint"></span>
         </div>
       </section>
 
-      <!-- ── Medicine Search & Line Items ───────────────────────────── -->
-      <section class="panel fade-up delay-2">
-        <div class="panel-headline">
-          <h2>Add Medicines</h2>
-          <p>Search by medicine name and click to add to the bill.</p>
+      <!-- ── Medicine search & line items ──────────────────────────── -->
+      <section class="panel billing-add-panel fade-up delay-2">
+        <div class="billing-add-header">
+          <div class="panel-headline" style="margin-bottom:0;">
+            <h2>Add Medicines</h2>
+            <p>Search by name and click to add to the bill.</p>
+          </div>
         </div>
 
-        <div class="billing-search-wrap">
-          <label for="billing-search">Search Medicine</label>
+        <div class="billing-search-wrap" style="margin-top:0.88rem;">
           <div class="billing-search-field-wrap">
             <input
               id="billing-search"
               type="search"
-              placeholder="Type medicine name to search… (min. 2 characters)"
+              placeholder="Search medicine name… (min. 2 characters)"
               autocomplete="off"
               aria-autocomplete="list"
               aria-controls="billing-search-dropdown"
@@ -126,10 +164,11 @@
           ></div>
         </div>
 
-        <!-- Line Items -->
-        <div id="bill-line-items-wrap" style="margin-top: 1.1rem;">
-          <p id="bill-items-empty" class="empty-state">
-            Search and add medicines above to begin the bill.
+        <!-- Line items -->
+        <div id="bill-line-items-wrap" style="margin-top:1rem;">
+          <p id="bill-items-empty" class="billing-empty-state">
+            <span class="billing-empty-icon">💊</span>
+            Search above and click a medicine to add it here.
           </p>
 
           <div id="bill-items-table-wrap" class="hidden">
@@ -144,7 +183,7 @@
                     <th class="num-col" style="min-width:96px;">Sell Price (₹)</th>
                     <th class="num-col" style="min-width:68px;">Qty</th>
                     <th class="num-col">Total (₹)</th>
-                    <th style="width:44px;"></th>
+                    <th style="width:80px;"></th>
                   </tr>
                 </thead>
                 <tbody id="bill-items-tbody"></tbody>
@@ -154,66 +193,125 @@
         </div>
       </section>
 
-      <!-- ── Bill Summary & Actions ──────────────────────────────────── -->
-      <section class="panel fade-up delay-3">
-        <div class="bill-summary-grid">
-          <div class="bill-summary-left">
-            <label for="bill-gst-percent">GST / Tax (%)</label>
-            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.32rem;">
-              <input
-                id="bill-gst-percent"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                placeholder="0"
-                value="0"
-                style="max-width:120px;"
-              />
-              <span style="font-size:0.82rem;color:var(--muted);">applied on subtotal</span>
+      <!-- ── Bill summary & actions ─────────────────────────────────── -->
+      <section class="panel billing-summary-card fade-up delay-3">
+        <div class="bill-totals-layout">
+
+          <!-- Left: breakdown + GST input -->
+          <div class="bill-totals-left">
+            <div class="bill-breakdown-box">
+              <div class="bill-breakdown-row">
+                <span>Subtotal</span>
+                <span id="summary-subtotal" class="summary-amount">₹0.00</span>
+              </div>
+              <div class="bill-breakdown-row" id="gst-summary-row">
+                <span id="gst-label-text">GST (0%)</span>
+                <span id="summary-gst" class="summary-amount">₹0.00</span>
+              </div>
+              <div class="bill-breakdown-row bill-roundoff-row hidden" id="roundoff-summary-row">
+                <span>Round Off</span>
+                <span id="summary-roundoff" class="summary-amount summary-amount--muted">₹0.00</span>
+              </div>
+              <div class="bill-breakdown-row bill-breakdown-items-row">
+                <span>Line Items</span>
+                <span id="summary-items-count">0</span>
+              </div>
             </div>
+
+            <div class="bill-gst-field">
+              <label for="bill-gst-percent">GST / Tax %</label>
+              <div class="bill-gst-input-row">
+                <input
+                  id="bill-gst-percent"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="0"
+                  value="0"
+                />
+                <span class="bill-gst-hint">applied on subtotal</span>
+              </div>
+            </div>
+
+            <label class="bill-roundoff-label" style="display:none;" aria-hidden="true">
+              <input type="checkbox" id="bill-roundoff-toggle" />
+              <span>Round off to nearest ₹1</span>
+            </label>
           </div>
 
-          <div class="bill-summary-box">
-            <div class="summary-row">
-              <span>Subtotal</span>
-              <span id="summary-subtotal" class="summary-amount">₹0.00</span>
+          <!-- Right: grand total -->
+          <div class="bill-grand-total-block">
+            <p class="bill-grand-total-label">Grand Total</p>
+            <span id="summary-grand-total" class="bill-grand-total-value">₹0.00</span>
+          </div>
+        </div>
+
+        <!-- Payment & balance tracking -->
+        <div id="bill-payment-section" class="bill-payment-section">
+          <div class="bill-payment-heading">Payment &amp; Balance</div>
+          <div class="bill-payment-layout">
+            <div class="bill-payment-left">
+              <div class="bill-breakdown-box">
+                <div class="bill-breakdown-row bill-prev-balance-row">
+                  <span>Previous Balance</span>
+                  <span id="summary-prev-balance" class="summary-amount summary-amount--warn">₹0.00</span>
+                </div>
+                <div class="bill-breakdown-row bill-breakdown-row--strong">
+                  <span>Total Due</span>
+                  <span id="summary-total-due" class="summary-amount">₹0.00</span>
+                </div>
+              </div>
+              <div class="bill-gst-field" style="margin-top:0.7rem;">
+                <label for="bill-received-amount">Amount Received (₹)</label>
+                <div class="bill-gst-input-row">
+                  <input
+                    id="bill-received-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value="0"
+                  />
+                  <span class="bill-gst-hint">cash / UPI / cheque</span>
+                </div>
+              </div>
             </div>
-            <div class="summary-row" id="gst-summary-row">
-              <span id="gst-label-text">GST (0%)</span>
-              <span id="summary-gst" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row summary-total-row">
-              <span>Grand Total</span>
-              <span id="summary-grand-total" class="summary-amount">₹0.00</span>
-            </div>
-            <div class="summary-row summary-items-row">
-              <span>Line Items</span>
-              <span id="summary-items-count">0</span>
+            <div class="bill-balance-due-block">
+              <p class="bill-balance-due-label">Balance Carried Forward</p>
+              <span id="summary-balance-due" class="bill-balance-due-value">₹0.00</span>
             </div>
           </div>
         </div>
 
+        <!-- Action buttons -->
         <div class="bill-actions-bar">
-          <button id="save-bill-button" class="btn btn-primary" type="button">
+          <button id="save-bill-button" class="btn btn-primary bill-btn-main" type="button">
             💾 Save Bill
           </button>
-          <button id="print-bill-button" class="btn btn-secondary" type="button" disabled>
-            🖨️ Print
+          <button id="print-bill-button" class="btn btn-secondary bill-btn-main" type="button" disabled>
+            🖨️ Print Receipt
           </button>
-          <button id="new-bill-button" class="btn btn-ghost" type="button">
+          <button id="new-bill-button" class="btn btn-ghost bill-btn-main" type="button">
             ✨ New Bill
           </button>
         </div>
 
-        <p id="bill-save-status" class="status-message" style="margin-top: 0.72rem;"></p>
+        <p id="bill-save-status" class="status-message" style="margin-top:0.72rem;"></p>
       </section>
 
-      <!-- ── Bill History ───────────────────────────────────────────── -->
+      <!-- ── Bill history ───────────────────────────────────────────── -->
       <section class="panel fade-up delay-3" id="bill-history-section">
-        <div class="panel-headline">
-          <h2>Bill History</h2>
-          <p>All bills created from this portal (most recent first).</p>
+        <div class="panel-headline" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+          <div>
+            <h2>Bill History</h2>
+            <p>All bills created from this portal — most recent first.</p>
+          </div>
+          <button id="import-bills-btn" class="btn btn-ghost btn-xs" type="button"
+            title="Import historical bills from a CSV file"
+            style="margin-top:0.25rem;white-space:nowrap;">
+            Import Bills
+          </button>
         </div>
         <div id="bill-history-container">
           <p class="empty-state">Loading bill history…</p>
@@ -222,11 +320,95 @@
 
     </main>
 
+    <!-- ── Import Bills Modal ─────────────────────────────────────── -->
+    <div id="import-modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-card" style="max-width:720px;width:95%;">
+        <div class="modal-header">
+          <h3 class="modal-title">Import Bills</h3>
+          <button id="import-modal-close" class="modal-close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1.2rem 1.4rem;">
+
+          <!-- Instructions -->
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:0.7rem;font-size:0.84rem;color:#166534;line-height:1.6;">
+            <strong>CSV format rules:</strong><br>
+            Each row = one medicine line item. Rows sharing the same <code>bill_number</code> are grouped into one bill.<br>
+            Leave <code>bill_number</code> blank for single-item bills (number auto-generated).<br>
+            Required columns: <code>date</code>, <code>medicine_name</code>, <code>sell_price</code>. Date: <code>YYYY-MM-DD</code> or <code>DD/MM/YYYY</code>.
+          </div>
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:1rem;font-size:0.84rem;color:#1d4ed8;line-height:1.6;">
+            <strong>PDF import:</strong> Supplier invoice PDFs are parsed automatically using text extraction.
+            Results are best-effort — always verify medicine names, quantities and prices in the preview before importing.
+          </div>
+
+          <!-- Template download -->
+          <button id="import-template-btn" class="btn btn-ghost btn-xs" type="button" style="margin-bottom:1rem;">
+            Download Template CSV
+          </button>
+
+          <!-- File picker -->
+          <div style="margin-bottom:1rem;">
+            <label for="import-file-input" style="display:block;font-size:0.82rem;font-weight:600;color:#475569;margin-bottom:0.35rem;">
+              Select CSV or PDF file
+            </label>
+            <input id="import-file-input" type="file" accept=".csv,text/csv,.pdf,application/pdf"
+              style="font-size:0.88rem;border:2px solid #e2e8f0;border-radius:0.5rem;padding:0.4rem 0.6rem;width:100%;box-sizing:border-box;" />
+          </div>
+
+          <!-- PDF warning (shown after PDF parse) -->
+          <div id="import-pdf-note" class="hidden" style="background:#fefce8;border:1px solid #fde68a;border-radius:0.5rem;padding:0.6rem 1rem;margin-bottom:0.8rem;font-size:0.82rem;color:#854d0e;">
+            PDF text extracted — please verify all values before importing.<br>
+            <strong>Note:</strong> Bills saved via the app's Share/Download button are image-only and cannot be imported.
+            Use browser <strong>Print → Save as PDF</strong> (Ctrl+P) for text-based PDFs that work here.
+          </div>
+
+          <!-- Preview -->
+          <div id="import-preview" class="hidden">
+            <div style="font-size:0.82rem;color:#64748b;margin-bottom:0.5rem;" id="import-preview-info"></div>
+            <div style="overflow-x:auto;max-height:220px;border-radius:0.5rem;border:1px solid #e2e8f0;">
+              <table id="import-preview-table" style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                <thead id="import-preview-head" style="position:sticky;top:0;background:#f8fafc;"></thead>
+                <tbody id="import-preview-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Result -->
+          <div id="import-result" class="hidden" style="margin-top:0.8rem;padding:0.8rem 1rem;border-radius:0.6rem;font-size:0.87rem;"></div>
+
+          <!-- Actions -->
+          <div style="display:flex;gap:0.7rem;margin-top:1.1rem;justify-content:flex-end;">
+            <button id="import-cancel-btn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="import-submit-btn" class="btn btn-primary" type="button" disabled>
+              Import Bills
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Print receipt area — hidden on screen, shown only when printing -->
     <div id="print-receipt-area" class="print-receipt-area" aria-hidden="true"></div>
 
+    <!-- Receipt view modal -->
+    <div id="receipt-modal" class="receipt-modal hidden" role="dialog" aria-modal="true" aria-label="Receipt preview">
+      <div class="receipt-modal-backdrop" id="receipt-modal-backdrop"></div>
+      <div class="receipt-modal-panel">
+        <div class="receipt-modal-toolbar">
+          <span class="receipt-modal-ref" id="receipt-modal-ref">Receipt</span>
+          <div class="receipt-modal-actions">
+            <button class="btn btn-secondary btn-xs" id="receipt-modal-print-btn" type="button">🖨️ Print</button>
+            <button class="btn btn-ghost btn-xs" id="receipt-modal-share-btn" type="button">📤 Share</button>
+            <button class="receipt-modal-close" id="receipt-modal-close-btn" type="button" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <div class="receipt-modal-body" id="receipt-modal-body"></div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260603"></script>
+    <script src="billing.js?v=20260607-pdfimport3"></script>
   </body>
 </html>

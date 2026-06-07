@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profit Dashboard — Adarsh Medicals</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* ── Lock screen ── */
+    #lock-screen {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 999;
+    }
+    #lock-screen.hidden { display: none; }
+
+    .lock-card {
+      background: #fff;
+      border-radius: 1.2rem;
+      padding: 2.5rem 2rem 2rem;
+      width: 100%; max-width: 360px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.25);
+      display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
+    }
+
+    .lock-icon {
+      font-size: 2.6rem;
+      line-height: 1;
+    }
+
+    .lock-card h1 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0;
+      text-align: center;
+    }
+
+    .lock-card p {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin: -0.6rem 0 0;
+      text-align: center;
+    }
+
+    .lock-field {
+      width: 100%;
+      display: flex; flex-direction: column; gap: 0.35rem;
+    }
+
+    .lock-field label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .lock-field input {
+      width: 100%; box-sizing: border-box;
+      padding: 0.65rem 0.9rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 0.6rem;
+      font-size: 1.1rem;
+      letter-spacing: 0.3em;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .lock-field input:focus {
+      border-color: #0d9488;
+    }
+
+    #pin-msg {
+      font-size: 0.82rem;
+      color: #dc2626;
+      min-height: 1.2em;
+      text-align: center;
+    }
+
+    .lock-submit {
+      width: 100%;
+      padding: 0.7rem;
+      background: #0d9488;
+      color: #fff;
+      border: none;
+      border-radius: 0.6rem;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .lock-submit:hover { background: #0f766e; }
+
+    /* ── Dashboard ── */
+    #dashboard.hidden { display: none; }
+
+    .profit-topbar {
+      background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);
+      padding: 1.4rem 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 0.7rem;
+    }
+
+    .profit-topbar-title {
+      color: #fff;
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -.01em;
+    }
+
+    .profit-topbar-sub {
+      color: rgba(255,255,255,.7);
+      font-size: 0.82rem;
+      margin-top: 0.1rem;
+    }
+
+    .profit-topbar-actions {
+      display: flex; align-items: center; gap: 0.7rem;
+    }
+
+    .lock-btn {
+      background: rgba(255,255,255,.15);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.3);
+      border-radius: 0.5rem;
+      padding: 0.4rem 0.9rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .lock-btn:hover { background: rgba(255,255,255,.25); }
+
+    /* Period tabs */
+    .period-bar {
+      display: flex; gap: 0.4rem;
+      padding: 1rem 2rem 0;
+      flex-wrap: wrap;
+    }
+
+    .period-btn {
+      padding: 0.38rem 0.9rem;
+      border: 2px solid #e2e8f0;
+      border-radius: 999px;
+      background: #fff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #475569;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .period-btn:hover { border-color: #0d9488; color: #0d9488; }
+    .period-btn.active {
+      background: #0d9488;
+      border-color: #0d9488;
+      color: #fff;
+    }
+
+    /* Summary cards */
+    .profit-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      padding: 1rem 2rem;
+    }
+
+    .profit-card {
+      background: #fff;
+      border-radius: 0.9rem;
+      padding: 1.2rem 1.4rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,.06);
+      border-left: 4px solid #cbd5e1;
+    }
+    .profit-card.card-revenue  { border-left-color: #0d9488; }
+    .profit-card.card-cost     { border-left-color: #f59e0b; }
+    .profit-card.card-profit   { border-left-color: #16a34a; }
+    .profit-card.card-profit.card-loss { border-left-color: #dc2626; }
+    .profit-card.card-margin   { border-left-color: #8b5cf6; }
+
+    .profit-card-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      margin-bottom: 0.4rem;
+    }
+
+    .profit-card-value {
+      font-size: 1.55rem;
+      font-weight: 800;
+      color: #0f172a;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .profit-card.card-profit .profit-card-value  { color: #16a34a; }
+    .profit-card.card-profit.card-loss .profit-card-value { color: #dc2626; }
+    .profit-card.card-margin .profit-card-value  { color: #7c3aed; }
+
+    .profit-card-period {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      margin-top: 0.2rem;
+    }
+
+    /* Tables */
+    .profit-section {
+      padding: 0 2rem 1.5rem;
+    }
+
+    .profit-section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 1.2rem 0 0.7rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 2px solid #f1f5f9;
+    }
+
+    .profit-table-wrap {
+      overflow-x: auto;
+      border-radius: 0.8rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,.06);
+      background: #fff;
+    }
+
+    .profit-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.87rem;
+    }
+
+    .profit-table th {
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      padding: 0.7rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .profit-table th.num { text-align: right; }
+
+    .profit-table td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+      vertical-align: middle;
+    }
+    .profit-table tr:last-child td { border-bottom: none; }
+    .profit-table tr:hover td { background: #f8fafc; }
+
+    .profit-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono, monospace); }
+
+    .profit-val { font-weight: 700; color: #16a34a; }
+    .profit-val.loss { color: #dc2626; }
+    .muted { color: #94a3b8; font-style: italic; }
+
+    .profit-cust-name { font-weight: 600; color: #0f172a; margin-bottom: 0.2rem; }
+
+    .profit-bar-wrap {
+      height: 4px;
+      background: #f1f5f9;
+      border-radius: 999px;
+      margin-top: 0.25rem;
+      overflow: hidden;
+    }
+    .profit-bar {
+      height: 100%;
+      border-radius: 999px;
+      background: #0d9488;
+      transition: width .4s ease;
+    }
+    .profit-bar-green { background: #16a34a; }
+
+    #dashboard-loading {
+      text-align: center;
+      padding: 2rem;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+    #dashboard-loading.hidden { display: none; }
+
+    #dashboard-error {
+      background: #fef2f2;
+      color: #dc2626;
+      border-radius: 0.6rem;
+      padding: 0.8rem 1.2rem;
+      font-size: 0.87rem;
+      margin: 0 2rem;
+    }
+    #dashboard-error.hidden { display: none; }
+
+    .profit-empty {
+      text-align: center;
+      padding: 2rem;
+      color: #94a3b8;
+      font-size: 0.9rem;
+    }
+    .profit-empty.hidden { display: none; }
+
+    @media (max-width: 640px) {
+      .profit-topbar, .period-bar, .profit-cards, .profit-section { padding-left: 1rem; padding-right: 1rem; }
+      .profit-card-value { font-size: 1.2rem; }
+    }
+  </style>
+</head>
+<body style="margin:0;background:#f8fafc;min-height:100vh;">
+
+  <!-- ── Lock screen ─────────────────────────────────────────────────────── -->
+  <div id="lock-screen">
+    <div class="lock-card">
+      <div class="lock-icon">🔒</div>
+      <h1 id="pin-title">Profit Dashboard</h1>
+      <p>Enter your PIN to continue</p>
+
+      <div class="lock-field">
+        <label for="pin-input">PIN</label>
+        <input id="pin-input" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="••••" />
+      </div>
+
+      <div id="pin-confirm-row" class="lock-field hidden">
+        <label for="pin-confirm">Confirm PIN</label>
+        <input id="pin-confirm" type="password" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="••••" />
+      </div>
+
+      <div id="pin-msg"></div>
+      <button id="pin-submit" class="lock-submit">Unlock</button>
+    </div>
+  </div>
+
+  <!-- ── Dashboard ───────────────────────────────────────────────────────── -->
+  <div id="dashboard" class="hidden">
+
+    <!-- Top bar -->
+    <div class="profit-topbar">
+      <div>
+        <div class="profit-topbar-title">Profit &amp; Analytics</div>
+        <div class="profit-topbar-sub">Adarsh Medicals — Confidential</div>
+      </div>
+      <div class="profit-topbar-actions">
+        <button id="change-pin-btn" class="lock-btn">Change PIN</button>
+        <button class="lock-btn" onclick="sessionStorage.removeItem('am.profitOk'); location.reload();">Lock</button>
+      </div>
+    </div>
+
+    <!-- Period selector -->
+    <div class="period-bar">
+      <button class="period-btn" data-period="today">Today</button>
+      <button class="period-btn" data-period="week">This Week</button>
+      <button class="period-btn active" data-period="month">This Month</button>
+      <button class="period-btn" data-period="year">This Year</button>
+      <button class="period-btn" data-period="all">All Time</button>
+    </div>
+
+    <!-- Loading / error -->
+    <div id="dashboard-loading">Loading data…</div>
+    <div id="dashboard-error" class="hidden"></div>
+
+    <!-- Summary cards -->
+    <div class="profit-cards">
+      <div class="profit-card card-revenue">
+        <div class="profit-card-label">Revenue</div>
+        <div class="profit-card-value" id="stat-revenue">—</div>
+        <div class="profit-card-period" id="stat-period-label">This Month</div>
+      </div>
+      <div class="profit-card card-cost">
+        <div class="profit-card-label">Cost of Goods</div>
+        <div class="profit-card-value" id="stat-cost">—</div>
+        <div class="profit-card-period">Items with purchase price</div>
+      </div>
+      <div class="profit-card card-profit" id="card-profit">
+        <div class="profit-card-label">Gross Profit</div>
+        <div class="profit-card-value" id="stat-profit">—</div>
+        <div class="profit-card-period">Revenue − Cost</div>
+      </div>
+      <div class="profit-card card-margin">
+        <div class="profit-card-label">Profit Margin</div>
+        <div class="profit-card-value" id="stat-margin">—</div>
+        <div class="profit-card-period">Profit / Revenue</div>
+      </div>
+    </div>
+
+    <!-- By Customer -->
+    <div class="profit-section">
+      <div class="profit-section-title">Sales by Customer</div>
+      <div class="profit-table-wrap">
+        <table class="profit-table">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th class="num">Bills</th>
+              <th class="num">Revenue</th>
+              <th class="num">Cost</th>
+              <th class="num">Profit</th>
+              <th class="num">Margin</th>
+            </tr>
+          </thead>
+          <tbody id="cust-body"></tbody>
+        </table>
+        <div id="cust-empty" class="profit-empty hidden">No customer data for this period.</div>
+      </div>
+    </div>
+
+    <!-- By Medicine -->
+    <div class="profit-section">
+      <div class="profit-section-title">Top Medicines by Profit</div>
+      <div class="profit-table-wrap">
+        <table class="profit-table">
+          <thead>
+            <tr>
+              <th>Medicine</th>
+              <th class="num">Qty Sold</th>
+              <th class="num">Revenue</th>
+              <th class="num">Cost</th>
+              <th class="num">Profit</th>
+              <th class="num">Margin</th>
+            </tr>
+          </thead>
+          <tbody id="med-body"></tbody>
+        </table>
+        <div id="med-empty" class="profit-empty hidden">No medicine data for this period.</div>
+      </div>
+    </div>
+
+  </div><!-- /dashboard -->
+
+  <script src="profit.js?v=20260607-v1"></script>
+</body>
+</html>

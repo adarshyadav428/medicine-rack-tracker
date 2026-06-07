@@ -53,7 +53,7 @@ async function generateBillNumber(config) {
 function buildItemRows(billId, items) {
   return items.map((item) => {
     const sellPrice = toDecimalOrNull(item.sellPrice) ?? 0;
-    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const qty = Math.max(0.001, parseFloat(item.quantity) || 0.001);
     return {
       bill_id: billId,
       medicine_id: normalizeString(item.medicineId) || null,
@@ -72,12 +72,12 @@ function buildItemRows(billId, items) {
 function calcTotals(items, gstPercent) {
   const subtotal = items.reduce((sum, item) => {
     const sp = toDecimalOrNull(item.sellPrice) ?? 0;
-    const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+    const qty = Math.max(0.001, parseFloat(item.quantity) || 0.001);
     return sum + sp * qty;
   }, 0);
   const gstPct = Math.max(0, toDecimalOrNull(gstPercent) ?? 0);
   const gstAmount = round2(subtotal * gstPct / 100);
-  const grandTotal = round2(subtotal + gstAmount);
+  const grandTotal = Math.ceil(round2(subtotal + gstAmount));
   return { subtotal: round2(subtotal), gstAmount, grandTotal, gstPct };
 }
 
@@ -91,9 +91,9 @@ function validateItems(items, res) {
       sendJson(res, 400, { error: "Each item must have a medicine name." });
       return false;
     }
-    const qty = parseInt(item.quantity, 10);
-    if (isNaN(qty) || qty < 1) {
-      sendJson(res, 400, { error: "Each item must have a quantity of at least 1." });
+    const qty = parseFloat(item.quantity);
+    if (isNaN(qty) || qty < 0.001) {
+      sendJson(res, 400, { error: "Each item must have a quantity of at least 0.001." });
       return false;
     }
     const sp = toDecimalOrNull(item.sellPrice);
@@ -128,6 +128,55 @@ module.exports = async (req, res) => {
       res.setHeader("Cache-Control", "no-store");
 
       const id = normalizeString(req.query?.id);
+
+      // Last-prices query: return price map for a specific customer
+      if (req.query?.lastprices === "1") {
+        const customer = normalizeString(req.query?.customer);
+        if (!customer) {
+          sendJson(res, 400, { error: "customer is required for lastprices query." });
+          return;
+        }
+
+        // Step 1: get bill IDs for this customer
+        const billRows = await callSupabaseRest(
+          config,
+          `${BILLS_TABLE}?customer_name=eq.${encodeURIComponent(customer)}&select=id`,
+          { method: "GET" }
+        );
+        const billIds = Array.isArray(billRows) ? billRows.map(b => b.id) : [];
+
+        if (!billIds.length) {
+          sendJson(res, 200, { priceMap: {} });
+          return;
+        }
+
+        // Step 2: get all items for those bills, most recent first
+        const encodedIds = billIds.map(id => encodeURIComponent(id)).join(",");
+        const itemRows = await callSupabaseRest(
+          config,
+          `${ITEMS_TABLE}?bill_id=in.(${encodedIds})&select=medicine_name,sell_price,markup_percent,created_at&order=created_at.desc&limit=500`,
+          { method: "GET" }
+        );
+
+        // Build map: first occurrence = most recent price per medicine
+        const priceMap = {};
+        if (Array.isArray(itemRows)) {
+          for (const item of itemRows) {
+            const key = (item.medicine_name || "").toLowerCase().trim();
+            if (key && !priceMap[key]) {
+              priceMap[key] = {
+                sellPrice: parseFloat(item.sell_price) ?? 0,
+                markupPercent: item.markup_percent != null
+                  ? parseFloat(item.markup_percent)
+                  : null,
+              };
+            }
+          }
+        }
+
+        sendJson(res, 200, { priceMap });
+        return;
+      }
 
       if (id) {
         // Single bill + its line items
@@ -205,14 +254,25 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Insert line items
+      // Insert line items — if this fails, delete the bill header to avoid orphans
       const itemRows = buildItemRows(savedBill.id, items);
       if (itemRows.length) {
-        await callSupabaseRest(config, ITEMS_TABLE, {
-          method: "POST",
-          body: itemRows,
-          prefer: "return=minimal",
-        });
+        try {
+          await callSupabaseRest(config, ITEMS_TABLE, {
+            method: "POST",
+            body: itemRows,
+            prefer: "return=minimal",
+          });
+        } catch (itemErr) {
+          try {
+            await callSupabaseRest(
+              config,
+              `${BILLS_TABLE}?id=eq.${encodeURIComponent(savedBill.id)}`,
+              { method: "DELETE" }
+            );
+          } catch (_) {}
+          throw itemErr;
+        }
       }
 
       sendJson(res, 200, {
