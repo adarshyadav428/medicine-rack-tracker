@@ -1585,6 +1585,8 @@
     if (result) { result.classList.add("hidden"); result.textContent = ""; }
     var submitBtn = document.getElementById("import-submit-btn");
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Import Bills"; }
+    var pdfNote = document.getElementById("import-pdf-note");
+    if (pdfNote) pdfNote.classList.add("hidden");
   }
 
   function closeImportModal() {
@@ -1592,8 +1594,151 @@
     if (overlay) overlay.classList.add("hidden");
   }
 
+  // ── PDF support ──────────────────────────────────────────────────────────
+
+  var PDFJS_VERSION = "3.11.174";
+
+  function loadPdfJs() {
+    return new Promise(function (resolve, reject) {
+      if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+      var s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/" + PDFJS_VERSION + "/pdf.min.js";
+      s.crossOrigin = "anonymous";
+      s.onload = function () {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/" + PDFJS_VERSION + "/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      };
+      s.onerror = function () { reject(new Error("Could not load PDF.js")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  async function extractPdfLines(file) {
+    var lib = await loadPdfJs();
+    var buf = await file.arrayBuffer();
+    var pdf = await lib.getDocument({ data: buf }).promise;
+    var allLines = [];
+    for (var p = 1; p <= pdf.numPages; p++) {
+      var page = await pdf.getPage(p);
+      var content = await page.getTextContent();
+      // Group text items into visual rows by Y coordinate (PDF Y is bottom-up)
+      var rowMap = [];
+      content.items.forEach(function (item) {
+        if (!item.str || !item.str.trim()) return;
+        var y = item.transform[5];
+        var x = item.transform[4];
+        var matched = false;
+        for (var i = 0; i < rowMap.length; i++) {
+          if (Math.abs(rowMap[i].y - y) < 4) {
+            rowMap[i].items.push({ x: x, str: item.str });
+            matched = true; break;
+          }
+        }
+        if (!matched) rowMap.push({ y: y, items: [{ x: x, str: item.str }] });
+      });
+      // Sort rows top-to-bottom, items left-to-right
+      rowMap.sort(function (a, b) { return b.y - a.y; });
+      rowMap.forEach(function (row) {
+        row.items.sort(function (a, b) { return a.x - b.x; });
+        allLines.push(row.items.map(function (i) { return i.str; }).join("  "));
+      });
+    }
+    return allLines;
+  }
+
+  var PDF_SKIP_RE = /^\s*(?:total|grand\s*total|sub\s*total|invoice|bill\s*no|receipt|date|address|gstin|gst[\s#]|phone|mob|customer|qty|quantity|mrp|rate|disc(?:ount)?|tax|sgst|cgst|igst|hsn|batch|exp(?:iry)?|mfg|item|product|description|particulars|sr\.?\s*no?|s\.?\s*no?|amount|value|net|page\s*\d)\b/i;
+
+  function parsePdfLines(lines) {
+    var rows = [];
+    lines.forEach(function (line) {
+      line = line.trim();
+      if (line.length < 4) return;
+      if (PDF_SKIP_RE.test(line)) return;
+      if (!/\d/.test(line)) return;
+
+      // Strip leading serial number: "1." / "2)" / "  3  "
+      var cleaned = line.replace(/^\s*\d{1,3}[\.\)]\s*/, "").trim();
+      if (!cleaned || cleaned.length < 3) return;
+
+      // Split into name (text before first number block) and the rest
+      var splitMatch = cleaned.match(/^([^\d]+?)\s{1,}(\d[\d\s.,]*)$/);
+      if (!splitMatch) {
+        // Fallback: find first digit
+        var di = cleaned.search(/\d/);
+        if (di < 2) return;
+        splitMatch = [null, cleaned.substring(0, di), cleaned.substring(di)];
+      }
+
+      var name = splitMatch[1].trim().replace(/[\s,]+$/, "");
+      if (!name || name.length < 2) return;
+
+      // Extract all numbers from the numeric tail
+      var nums = [];
+      var nr; var nre = /\d+(?:\.\d+)?/g;
+      while ((nr = nre.exec(splitMatch[2])) !== null) { nums.push(parseFloat(nr[0])); }
+      if (!nums.length) return;
+
+      var qty = "", mrp = "", purchase = "", sell = "";
+
+      if (nums.length >= 4) {
+        var q = nums[0], m2 = nums[1], r = nums[2], t = nums[nums.length - 1];
+        // Detect if last number is a line total (≈ qty × rate)
+        if (Math.abs(t - q * r) / (t || 1) < 0.06) {
+          qty = q; mrp = m2; sell = r;
+        } else {
+          qty = q; mrp = m2; purchase = r; sell = nums[3];
+        }
+      } else if (nums.length === 3) {
+        var q3 = nums[0], r3 = nums[1], t3 = nums[2];
+        if (Math.abs(t3 - q3 * r3) / (t3 || 1) < 0.06) {
+          qty = q3; sell = r3; // t3 is total
+        } else {
+          qty = q3; mrp = r3; sell = t3;
+        }
+      } else if (nums.length === 2) {
+        qty = nums[0]; sell = nums[1];
+      } else {
+        sell = nums[0];
+      }
+
+      rows.push({
+        date: "", bill_number: "", customer_name: "", customer_phone: "",
+        notes: "", gst_percent: "",
+        medicine_name: name, location: "",
+        quantity:       qty      ? String(qty)      : "1",
+        mrp:            mrp      ? String(mrp)      : "",
+        purchase_price: purchase ? String(purchase) : "",
+        sell_price:     sell     ? String(sell)     : "",
+      });
+    });
+    return rows;
+  }
+
+  async function handlePdfFile(file) {
+    var pdfNote = document.getElementById("import-pdf-note");
+    var info    = document.getElementById("import-preview-info");
+    var preview = document.getElementById("import-preview");
+    if (preview) preview.classList.remove("hidden");
+    if (info)    info.textContent = "Extracting text from PDF…";
+    try {
+      var lines = await extractPdfLines(file);
+      importParsedRows = parsePdfLines(lines);
+      if (pdfNote) pdfNote.classList.remove("hidden");
+      renderImportPreview(importParsedRows);
+    } catch (err) {
+      if (info) info.textContent = "PDF extraction failed: " + (err.message || "unknown error");
+    }
+  }
+
   function handleImportFile(file) {
     if (!file) return;
+    var pdfNote = document.getElementById("import-pdf-note");
+    if (pdfNote) pdfNote.classList.add("hidden");
+    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      handlePdfFile(file);
+      return;
+    }
     var reader = new FileReader();
     reader.onload = function (e) {
       importParsedRows = parseCSV(e.target.result);

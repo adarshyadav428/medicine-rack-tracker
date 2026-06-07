@@ -324,19 +324,21 @@
     <div id="import-modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
       <div class="modal-card" style="max-width:720px;width:95%;">
         <div class="modal-header">
-          <h3 class="modal-title">Import Bills from CSV</h3>
+          <h3 class="modal-title">Import Bills</h3>
           <button id="import-modal-close" class="modal-close-btn" type="button" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body" style="padding:1.2rem 1.4rem;">
 
           <!-- Instructions -->
-          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:1rem;font-size:0.84rem;color:#166534;line-height:1.6;">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:0.7rem;font-size:0.84rem;color:#166534;line-height:1.6;">
             <strong>CSV format rules:</strong><br>
-            Each row = one medicine line item.<br>
-            Rows sharing the same <code>bill_number</code> are grouped into one bill.<br>
+            Each row = one medicine line item. Rows sharing the same <code>bill_number</code> are grouped into one bill.<br>
             Leave <code>bill_number</code> blank for single-item bills (number auto-generated).<br>
-            Required columns: <code>date</code>, <code>medicine_name</code>, <code>sell_price</code>.<br>
-            Date format: <code>YYYY-MM-DD</code> or <code>DD/MM/YYYY</code>.
+            Required columns: <code>date</code>, <code>medicine_name</code>, <code>sell_price</code>. Date: <code>YYYY-MM-DD</code> or <code>DD/MM/YYYY</code>.
+          </div>
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:1rem;font-size:0.84rem;color:#1d4ed8;line-height:1.6;">
+            <strong>PDF import:</strong> Supplier invoice PDFs are parsed automatically using text extraction.
+            Results are best-effort — always verify medicine names, quantities and prices in the preview before importing.
           </div>
 
           <!-- Template download -->
@@ -347,10 +349,15 @@
           <!-- File picker -->
           <div style="margin-bottom:1rem;">
             <label for="import-file-input" style="display:block;font-size:0.82rem;font-weight:600;color:#475569;margin-bottom:0.35rem;">
-              Select CSV file
+              Select CSV or PDF file
             </label>
-            <input id="import-file-input" type="file" accept=".csv,text/csv"
+            <input id="import-file-input" type="file" accept=".csv,text/csv,.pdf,application/pdf"
               style="font-size:0.88rem;border:2px solid #e2e8f0;border-radius:0.5rem;padding:0.4rem 0.6rem;width:100%;box-sizing:border-box;" />
+          </div>
+
+          <!-- PDF warning (shown after PDF parse) -->
+          <div id="import-pdf-note" class="hidden" style="background:#fefce8;border:1px solid #fde68a;border-radius:0.5rem;padding:0.6rem 1rem;margin-bottom:0.8rem;font-size:0.82rem;color:#854d0e;">
+            PDF text extracted. Please fill in missing <strong>date</strong> and <strong>customer name</strong> fields directly in the import data after importing, or re-import as CSV for full control.
           </div>
 
           <!-- Preview -->
@@ -400,6 +407,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260607-import"></script>
+    <script src="billing.js?v=20260607-pdfimport"></script>
   </body>
 </html>
