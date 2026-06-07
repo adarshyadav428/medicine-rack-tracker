@@ -1647,7 +1647,37 @@
     return allLines;
   }
 
-  var PDF_SKIP_RE = /^\s*(?:total|grand\s*total|sub\s*total|invoice|bill\s*no|receipt|date|address|gstin|gst[\s#]|phone|mob|customer|qty|quantity|mrp|rate|disc(?:ount)?|tax|sgst|cgst|igst|hsn|batch|exp(?:iry)?|mfg|item|product|description|particulars|sr\.?\s*no?|s\.?\s*no?|amount|value|net|page\s*\d)\b/i;
+  var PDF_SKIP_RE = /^\s*(?:total|grand\s*total|sub\s*total|invoice|bill\s*no|receipt|date|address|gstin|gst[\s#]|phone|mob|customer|qty|quantity|mrp|rate|disc(?:ount)?|tax|sgst|cgst|igst|hsn|batch|exp(?:iry)?|mfg|medicine\s*name|item|product|description|particulars|sr\.?\s*no?|s\.?\s*no?|amount|value|net|page\s*\d|bill\s*to|bill\s*amount|rupees|drug\s*lic)\b/i;
+
+  function pdfNums(token) {
+    // Strip currency symbols and commas, return float if purely numeric after strip
+    var s = token.replace(/[₹$€£,\s]/g, "");
+    return /^\d+(?:\.\d+)?$/.test(s) ? parseFloat(s) : null;
+  }
+
+  function assignPdfNums(nums) {
+    var qty = "", mrp = "", purchase = "", sell = "";
+    var close = function (a, b) { return b > 0 && Math.abs(a - b) / b < 0.07; };
+
+    if (nums.length === 1) {
+      sell = nums[0];
+    } else if (nums.length === 2) {
+      qty = nums[0]; sell = nums[1];
+    } else if (nums.length === 3) {
+      var a = nums[0], b = nums[1], c = nums[2];
+      if (close(c, a * b))      { qty = a; sell = b; }          // qty, rate, total
+      else                       { qty = a; mrp = b; sell = c; }
+    } else {
+      // 4+ numbers — detect which two multiply to the last (line total)
+      var t = nums[nums.length - 1];
+      var n0 = nums[0], n1 = nums[1], n2 = nums[2];
+      if      (close(t, n0 * n2)) { qty = n0; mrp = n1; sell = n2; }  // qty, mrp, rate, total
+      else if (close(t, n1 * n2)) { mrp = n0; qty = n1; sell = n2; }  // mrp, qty, rate, total (this app's receipt)
+      else if (close(t, n0 * n1)) { qty = n0; sell = n1; }            // qty, rate, ?, total
+      else                         { qty = n0; mrp = n1; purchase = n2; sell = nums[3]; }
+    }
+    return { qty: qty, mrp: mrp, purchase: purchase, sell: sell };
+  }
 
   function parsePdfLines(lines) {
     var rows = [];
@@ -1661,55 +1691,45 @@
       var cleaned = line.replace(/^\s*\d{1,3}[\.\)]\s*/, "").trim();
       if (!cleaned || cleaned.length < 3) return;
 
-      // Split into name (text before first number block) and the rest
-      var splitMatch = cleaned.match(/^([^\d]+?)\s{1,}(\d[\d\s.,]*)$/);
-      if (!splitMatch) {
-        // Fallback: find first digit
-        var di = cleaned.search(/\d/);
-        if (di < 2) return;
-        splitMatch = [null, cleaned.substring(0, di), cleaned.substring(di)];
+      // ── Strategy 1: split by 2+ spaces (preserves table column layout) ──
+      var tokens = cleaned.split(/\s{2,}/).map(function (t) { return t.trim(); }).filter(Boolean);
+      var numVals = [], nameEnd = tokens.length;
+
+      if (tokens.length >= 2) {
+        // Peel numeric tokens off the right
+        for (var i = tokens.length - 1; i >= 0; i--) {
+          var v = pdfNums(tokens[i]);
+          if (v !== null) { numVals.unshift(v); nameEnd = i; }
+          else break;
+        }
       }
 
-      var name = splitMatch[1].trim().replace(/[\s,]+$/, "");
-      if (!name || name.length < 2) return;
-
-      // Extract all numbers from the numeric tail
-      var nums = [];
-      var nr; var nre = /\d+(?:\.\d+)?/g;
-      while ((nr = nre.exec(splitMatch[2])) !== null) { nums.push(parseFloat(nr[0])); }
-      if (!nums.length) return;
-
-      var qty = "", mrp = "", purchase = "", sell = "";
-
-      if (nums.length >= 4) {
-        var q = nums[0], m2 = nums[1], r = nums[2], t = nums[nums.length - 1];
-        // Detect if last number is a line total (≈ qty × rate)
-        if (Math.abs(t - q * r) / (t || 1) < 0.06) {
-          qty = q; mrp = m2; sell = r;
-        } else {
-          qty = q; mrp = m2; purchase = r; sell = nums[3];
-        }
-      } else if (nums.length === 3) {
-        var q3 = nums[0], r3 = nums[1], t3 = nums[2];
-        if (Math.abs(t3 - q3 * r3) / (t3 || 1) < 0.06) {
-          qty = q3; sell = r3; // t3 is total
-        } else {
-          qty = q3; mrp = r3; sell = t3;
-        }
-      } else if (nums.length === 2) {
-        qty = nums[0]; sell = nums[1];
+      var name, nums;
+      if (numVals.length >= 1 && nameEnd >= 1) {
+        name = tokens.slice(0, nameEnd).join(" ").trim();
+        nums = numVals;
       } else {
-        sell = nums[0];
+        // ── Strategy 2: fallback — split at first run of digits/currency ──
+        var di = cleaned.search(/[₹\d]/);
+        if (di < 2) return;
+        name = cleaned.substring(0, di).trim().replace(/[\s,]+$/, "");
+        var tail = cleaned.substring(di);
+        nums = [];
+        var nr; var nre = /\d+(?:\.\d+)?/g;
+        while ((nr = nre.exec(tail)) !== null) { nums.push(parseFloat(nr[0])); }
       }
 
+      if (!name || name.length < 2 || !nums || !nums.length) return;
+
+      var assigned = assignPdfNums(nums);
       rows.push({
         date: "", bill_number: "", customer_name: "", customer_phone: "",
         notes: "", gst_percent: "",
         medicine_name: name, location: "",
-        quantity:       qty      ? String(qty)      : "1",
-        mrp:            mrp      ? String(mrp)      : "",
-        purchase_price: purchase ? String(purchase) : "",
-        sell_price:     sell     ? String(sell)     : "",
+        quantity:       assigned.qty      ? String(assigned.qty)      : "1",
+        mrp:            assigned.mrp      ? String(assigned.mrp)      : "",
+        purchase_price: assigned.purchase ? String(assigned.purchase) : "",
+        sell_price:     assigned.sell     ? String(assigned.sell)     : "",
       });
     });
     return rows;
@@ -1723,7 +1743,27 @@
     if (info)    info.textContent = "Extracting text from PDF…";
     try {
       var lines = await extractPdfLines(file);
+      var hasText = lines.some(function (l) { return l.trim().length > 0; });
+
+      if (!hasText) {
+        if (info) info.textContent =
+          "No text layer found in this PDF — it was saved as an image. " +
+          "Bills downloaded via the app’s Share button are image-only. " +
+          "To import, use browser Print → Save as PDF (Ctrl+P) instead, or export as CSV.";
+        if (preview) preview.classList.remove("hidden");
+        return;
+      }
+
       importParsedRows = parsePdfLines(lines);
+
+      if (!importParsedRows.length) {
+        if (info) info.textContent =
+          "Text was found in the PDF but no medicine rows could be identified. " +
+          "The layout may not be supported — try exporting as CSV instead.";
+        if (preview) preview.classList.remove("hidden");
+        return;
+      }
+
       if (pdfNote) pdfNote.classList.remove("hidden");
       renderImportPreview(importParsedRows);
     } catch (err) {
