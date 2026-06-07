@@ -302,9 +302,16 @@
 
       <!-- ── Bill history ───────────────────────────────────────────── -->
       <section class="panel fade-up delay-3" id="bill-history-section">
-        <div class="panel-headline">
-          <h2>Bill History</h2>
-          <p>All bills created from this portal — most recent first.</p>
+        <div class="panel-headline" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+          <div>
+            <h2>Bill History</h2>
+            <p>All bills created from this portal — most recent first.</p>
+          </div>
+          <button id="import-bills-btn" class="btn btn-ghost btn-xs" type="button"
+            title="Import historical bills from a CSV file"
+            style="margin-top:0.25rem;white-space:nowrap;">
+            Import Bills
+          </button>
         </div>
         <div id="bill-history-container">
           <p class="empty-state">Loading bill history…</p>
@@ -312,6 +319,64 @@
       </section>
 
     </main>
+
+    <!-- ── Import Bills Modal ─────────────────────────────────────── -->
+    <div id="import-modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+      <div class="modal-card" style="max-width:720px;width:95%;">
+        <div class="modal-header">
+          <h3 class="modal-title">Import Bills from CSV</h3>
+          <button id="import-modal-close" class="modal-close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:1.2rem 1.4rem;">
+
+          <!-- Instructions -->
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:0.6rem;padding:0.9rem 1.1rem;margin-bottom:1rem;font-size:0.84rem;color:#166534;line-height:1.6;">
+            <strong>CSV format rules:</strong><br>
+            Each row = one medicine line item.<br>
+            Rows sharing the same <code>bill_number</code> are grouped into one bill.<br>
+            Leave <code>bill_number</code> blank for single-item bills (number auto-generated).<br>
+            Required columns: <code>date</code>, <code>medicine_name</code>, <code>sell_price</code>.<br>
+            Date format: <code>YYYY-MM-DD</code> or <code>DD/MM/YYYY</code>.
+          </div>
+
+          <!-- Template download -->
+          <button id="import-template-btn" class="btn btn-ghost btn-xs" type="button" style="margin-bottom:1rem;">
+            Download Template CSV
+          </button>
+
+          <!-- File picker -->
+          <div style="margin-bottom:1rem;">
+            <label for="import-file-input" style="display:block;font-size:0.82rem;font-weight:600;color:#475569;margin-bottom:0.35rem;">
+              Select CSV file
+            </label>
+            <input id="import-file-input" type="file" accept=".csv,text/csv"
+              style="font-size:0.88rem;border:2px solid #e2e8f0;border-radius:0.5rem;padding:0.4rem 0.6rem;width:100%;box-sizing:border-box;" />
+          </div>
+
+          <!-- Preview -->
+          <div id="import-preview" class="hidden">
+            <div style="font-size:0.82rem;color:#64748b;margin-bottom:0.5rem;" id="import-preview-info"></div>
+            <div style="overflow-x:auto;max-height:220px;border-radius:0.5rem;border:1px solid #e2e8f0;">
+              <table id="import-preview-table" style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                <thead id="import-preview-head" style="position:sticky;top:0;background:#f8fafc;"></thead>
+                <tbody id="import-preview-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Result -->
+          <div id="import-result" class="hidden" style="margin-top:0.8rem;padding:0.8rem 1rem;border-radius:0.6rem;font-size:0.87rem;"></div>
+
+          <!-- Actions -->
+          <div style="display:flex;gap:0.7rem;margin-top:1.1rem;justify-content:flex-end;">
+            <button id="import-cancel-btn" class="btn btn-ghost" type="button">Cancel</button>
+            <button id="import-submit-btn" class="btn btn-primary" type="button" disabled>
+              Import Bills
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Print receipt area — hidden on screen, shown only when printing -->
     <div id="print-receipt-area" class="print-receipt-area" aria-hidden="true"></div>
@@ -335,6 +400,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260606-lastprice"></script>
+    <script src="billing.js?v=20260607-import"></script>
   </body>
 </html>

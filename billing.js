@@ -66,6 +66,7 @@
     saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
     repairBalanceBtn:      document.getElementById("bill-repair-balance-btn"),
     saveCustomerStatus:    document.getElementById("bill-save-customer-status"),
+    importBillsBtn:        document.getElementById("import-bills-btn"),
     openingBalance:        document.getElementById("bill-opening-balance"),
     receivedAmount:        document.getElementById("bill-received-amount"),
     prevBalance:           document.getElementById("summary-prev-balance"),
@@ -1533,6 +1534,185 @@
   }
 
   // -------------------------------------------------------------------------
+  // Import Bills
+  // -------------------------------------------------------------------------
+  var CSV_HEADERS = ["date","bill_number","customer_name","customer_phone","notes","gst_percent","medicine_name","location","quantity","mrp","purchase_price","sell_price"];
+  var CSV_TEMPLATE = CSV_HEADERS.join(",") + "\r\n" +
+    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Calpol 500 Tab,A1,3,14.26,8.00,10.55\r\n" +
+    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Cefitaxe O Tab,A2,2,140.60,50.00,63.00\r\n" +
+    "2026-06-01,,Dr. Sanjay,,,,Amul 500g New,,1,263.00,200.00,247.00\r\n";
+
+  var importParsedRows = [];
+
+  function parseCSVLine(line) {
+    var result = [], cur = "", inQ = false;
+    for (var i = 0; i < line.length; i++) {
+      var c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === "," && !inQ) { result.push(cur); cur = ""; }
+      else { cur += c; }
+    }
+    result.push(cur);
+    return result;
+  }
+
+  function parseCSV(text) {
+    var lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split("\n");
+    if (lines.length < 2) return [];
+    var headers = parseCSVLine(lines[0]).map(function (h) { return h.trim().replace(/^"|"$/g, "").toLowerCase(); });
+    var rows = [];
+    for (var i = 1; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      var cols = parseCSVLine(line);
+      var row = {};
+      headers.forEach(function (h, idx) { row[h] = (cols[idx] || "").trim().replace(/^"|"$/g, ""); });
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  function showImportModal() {
+    var overlay = document.getElementById("import-modal-overlay");
+    if (!overlay) return;
+    overlay.classList.remove("hidden");
+    importParsedRows = [];
+    var fileInput = document.getElementById("import-file-input");
+    if (fileInput) fileInput.value = "";
+    var preview = document.getElementById("import-preview");
+    if (preview) preview.classList.add("hidden");
+    var result = document.getElementById("import-result");
+    if (result) { result.classList.add("hidden"); result.textContent = ""; }
+    var submitBtn = document.getElementById("import-submit-btn");
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Import Bills"; }
+  }
+
+  function closeImportModal() {
+    var overlay = document.getElementById("import-modal-overlay");
+    if (overlay) overlay.classList.add("hidden");
+  }
+
+  function handleImportFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      importParsedRows = parseCSV(e.target.result);
+      renderImportPreview(importParsedRows);
+    };
+    reader.readAsText(file);
+  }
+
+  function escHtml(s) {
+    return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function renderImportPreview(rows) {
+    var preview = document.getElementById("import-preview");
+    var info    = document.getElementById("import-preview-info");
+    var thead   = document.getElementById("import-preview-head");
+    var tbody   = document.getElementById("import-preview-body");
+    var submit  = document.getElementById("import-submit-btn");
+    var result  = document.getElementById("import-result");
+
+    if (result) { result.classList.add("hidden"); result.textContent = ""; }
+
+    if (!rows.length) {
+      if (info) info.textContent = "No valid rows found. Check that your CSV matches the template format.";
+      if (preview) preview.classList.remove("hidden");
+      if (submit) submit.disabled = true;
+      return;
+    }
+
+    // Count distinct bills
+    var billNums = new Set();
+    var autoBills = 0;
+    rows.forEach(function (r) {
+      var bn = (r.bill_number || "").trim();
+      if (bn) { billNums.add(bn); } else { autoBills++; }
+    });
+    var totalBills = billNums.size + autoBills;
+
+    if (info) info.textContent = "Found " + rows.length + " row(s) → " + totalBills + " bill(s). Showing first 15 rows:";
+
+    // Build preview table
+    var showCols = ["date","bill_number","customer_name","medicine_name","qty","sell_price"];
+    var displayRows = rows.slice(0, 15);
+
+    if (thead) {
+      thead.innerHTML = "<tr>" + ["Date","Bill No.","Customer","Medicine","Qty","Sell ₹"].map(function (h) {
+        return '<th style="padding:0.45rem 0.7rem;text-align:left;font-size:0.75rem;color:#64748b;font-weight:700;border-bottom:1px solid #e2e8f0;white-space:nowrap;">' + h + "</th>";
+      }).join("") + "</tr>";
+    }
+    if (tbody) {
+      tbody.innerHTML = displayRows.map(function (r) {
+        return "<tr>" +
+          [r.date, r.bill_number || "(auto)", r.customer_name, r.medicine_name, r.quantity, r.sell_price].map(function (v) {
+            return '<td style="padding:0.4rem 0.7rem;border-bottom:1px solid #f1f5f9;font-size:0.8rem;color:#1e293b;">' + escHtml(v || "—") + "</td>";
+          }).join("") +
+        "</tr>";
+      }).join("");
+    }
+
+    if (preview) preview.classList.remove("hidden");
+    if (submit) { submit.disabled = false; submit.textContent = "Import " + totalBills + " Bill(s)"; }
+  }
+
+  async function submitImport() {
+    if (!importParsedRows.length) return;
+    var submitBtn = document.getElementById("import-submit-btn");
+    var resultEl  = document.getElementById("import-result");
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Importing…"; }
+
+    try {
+      var data = await requestApi("/api/import-bills", { method: "POST", body: { rows: importParsedRows } });
+      var msg = "✅ Imported: " + data.ok + " bill(s).";
+      if (data.skipped) msg += "  Skipped (already exist): " + data.skipped + ".";
+      if (data.errors)  msg += "  Errors: " + data.errors + ".";
+      if (resultEl) {
+        resultEl.textContent = msg;
+        resultEl.style.cssText = "background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;";
+        resultEl.classList.remove("hidden");
+      }
+      if (submitBtn) submitBtn.textContent = "Done";
+      await loadBillHistory();
+    } catch (err) {
+      if (resultEl) {
+        resultEl.textContent = "Import failed: " + (err.message || "Unknown error");
+        resultEl.style.cssText = "background:#fef2f2;border:1px solid #fecaca;color:#dc2626;";
+        resultEl.classList.remove("hidden");
+      }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Retry Import"; }
+    }
+  }
+
+  function downloadTemplate() {
+    var blob = new Blob([CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement("a");
+    a.href = url; a.download = "bill-import-template.csv";
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  function initImportModal() {
+    if (bEl.importBillsBtn) bEl.importBillsBtn.addEventListener("click", showImportModal);
+
+    var closeBtn   = document.getElementById("import-modal-close");
+    var cancelBtn  = document.getElementById("import-cancel-btn");
+    var fileInput  = document.getElementById("import-file-input");
+    var submitBtn  = document.getElementById("import-submit-btn");
+    var templateBtn = document.getElementById("import-template-btn");
+    var overlay    = document.getElementById("import-modal-overlay");
+
+    if (closeBtn)    closeBtn.addEventListener("click",   closeImportModal);
+    if (cancelBtn)   cancelBtn.addEventListener("click",  closeImportModal);
+    if (templateBtn) templateBtn.addEventListener("click", downloadTemplate);
+    if (fileInput)   fileInput.addEventListener("change", function () { handleImportFile(this.files[0]); });
+    if (submitBtn)   submitBtn.addEventListener("click",  submitImport);
+    if (overlay)     overlay.addEventListener("mousedown", function (e) { if (e.target === overlay) closeImportModal(); });
+  }
+
+  // -------------------------------------------------------------------------
   // Bill History
   // -------------------------------------------------------------------------
   async function loadBillHistory() {
@@ -1940,6 +2120,7 @@
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.addEventListener("change", onSavedCustomerChange);
     if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
     if (bEl.repairBalanceBtn)    bEl.repairBalanceBtn.addEventListener("click", reconcileCustomerBalance);
+    initImportModal();
 
     // Opening balance field directly drives recalcPayment
     if (bEl.openingBalance) {
