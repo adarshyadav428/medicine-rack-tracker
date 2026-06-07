@@ -74,9 +74,15 @@
         <!-- Saved customer quick-fill -->
         <div class="bill-customer-quickfill">
           <label for="bill-saved-customer-select">Quick-fill from saved customers</label>
-          <select id="bill-saved-customer-select">
-            <option value="">— No saved customers yet —</option>
-          </select>
+          <div style="display:flex;align-items:center;gap:0.5rem;">
+            <select id="bill-saved-customer-select" style="flex:1;">
+              <option value="">— No saved customers yet —</option>
+            </select>
+            <button id="bill-restore-customers-btn" class="btn btn-ghost btn-xs" type="button"
+              title="Restore customer list from bill history (use when switching browsers or devices)">
+              Restore from History
+            </button>
+          </div>
         </div>
 
         <!-- Customer fields — 3 columns -->
@@ -409,6 +415,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260607-pdfimport3"></script>
+    <script src="billing.js?v=20260607-restore"></script>
   </body>
 </html>
