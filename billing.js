@@ -1647,7 +1647,7 @@
     return allLines;
   }
 
-  var PDF_SKIP_RE = /^\s*(?:total|grand\s*total|sub\s*total|invoice|bill\s*no|receipt|date|address|gstin|gst[\s#]|phone|mob|customer|qty|quantity|mrp|rate|disc(?:ount)?|tax|sgst|cgst|igst|hsn|batch|exp(?:iry)?|mfg|medicine\s*name|item|product|description|particulars|sr\.?\s*no?|s\.?\s*no?|amount|value|net|page\s*\d|bill\s*to|bill\s*amount|rupees|drug\s*lic)\b/i;
+  var PDF_SKIP_RE = /^\s*(?:total|grand\s*total|sub\s*total|invoice|bill\s*no|receipt|date|address|gstin|gst[\s#]|phone|mob|customer|qty|quantity|mrp|rate|disc(?:ount)?|tax|sgst|cgst|igst|hsn|batch|exp(?:iry)?|mfg|medicine\s*name|item|product|description|particulars|sr\.?\s*no?|s\.?\s*no?|amount|value|net|page\s*\d|bill\s*to|bill\s*amount|rupees|drug\s*lic|previous|balance|received|paid|cash|cheque|adarsh|khasra|thekma|martinganj|azamgarh)\b/i;
 
   function pdfNums(token) {
     // Strip currency symbols and commas, return float if purely numeric after strip
@@ -1720,6 +1720,11 @@
       }
 
       if (!name || name.length < 2 || !nums || !nums.length) return;
+      // Skip address lines (long) or lines with a 6-digit pincode/license number
+      if (name.length > 55) return;
+      if (/\d{6,}/.test(name)) return;
+      // Skip if any extracted number looks like a year or large ID (> 5000 with only 1 number)
+      if (nums.length === 1 && nums[0] > 5000) return;
 
       var assigned = assignPdfNums(nums);
       rows.push({
