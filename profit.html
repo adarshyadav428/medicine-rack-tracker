@@ -430,7 +430,12 @@
 
     <!-- By Bill -->
     <div class="profit-section">
-      <div class="profit-section-title">Bill-wise Breakdown</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin:1.2rem 0 0.7rem;">
+        <div class="profit-section-title" style="margin:0;border:none;padding:0;">Bill-wise Breakdown</div>
+        <select id="bill-customer-filter" style="font-size:0.82rem;padding:0.3rem 0.7rem;border:1px solid #e2e8f0;border-radius:0.5rem;color:#475569;background:#fff;cursor:pointer;">
+          <option value="">All Customers</option>
+        </select>
+      </div>
       <div class="profit-table-wrap">
         <table class="profit-table">
           <thead>
@@ -452,6 +457,6 @@
 
   </div><!-- /dashboard -->
 
-  <script src="profit.js?v=20260609-bill"></script>
+  <script src="profit.js?v=20260609-custfilter"></script>
 </body>
 </html>

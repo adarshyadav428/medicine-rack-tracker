@@ -48,8 +48,24 @@
   var custEmpty    = document.getElementById("cust-empty");
   var medEmpty     = document.getElementById("med-empty");
   var billEmpty    = document.getElementById("bill-empty");
+  var billFilter   = document.getElementById("bill-customer-filter");
   var loadingEl    = document.getElementById("dashboard-loading");
   var errorEl      = document.getElementById("dashboard-error");
+
+  var allBillRows  = []; // [{el, customer}] — kept for filter reuse
+
+  if (billFilter) {
+    billFilter.addEventListener("change", function () {
+      var selected = billFilter.value;
+      var anyVisible = false;
+      allBillRows.forEach(function (row) {
+        var show = !selected || row.customer === selected;
+        row.el.style.display = show ? "" : "none";
+        if (show) anyVisible = true;
+      });
+      if (billEmpty) billEmpty.classList.toggle("hidden", anyVisible || !allBillRows.length);
+    });
+  }
 
   var currentPeriod = "month";
 
@@ -195,6 +211,8 @@
     if (custEmpty) custEmpty.classList.add("hidden");
     if (medEmpty)  medEmpty.classList.add("hidden");
     if (billEmpty) billEmpty.classList.add("hidden");
+    if (billFilter) { billFilter.innerHTML = "<option value=''>All Customers</option>"; }
+    allBillRows = [];
     if (elRevenue) elRevenue.textContent = "—";
     if (elCost)    elCost.textContent    = "—";
     if (elProfit)  elProfit.textContent  = "—";
@@ -270,6 +288,18 @@
     if (!bills.length) {
       if (billEmpty) billEmpty.classList.remove("hidden");
     } else {
+      // Populate customer filter dropdown
+      if (billFilter) {
+        var custSet = {};
+        bills.forEach(function (b) { custSet[b.customer] = true; });
+        Object.keys(custSet).sort().forEach(function (name) {
+          var opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          billFilter.appendChild(opt);
+        });
+      }
+
       bills.forEach(function (b) {
         var dateStr = b.date ? new Date(b.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
         var tr = document.createElement("tr");
@@ -284,6 +314,7 @@
           "</td>" +
           "<td class='num'>" + (b.margin !== null ? pct(b.margin) : "<span class='muted'>—</span>") + "</td>";
         billBody.appendChild(tr);
+        allBillRows.push({ el: tr, customer: b.customer });
       });
     }
   }
