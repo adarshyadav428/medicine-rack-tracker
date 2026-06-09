@@ -30,6 +30,7 @@
   var pinConfirmRow = document.getElementById("pin-confirm-row");
   var pinConfirm   = document.getElementById("pin-confirm");
   var changeBtn    = document.getElementById("change-pin-btn");
+  var resetBtn     = document.getElementById("pin-reset-btn");
 
   // Period tabs
   var periodBtns   = document.querySelectorAll(".period-btn");
@@ -77,10 +78,12 @@
       pinTitle.textContent = "Set a Profit PIN";
       pinConfirmRow.classList.remove("hidden");
       pinSubmit.textContent = "Set PIN";
+      if (resetBtn) resetBtn.style.display = "none";
     } else {
       pinTitle.textContent = "Profit Dashboard";
       pinConfirmRow.classList.add("hidden");
       pinSubmit.textContent = "Unlock";
+      if (resetBtn) resetBtn.style.display = "";
     }
     pinInput.value   = "";
     if (pinConfirm) pinConfirm.value = "";
@@ -136,7 +139,15 @@
 
   if (changeBtn) {
     changeBtn.addEventListener("click", function () {
-      // Reset PIN: clear stored hash and show setup screen
+      localStorage.removeItem(PIN_HASH_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
+      showLock(true);
+    });
+  }
+
+  if (resetBtn) {
+    resetBtn.addEventListener("click", function () {
+      if (!confirm("This will clear your saved PIN and let you set a new one. Continue?")) return;
       localStorage.removeItem(PIN_HASH_KEY);
       sessionStorage.removeItem(SESSION_KEY);
       showLock(true);
