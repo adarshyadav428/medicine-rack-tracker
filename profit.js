@@ -44,8 +44,10 @@
   // Tables
   var custBody     = document.getElementById("cust-body");
   var medBody      = document.getElementById("med-body");
+  var billBody     = document.getElementById("bill-body");
   var custEmpty    = document.getElementById("cust-empty");
   var medEmpty     = document.getElementById("med-empty");
+  var billEmpty    = document.getElementById("bill-empty");
   var loadingEl    = document.getElementById("dashboard-loading");
   var errorEl      = document.getElementById("dashboard-error");
 
@@ -189,8 +191,10 @@
   function clearTables() {
     if (custBody)  custBody.innerHTML  = "";
     if (medBody)   medBody.innerHTML   = "";
+    if (billBody)  billBody.innerHTML  = "";
     if (custEmpty) custEmpty.classList.add("hidden");
     if (medEmpty)  medEmpty.classList.add("hidden");
+    if (billEmpty) billEmpty.classList.add("hidden");
     if (elRevenue) elRevenue.textContent = "—";
     if (elCost)    elCost.textContent    = "—";
     if (elProfit)  elProfit.textContent  = "—";
@@ -258,6 +262,28 @@
           "</td>" +
           "<td class='num'>" + (m.cost ? pct(m.margin) : "<span class='muted'>—</span>") + "</td>";
         medBody.appendChild(tr);
+      });
+    }
+
+    // Bill table
+    var bills = data.byBill || [];
+    if (!bills.length) {
+      if (billEmpty) billEmpty.classList.remove("hidden");
+    } else {
+      bills.forEach(function (b) {
+        var dateStr = b.date ? new Date(b.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+        var tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td><strong>" + escHtml(b.billNumber || "—") + "</strong></td>" +
+          "<td style='white-space:nowrap;color:#64748b;font-size:0.82rem;'>" + dateStr + "</td>" +
+          "<td>" + escHtml(b.customer) + "</td>" +
+          "<td class='num'>" + fmt(b.revenue) + "</td>" +
+          "<td class='num'>" + (b.cost !== null ? fmt(b.cost) : "<span class='muted'>—</span>") + "</td>" +
+          "<td class='num profit-val" + (b.profit !== null && b.profit < 0 ? " loss" : "") + "'>" +
+            (b.profit !== null ? fmt(b.profit) : "<span class='muted'>—</span>") +
+          "</td>" +
+          "<td class='num'>" + (b.margin !== null ? pct(b.margin) : "<span class='muted'>—</span>") + "</td>";
+        billBody.appendChild(tr);
       });
     }
   }

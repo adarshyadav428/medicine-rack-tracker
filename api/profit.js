@@ -39,6 +39,7 @@ function aggregate(bills, items) {
   let totalRevenue = 0, totalCost = 0, totalProfit = 0;
   const byCustomer = {};
   const byMedicine = {};
+  const byBill     = {};
 
   for (const item of items) {
     const bill = billMap[item.bill_id];
@@ -72,6 +73,22 @@ function aggregate(bills, items) {
     byMedicine[medKey].revenue += revenue;
     byMedicine[medKey].qty    += qty;
     if (cost !== null) { byMedicine[medKey].cost += cost; byMedicine[medKey].profit += profit; }
+
+    // By bill
+    if (!byBill[item.bill_id]) {
+      byBill[item.bill_id] = {
+        billNumber: bill.bill_number,
+        customer:   (bill.customer_name || "Walk-in").trim() || "Walk-in",
+        date:       bill.created_at,
+        revenue: 0, cost: 0, profit: 0, hasCost: false,
+      };
+    }
+    byBill[item.bill_id].revenue += revenue;
+    if (cost !== null) {
+      byBill[item.bill_id].cost    += cost;
+      byBill[item.bill_id].profit  += profit;
+      byBill[item.bill_id].hasCost  = true;
+    }
   }
 
   const customerList = Object.values(byCustomer).map(c => ({
@@ -92,6 +109,16 @@ function aggregate(bills, items) {
     qty:     round2(m.qty),
   })).sort((a, b) => b.profit - a.profit).slice(0, 25);
 
+  const billList = Object.values(byBill).map(b => ({
+    billNumber: b.billNumber,
+    customer:   b.customer,
+    date:       b.date,
+    revenue:    round2(b.revenue),
+    cost:       b.hasCost ? round2(b.cost)   : null,
+    profit:     b.hasCost ? round2(b.profit) : null,
+    margin:     b.hasCost && b.revenue > 0 ? round2(b.profit / b.revenue * 100) : null,
+  })).sort((a, b) => new Date(b.date) - new Date(a.date));
+
   return {
     summary: {
       revenue: round2(totalRevenue),
@@ -101,6 +128,7 @@ function aggregate(bills, items) {
     },
     byCustomer: customerList,
     byMedicine: medicineList,
+    byBill:     billList,
   };
 }
 
@@ -117,12 +145,12 @@ module.exports = async (req, res) => {
     const start  = getPeriodStart(period);
 
     // Step 1: fetch bills in the period
-    let billsQuery = `${BILLS_TABLE}?select=id,customer_name,grand_total,created_at&order=created_at.desc&limit=2000`;
+    let billsQuery = `${BILLS_TABLE}?select=id,bill_number,customer_name,grand_total,created_at&order=created_at.desc&limit=2000`;
     if (start) billsQuery += `&created_at=gte.${encodeURIComponent(start)}`;
 
     const bills = await callSupabaseRest(config, billsQuery, { method: "GET" });
     if (!Array.isArray(bills) || !bills.length) {
-      sendJson(res, 200, { summary: { revenue: 0, cost: 0, profit: 0, margin: 0 }, byCustomer: [], byMedicine: [] });
+      sendJson(res, 200, { summary: { revenue: 0, cost: 0, profit: 0, margin: 0 }, byCustomer: [], byMedicine: [], byBill: [] });
       return;
     }
 
