@@ -501,7 +501,7 @@ function loadLocalItems() {
       return [];
     }
 
-    return parsed.map(normalizeItem).filter((item) => item.medicineName && item.location);
+    return parsed.map(normalizeItem).filter((item) => item.medicineName);
   } catch {
     return [];
   }
@@ -706,7 +706,7 @@ async function fetchCloudItems() {
 
   const normalizedItems = data
     .map(normalizeItem)
-    .filter((item) => item.medicineName && item.location);
+    .filter((item) => item.medicineName);
 
   return sanitizeItemsForCurrentRole(normalizedItems);
 }

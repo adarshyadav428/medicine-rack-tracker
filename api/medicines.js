@@ -83,7 +83,7 @@ module.exports = async (req, res) => {
         ? rows
             .map(fromCloudRow)
             .map((item) => sanitizeItemForRole(item, authContext.user.role))
-            .filter((item) => normalizeString(item.medicineName) && normalizeString(item.location))
+            .filter((item) => normalizeString(item.medicineName))
         : [];
 
       sendJson(res, 200, { items, count: items.length, pageSize: READ_PAGE_SIZE });
@@ -109,7 +109,7 @@ module.exports = async (req, res) => {
 
         const rowsForReplace = items
           .map((item) => toCloudRow(item))
-          .filter((row) => normalizeString(row.medicine_name) && normalizeString(row.location));
+          .filter((row) => normalizeString(row.medicine_name));
 
         if (rowsForReplace.length) {
           await insertMedicineRowsInBatches(config, rowsForReplace);
