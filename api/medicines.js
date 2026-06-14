@@ -109,7 +109,7 @@ module.exports = async (req, res) => {
 
         const rowsForReplace = items
           .map((item) => toCloudRow(item))
-          .filter((row) => normalizeString(row.medicine_name) && normalizeString(row.location));
+          .filter((row) => normalizeString(row.medicine_name));
 
         if (rowsForReplace.length) {
           await insertMedicineRowsInBatches(config, rowsForReplace);
