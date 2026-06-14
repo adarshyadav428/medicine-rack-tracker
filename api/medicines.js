@@ -83,7 +83,7 @@ module.exports = async (req, res) => {
         ? rows
             .map(fromCloudRow)
             .map((item) => sanitizeItemForRole(item, authContext.user.role))
-            .filter((item) => normalizeString(item.medicineName) && normalizeString(item.location))
+            .filter((item) => normalizeString(item.medicineName))
         : [];
 
       sendJson(res, 200, { items, count: items.length, pageSize: READ_PAGE_SIZE });
