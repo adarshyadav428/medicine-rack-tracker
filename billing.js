@@ -65,6 +65,7 @@
     savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
     saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
     repairBalanceBtn:      document.getElementById("bill-repair-balance-btn"),
+    restoreCustomersBtn:   document.getElementById("bill-restore-customers-btn"),
     saveCustomerStatus:    document.getElementById("bill-save-customer-status"),
     importBillsBtn:        document.getElementById("import-bills-btn"),
     openingBalance:        document.getElementById("bill-opening-balance"),
@@ -242,6 +243,46 @@
         try { localStorage.setItem("am.billPrev." + b.id, String(Math.max(0, prevBal))); } catch (_e) {}
       }
       runningBal = prevBal;
+    }
+  }
+
+  async function restoreCustomersFromHistory() {
+    var btn = bEl.restoreCustomersBtn;
+    if (btn) { btn.disabled = true; btn.textContent = "Restoring…"; }
+    try {
+      var bills = bState.billHistory.length
+        ? bState.billHistory
+        : ((await requestApi("/api/bills", { method: "GET" })).bills || []);
+
+      var existing = loadSavedCustomers();
+      var seen = new Set(existing.map(function (c) { return c.name.trim().toLowerCase(); }));
+      var added = 0;
+
+      bills.forEach(function (bill) {
+        var name = (bill.customer_name || "").trim();
+        if (!name) return;
+        var key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        existing.push({ name: name, phone: bill.customer_phone || "", balance: 0 });
+        added++;
+      });
+
+      persistSavedCustomers(existing);
+      renderCustomerSelect();
+
+      if (added > 0) {
+        setSaveCustomerStatus(
+          "✅ " + added + " customer(s) restored. Balances start at ₹0 — update if needed.",
+          "is-ok"
+        );
+      } else {
+        setSaveCustomerStatus("All customers from history are already saved.", "is-ok");
+      }
+    } catch (err) {
+      setSaveCustomerStatus("Could not restore: " + (err.message || "unknown error"), "is-warn");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Restore from History"; }
     }
   }
 
@@ -2310,6 +2351,7 @@
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.addEventListener("change", onSavedCustomerChange);
     if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
     if (bEl.repairBalanceBtn)    bEl.repairBalanceBtn.addEventListener("click", reconcileCustomerBalance);
+    if (bEl.restoreCustomersBtn) bEl.restoreCustomersBtn.addEventListener("click", restoreCustomersFromHistory);
     initImportModal();
 
     // Opening balance field directly drives recalcPayment
