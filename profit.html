@@ -331,6 +331,10 @@
 
       <div id="pin-msg"></div>
       <button id="pin-submit" class="lock-submit">Unlock</button>
+      <button id="pin-reset-btn" type="button"
+        style="background:none;border:none;font-size:0.78rem;color:#94a3b8;cursor:pointer;text-decoration:underline;padding:0;">
+        Forgot PIN? Reset it
+      </button>
     </div>
   </div>
 
@@ -428,8 +432,35 @@
       </div>
     </div>
 
+    <!-- By Bill -->
+    <div class="profit-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin:1.2rem 0 0.7rem;">
+        <div class="profit-section-title" style="margin:0;border:none;padding:0;">Bill-wise Breakdown</div>
+        <select id="bill-customer-filter" style="font-size:0.82rem;padding:0.3rem 0.7rem;border:1px solid #e2e8f0;border-radius:0.5rem;color:#475569;background:#fff;cursor:pointer;">
+          <option value="">All Customers</option>
+        </select>
+      </div>
+      <div class="profit-table-wrap">
+        <table class="profit-table">
+          <thead>
+            <tr>
+              <th>Bill No.</th>
+              <th>Date</th>
+              <th>Customer</th>
+              <th class="num">Revenue</th>
+              <th class="num">Cost</th>
+              <th class="num">Profit</th>
+              <th class="num">Margin</th>
+            </tr>
+          </thead>
+          <tbody id="bill-body"></tbody>
+        </table>
+        <div id="bill-empty" class="profit-empty hidden">No bill data for this period.</div>
+      </div>
+    </div>
+
   </div><!-- /dashboard -->
 
-  <script src="profit.js?v=20260607-v1"></script>
+  <script src="profit.js?v=20260609-pinreset"></script>
 </body>
 </html>

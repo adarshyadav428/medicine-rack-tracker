@@ -30,6 +30,7 @@
   var pinConfirmRow = document.getElementById("pin-confirm-row");
   var pinConfirm   = document.getElementById("pin-confirm");
   var changeBtn    = document.getElementById("change-pin-btn");
+  var resetBtn     = document.getElementById("pin-reset-btn");
 
   // Period tabs
   var periodBtns   = document.querySelectorAll(".period-btn");
@@ -44,10 +45,28 @@
   // Tables
   var custBody     = document.getElementById("cust-body");
   var medBody      = document.getElementById("med-body");
+  var billBody     = document.getElementById("bill-body");
   var custEmpty    = document.getElementById("cust-empty");
   var medEmpty     = document.getElementById("med-empty");
+  var billEmpty    = document.getElementById("bill-empty");
+  var billFilter   = document.getElementById("bill-customer-filter");
   var loadingEl    = document.getElementById("dashboard-loading");
   var errorEl      = document.getElementById("dashboard-error");
+
+  var allBillRows  = []; // [{el, customer}] — kept for filter reuse
+
+  if (billFilter) {
+    billFilter.addEventListener("change", function () {
+      var selected = billFilter.value;
+      var anyVisible = false;
+      allBillRows.forEach(function (row) {
+        var show = !selected || row.customer === selected;
+        row.el.style.display = show ? "" : "none";
+        if (show) anyVisible = true;
+      });
+      if (billEmpty) billEmpty.classList.toggle("hidden", anyVisible || !allBillRows.length);
+    });
+  }
 
   var currentPeriod = "month";
 
@@ -59,10 +78,12 @@
       pinTitle.textContent = "Set a Profit PIN";
       pinConfirmRow.classList.remove("hidden");
       pinSubmit.textContent = "Set PIN";
+      if (resetBtn) resetBtn.style.display = "none";
     } else {
       pinTitle.textContent = "Profit Dashboard";
       pinConfirmRow.classList.add("hidden");
       pinSubmit.textContent = "Unlock";
+      if (resetBtn) resetBtn.style.display = "";
     }
     pinInput.value   = "";
     if (pinConfirm) pinConfirm.value = "";
@@ -118,7 +139,15 @@
 
   if (changeBtn) {
     changeBtn.addEventListener("click", function () {
-      // Reset PIN: clear stored hash and show setup screen
+      localStorage.removeItem(PIN_HASH_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
+      showLock(true);
+    });
+  }
+
+  if (resetBtn) {
+    resetBtn.addEventListener("click", function () {
+      if (!confirm("This will clear your saved PIN and let you set a new one. Continue?")) return;
       localStorage.removeItem(PIN_HASH_KEY);
       sessionStorage.removeItem(SESSION_KEY);
       showLock(true);
@@ -189,8 +218,12 @@
   function clearTables() {
     if (custBody)  custBody.innerHTML  = "";
     if (medBody)   medBody.innerHTML   = "";
+    if (billBody)  billBody.innerHTML  = "";
     if (custEmpty) custEmpty.classList.add("hidden");
     if (medEmpty)  medEmpty.classList.add("hidden");
+    if (billEmpty) billEmpty.classList.add("hidden");
+    if (billFilter) { billFilter.innerHTML = "<option value=''>All Customers</option>"; }
+    allBillRows = [];
     if (elRevenue) elRevenue.textContent = "—";
     if (elCost)    elCost.textContent    = "—";
     if (elProfit)  elProfit.textContent  = "—";
@@ -258,6 +291,41 @@
           "</td>" +
           "<td class='num'>" + (m.cost ? pct(m.margin) : "<span class='muted'>—</span>") + "</td>";
         medBody.appendChild(tr);
+      });
+    }
+
+    // Bill table
+    var bills = data.byBill || [];
+    if (!bills.length) {
+      if (billEmpty) billEmpty.classList.remove("hidden");
+    } else {
+      // Populate customer filter dropdown
+      if (billFilter) {
+        var custSet = {};
+        bills.forEach(function (b) { custSet[b.customer] = true; });
+        Object.keys(custSet).sort().forEach(function (name) {
+          var opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          billFilter.appendChild(opt);
+        });
+      }
+
+      bills.forEach(function (b) {
+        var dateStr = b.date ? new Date(b.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+        var tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td><strong>" + escHtml(b.billNumber || "—") + "</strong></td>" +
+          "<td style='white-space:nowrap;color:#64748b;font-size:0.82rem;'>" + dateStr + "</td>" +
+          "<td>" + escHtml(b.customer) + "</td>" +
+          "<td class='num'>" + fmt(b.revenue) + "</td>" +
+          "<td class='num'>" + (b.cost !== null ? fmt(b.cost) : "<span class='muted'>—</span>") + "</td>" +
+          "<td class='num profit-val" + (b.profit !== null && b.profit < 0 ? " loss" : "") + "'>" +
+            (b.profit !== null ? fmt(b.profit) : "<span class='muted'>—</span>") +
+          "</td>" +
+          "<td class='num'>" + (b.margin !== null ? pct(b.margin) : "<span class='muted'>—</span>") + "</td>";
+        billBody.appendChild(tr);
+        allBillRows.push({ el: tr, customer: b.customer });
       });
     }
   }
