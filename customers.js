@@ -14,6 +14,7 @@
     initialized: false,
     selectedIdx: null,
     allBills: null,      // null = not yet fetched
+    allPayments: {},     // keyed by customer name lowercased, cached after first fetch
     searchQuery: "",
   };
 
@@ -186,10 +187,11 @@
     if (cEl.profilePhone) cEl.profilePhone.textContent = c.phone || "—";
     updateBalanceDisplay(parseFloat(c.balance) || 0);
 
-    // Reset pay form
+    // Reset pay form and clear payment cache for this customer so history refreshes
     if (cEl.payAmount) cEl.payAmount.value = "";
     if (cEl.payNote)   cEl.payNote.value   = "";
     setPayStatus("", "");
+    delete cState.allPayments[(c.name || "").toLowerCase()];
 
     // Hide edit form if open
     hideEditForm();
@@ -259,7 +261,7 @@
   // Record payment
   // -------------------------------------------------------------------------
 
-  function recordPayment() {
+  async function recordPayment() {
     var amt = parseFloat(cEl.payAmount ? cEl.payAmount.value : "0") || 0;
     if (amt <= 0) { setPayStatus("Enter a valid payment amount.", "is-warn"); return; }
 
@@ -267,20 +269,40 @@
     var c = list[cState.selectedIdx];
     if (!c) return;
 
-    var prevBal = parseFloat(c.balance) || 0;
-    var newBal  = round2(prevBal - amt);
-    list[cState.selectedIdx].balance = newBal;
-    saveCustomers(list);
+    if (cEl.payBtn) { cEl.payBtn.disabled = true; cEl.payBtn.textContent = "Saving…"; }
 
-    updateBalanceDisplay(newBal);
-    if (cEl.payAmount) cEl.payAmount.value = "";
-    if (cEl.payNote)   cEl.payNote.value   = "";
+    try {
+      var note = cEl.payNote ? cEl.payNote.value.trim() : "";
+      var result = await requestApi("/api/payments", {
+        method: "POST",
+        body: { customer_name: c.name, customer_phone: c.phone || "", amount: amt, note: note },
+      });
 
-    setPayStatus(
-      "✓ Payment of " + fmtMoney(amt) + " recorded. New balance: " + fmtMoney(newBal),
-      "is-ok"
-    );
-    renderCustomerList();
+      var prevBal = parseFloat(c.balance) || 0;
+      var newBal  = round2(prevBal - amt);
+      list[cState.selectedIdx].balance = newBal;
+      saveCustomers(list);
+      updateBalanceDisplay(newBal);
+
+      if (cEl.payAmount) cEl.payAmount.value = "";
+      if (cEl.payNote)   cEl.payNote.value   = "";
+
+      // Update cached payments so history refreshes without re-fetch
+      var custKey = c.name.toLowerCase();
+      if (cState.allPayments[custKey]) {
+        cState.allPayments[custKey].unshift(result.payment);
+      } else {
+        delete cState.allPayments[custKey]; // force re-fetch next time
+      }
+
+      setPayStatus("✓ Payment of " + fmtMoney(amt) + " saved. New balance: " + fmtMoney(newBal), "is-ok");
+      renderCustomerList();
+      await loadAndRenderBills(c.name);
+    } catch (err) {
+      setPayStatus("Could not save payment: " + (err.message || "unknown error"), "is-warn");
+    } finally {
+      if (cEl.payBtn) { cEl.payBtn.disabled = false; cEl.payBtn.textContent = "✔ Apply Payment"; }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -303,58 +325,93 @@
 
   async function loadAndRenderBills(customerName) {
     if (!cEl.billsContainer) return;
-    cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading bills…</p>';
+    cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading…</p>';
 
     try {
       if (cState.allBills === null) {
         var result = await requestApi("/api/bills", { method: "GET" });
         cState.allBills = result.bills || [];
       }
+
       var nameLower = (customerName || "").toLowerCase().trim();
+
+      if (!cState.allPayments[nameLower]) {
+        var pResult = await requestApi(
+          "/api/payments?customer=" + encodeURIComponent(customerName),
+          { method: "GET" }
+        );
+        cState.allPayments[nameLower] = pResult.payments || [];
+      }
+
       var bills = cState.allBills.filter(function (b) {
         return (b.customer_name || "").toLowerCase().trim() === nameLower;
       });
-      renderBills(bills);
+      var payments = cState.allPayments[nameLower];
+
+      renderHistory(bills, payments);
     } catch (err) {
       cEl.billsContainer.innerHTML =
-        '<p class="status-message is-error">Could not load bills: ' +
+        '<p class="status-message is-error">Could not load history: ' +
         escHtml(err.message || "Unknown error") + "</p>";
     }
   }
 
-  function renderBills(bills) {
+  function renderHistory(bills, payments) {
     if (!cEl.billsContainer) return;
 
-    if (!bills.length) {
-      cEl.billsContainer.innerHTML = '<p class="cust-empty">No bills found for this customer.</p>';
+    // Merge bills and payments into a single timeline sorted newest-first
+    var entries = [];
+    bills.forEach(function (b) {
+      entries.push({ type: "bill", date: b.created_at, data: b });
+    });
+    (payments || []).forEach(function (p) {
+      entries.push({ type: "payment", date: p.created_at, data: p });
+    });
+    entries.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+
+    if (!entries.length) {
+      cEl.billsContainer.innerHTML = '<p class="cust-empty">No bills or payments found for this customer.</p>';
       return;
     }
 
-    var rows = bills.map(function (b) {
-      var subtotal   = parseFloat(b.subtotal)    || 0;
-      var grandTotal = parseFloat(b.grand_total) || 0;
-      var gstAmt     = parseFloat(b.gst_amount)  || 0;
-      var itemCount  = b.items ? b.items.length : (b.item_count || "—");
-      return (
-        "<tr>" +
-          '<td><span class="bill-history-number">' + escHtml(b.bill_number || "—") + "</span></td>" +
-          "<td>" + fmtDate(b.created_at) + "</td>" +
-          '<td class="num-col">' + fmtMoney(subtotal) + "</td>" +
-          '<td class="num-col">' + (gstAmt > 0 ? fmtMoney(gstAmt) : "—") + "</td>" +
-          '<td class="num-col"><strong>' + fmtMoney(grandTotal) + "</strong></td>" +
-        "</tr>"
-      );
+    var rows = entries.map(function (e) {
+      if (e.type === "bill") {
+        var b = e.data;
+        var grandTotal = parseFloat(b.grand_total) || 0;
+        var gstAmt     = parseFloat(b.gst_amount)  || 0;
+        var subtotal   = parseFloat(b.subtotal)     || 0;
+        return (
+          "<tr>" +
+            '<td><span class="bill-history-number">' + escHtml(b.bill_number || "—") + "</span></td>" +
+            "<td>" + fmtDate(b.created_at) + "</td>" +
+            '<td class="num-col">' + fmtMoney(subtotal) + "</td>" +
+            '<td class="num-col">' + (gstAmt > 0 ? fmtMoney(gstAmt) : "—") + "</td>" +
+            '<td class="num-col"><strong>' + fmtMoney(grandTotal) + "</strong></td>" +
+          "</tr>"
+        );
+      } else {
+        var p = e.data;
+        var note = p.note ? " · " + escHtml(p.note) : "";
+        return (
+          '<tr class="payment-row">' +
+            '<td><span class="payment-history-label">💳 Payment' + note + "</span></td>" +
+            "<td>" + fmtDate(p.created_at) + "</td>" +
+            '<td class="num-col" colspan="2" style="color:#64748b;font-size:0.82rem;">Amount received</td>' +
+            '<td class="num-col" style="color:#16a34a;font-weight:600;">−' + fmtMoney(p.amount) + "</td>" +
+          "</tr>"
+        );
+      }
     }).join("");
 
     cEl.billsContainer.innerHTML =
       '<div class="bill-table-scroll">' +
         '<table class="bill-items-table">' +
           "<thead><tr>" +
-            "<th>Bill No.</th>" +
+            "<th>Bill / Payment</th>" +
             "<th>Date</th>" +
             '<th class="num-col">Subtotal</th>' +
             '<th class="num-col">GST</th>' +
-            '<th class="num-col">Grand Total</th>' +
+            '<th class="num-col">Total / Paid</th>' +
           "</tr></thead>" +
           "<tbody>" + rows + "</tbody>" +
         "</table>" +
