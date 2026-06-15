@@ -204,6 +204,27 @@ module.exports = async (req, res) => {
         return;
       }
 
+      // Distinct customer list for restore-from-history (no cap)
+      if (req.query?.customers === "1") {
+        const rows = await callSupabaseRest(
+          config,
+          `${BILLS_TABLE}?select=customer_name,customer_phone&not.customer_name=is.null&order=customer_name.asc&limit=5000`,
+          { method: "GET" }
+        );
+        const seen = new Set();
+        const customers = [];
+        for (const r of (Array.isArray(rows) ? rows : [])) {
+          const name = (r.customer_name || "").trim();
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          customers.push({ customer_name: name, customer_phone: r.customer_phone || "" });
+        }
+        sendJson(res, 200, { customers });
+        return;
+      }
+
       // Bill history list (most recent first)
       const bills = await callSupabaseRest(
         config,

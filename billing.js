@@ -250,21 +250,21 @@
     var btn = bEl.restoreCustomersBtn;
     if (btn) { btn.disabled = true; btn.textContent = "Restoring…"; }
     try {
-      var bills = bState.billHistory.length
-        ? bState.billHistory
-        : ((await requestApi("/api/bills", { method: "GET" })).bills || []);
+      // Use dedicated customers endpoint (no cap) to get all-time unique customers
+      var result = await requestApi("/api/bills?customers=1", { method: "GET" });
+      var allCustomers = result.customers || [];
 
       var existing = loadSavedCustomers();
       var seen = new Set(existing.map(function (c) { return c.name.trim().toLowerCase(); }));
       var added = 0;
 
-      bills.forEach(function (bill) {
-        var name = (bill.customer_name || "").trim();
+      allCustomers.forEach(function (c) {
+        var name = (c.customer_name || "").trim();
         if (!name) return;
         var key = name.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
-        existing.push({ name: name, phone: bill.customer_phone || "", balance: 0 });
+        existing.push({ name: name, phone: c.customer_phone || "", balance: 0 });
         added++;
       });
 
