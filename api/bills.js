@@ -208,7 +208,7 @@ module.exports = async (req, res) => {
       if (req.query?.customers === "1") {
         const rows = await callSupabaseRest(
           config,
-          `${BILLS_TABLE}?select=customer_name,customer_phone&not.customer_name=is.null&order=customer_name.asc&limit=5000`,
+          `${BILLS_TABLE}?select=customer_name,customer_phone&customer_name=not.is.null&order=customer_name.asc&limit=5000`,
           { method: "GET" }
         );
         const seen = new Set();
