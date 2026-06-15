@@ -209,7 +209,7 @@ module.exports = async (req, res) => {
         // Order by created_at desc so first occurrence per customer = most recent bill
         const rows = await callSupabaseRest(
           config,
-          `${BILLS_TABLE}?select=customer_name,customer_phone,customer_balance&customer_name=not.is.null&order=created_at.desc&limit=5000`,
+          `${BILLS_TABLE}?select=customer_name,customer_phone&customer_name=not.is.null&order=created_at.desc&limit=5000`,
           { method: "GET" }
         );
         const seen = new Set();
@@ -220,11 +220,7 @@ module.exports = async (req, res) => {
           const key = name.toLowerCase();
           if (seen.has(key)) continue;
           seen.add(key);
-          customers.push({
-            customer_name: name,
-            customer_phone: r.customer_phone || "",
-            customer_balance: r.customer_balance != null ? parseFloat(r.customer_balance) : 0,
-          });
+          customers.push({ customer_name: name, customer_phone: r.customer_phone || "" });
         }
         sendJson(res, 200, { customers });
         return;

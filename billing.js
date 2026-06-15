@@ -264,7 +264,7 @@
         var key = name.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
-        existing.push({ name: name, phone: c.customer_phone || "", balance: c.customer_balance || 0 });
+        existing.push({ name: name, phone: c.customer_phone || "", balance: 0 });
         added++;
       });
 
@@ -273,7 +273,7 @@
 
       if (added > 0) {
         setSaveCustomerStatus(
-          "✅ " + added + " customer(s) restored with their latest balances.",
+          "✅ " + added + " customer(s) restored. Use Repair Balance to fix outstanding amounts.",
           "is-ok"
         );
       } else {
