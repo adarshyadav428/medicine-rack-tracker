@@ -51,7 +51,7 @@ async function generateBillNumber(config) {
 }
 
 function buildItemRows(billId, items) {
-  return items.map((item) => {
+  return items.map((item, index) => {
     const sellPrice = toDecimalOrNull(item.sellPrice) ?? 0;
     const qty = Math.max(0.001, parseFloat(item.quantity) || 0.001);
     return {
@@ -65,6 +65,7 @@ function buildItemRows(billId, items) {
       sell_price: sellPrice,
       markup_percent: toDecimalOrNull(item.markupPercent),
       line_total: round2(sellPrice * qty),
+      sort_order: index,
     };
   });
 }
@@ -193,7 +194,7 @@ module.exports = async (req, res) => {
 
         const items = await callSupabaseRest(
           config,
-          `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=*&order=created_at.asc`,
+          `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=*&order=sort_order.asc,created_at.asc`,
           { method: "GET" }
         );
 
