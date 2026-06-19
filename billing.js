@@ -1329,7 +1329,13 @@
           bState.currentCustomerIdx     = idx;
           bState.currentCustomerBalance = newBalance;
           bState.balanceCarriedForward  = true;
+          // Clear received so it doesn't appear double-applied if user re-saves
+          if (bEl.receivedAmount) bEl.receivedAmount.value = "0";
           if (bEl.openingBalance) bEl.openingBalance.value = newBalance > 0 ? newBalance : "";
+          // Prime edit originals so subsequent re-saves compute correct deltas
+          bState.editOriginalGrandTotal  = grandTot;
+          bState.editOriginalReceived    = 0;
+          bState.editOriginalPrevBalance = newBalance;
           renderCustomerSelect();
           recalcPayment();
         }

@@ -257,6 +257,30 @@
     renderCustomerList();
   }
 
+  // Apply a payment amount across a customer's bills (oldest unpaid first).
+  // Updates am.billRecv.<id> in localStorage so bill printouts show the received amount.
+  function applyPaymentToBills(customerName, paymentAmt) {
+    if (!cState.allBills || paymentAmt <= 0) return;
+    var nameLower = customerName.toLowerCase().trim();
+    var custBills = cState.allBills
+      .filter(function (b) { return (b.customer_name || "").toLowerCase().trim() === nameLower; })
+      .slice() // don't mutate cached array
+      .sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }); // oldest first
+
+    var remaining = paymentAmt;
+    for (var i = 0; i < custBills.length && remaining > 0; i++) {
+      var bill = custBills[i];
+      var grandTotal = parseFloat(bill.grand_total) || 0;
+      var alreadyRecv = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
+      var outstanding = round2(grandTotal - alreadyRecv);
+      if (outstanding <= 0) continue;
+      var applying = Math.min(outstanding, remaining);
+      var newRecv = round2(alreadyRecv + applying);
+      try { localStorage.setItem("am.billRecv." + bill.id, String(newRecv)); } catch (_) {}
+      remaining = round2(remaining - applying);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Record payment
   // -------------------------------------------------------------------------
@@ -284,6 +308,9 @@
       saveCustomers(list);
       updateBalanceDisplay(newBal);
 
+      // Apply payment to bills so printouts show updated received amount
+      applyPaymentToBills(c.name, amt);
+
       if (cEl.payAmount) cEl.payAmount.value = "";
       if (cEl.payNote)   cEl.payNote.value   = "";
 
@@ -292,7 +319,7 @@
       if (cState.allPayments[custKey]) {
         cState.allPayments[custKey].unshift(result.payment);
       } else {
-        delete cState.allPayments[custKey]; // force re-fetch next time
+        delete cState.allPayments[custKey];
       }
 
       setPayStatus("✓ Payment of " + fmtMoney(amt) + " saved. New balance: " + fmtMoney(newBal), "is-ok");
