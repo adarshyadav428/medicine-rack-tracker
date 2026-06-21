@@ -96,6 +96,25 @@ cState.allBills[]    — lazy-loaded from /api/bills (all customer bills)
 cState.allPayments{} — cached { customerName: Payment[] }
 ```
 
+### PostgREST query syntax (used in all `/api/*.js` files)
+
+Filters are appended as query-string parameters passed to `callSupabaseRest`. Common patterns:
+
+```
+column=eq.value          equality
+column=not.is.null       IS NOT NULL   ← NOT "not.column=is.null" (causes 400)
+column=like.prefix*      LIKE 'prefix%'
+column=in.(a,b,c)        IN list
+order=col.asc,col2.desc
+limit=100
+select=col1,col2
+```
+
+Prefer-header shortcuts used in this codebase:
+- `return=representation` — returns the inserted/updated rows as JSON
+- `return=minimal` — returns empty body (faster for bulk ops)
+- `resolution=merge-duplicates` — upsert on unique constraint
+
 ### Key behaviours to know
 - **Saved customers are localStorage-only** (device/browser-specific). "Restore from History" (`/api/bills?customers=1`) re-populates them from Supabase bill history.
 - **Payment cascade:** recording a payment in `customers.js` calls `applyPaymentToBills()` which updates `am.billRecv.*` localStorage keys on the oldest unpaid bills — this is what makes the print receipt show the correct received/balance figures.
