@@ -41,6 +41,12 @@ by billing, a failed edit restores the original line items, payments can be
 deleted, `?all=1` returns the full history, quantity validation, and
 case-insensitive payment lookup.
 
+**profit-pin.test.js** — the profit PIN is stored hashed in the database and
+checked on the server: `/api/profit` returns nothing without a valid unlock,
+forged and expired tokens are rejected, five wrong guesses lock it for fifteen
+minutes, changing the PIN requires the current one, and non-admins never reach
+the PIN at all.
+
 **pdf-import.test.js** — supplier-bill line parsing: the skip-list for totals,
 GSTIN, bill numbers and address lines; number assignment across the 1/2/3/4
 column layouts including this app's own receipt format; names containing

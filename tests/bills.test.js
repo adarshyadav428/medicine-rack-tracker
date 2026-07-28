@@ -5,7 +5,7 @@ const PROJECT = path.resolve(__dirname, "..");
 const real = require(path.join(PROJECT, "lib/supabase-server.js"));
 
 const db = {
-  bills: [], bill_items: [], payments: [], customers: [],
+  bills: [], bill_items: [], payments: [], customers: [], app_settings: [],
   medicines: [
     { id: "m1", medicine_name: "Crocin", quantity: 100 },
     { id: "m2", medicine_name: "Dolo", quantity: 50 },
@@ -82,8 +82,18 @@ const billsApi = require(path.join(PROJECT, "api/bills.js"));
 const payApi = require(path.join(PROJECT, "api/payments.js"));
 const profitApi = require(path.join(PROJECT, "api/profit.js"));
 
+// /api/profit is behind the profit PIN, so these calls carry an unlock cookie.
+// The PIN itself is covered in profit-pin.test.js; here it is just a door to
+// hold open while the paging behaviour is checked.
+const { UNLOCK_COOKIE, hashPin, issueUnlockToken } = require(path.join(PROJECT, "lib/profit-pin"));
+db.app_settings.push({ key: "profit_pin", value: hashPin("1234") });
+const unlockCookie = `${UNLOCK_COOKIE}=${encodeURIComponent(
+  issueUnlockToken({ serviceRoleKey: "s" }, "a@b")
+)}`;
+
 const invoke = (fn, method, opts = {}) => new Promise((res) => {
-  const rq = { method, query: opts.query || {}, body: opts.body || null, headers: {} };
+  const rq = { method, query: opts.query || {}, body: opts.body || null,
+               headers: { cookie: unlockCookie } };
   const rs = { statusCode: 200, setHeader() {}, end(t) { res({ status: this.statusCode, json: JSON.parse(t || "{}") }); } };
   fn(rq, rs);
 });

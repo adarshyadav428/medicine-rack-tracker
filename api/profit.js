@@ -1,10 +1,17 @@
 const {
   allowMethods,
   callSupabaseRest,
+  getCookie,
   getServerConfig,
   requireAuthContext,
   sendJson,
 } = require("../lib/supabase-server");
+
+const {
+  UNLOCK_COOKIE,
+  getStoredPinHash,
+  isUnlockTokenValid,
+} = require("../lib/profit-pin");
 
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
@@ -143,6 +150,18 @@ module.exports = async (req, res) => {
   try {
     const authContext = await requireAuthContext(req, res, config, { adminOnly: true });
     if (!authContext) return;
+
+    // The PIN has to gate the figures, not just the page. Checking it only in
+    // the browser left this endpoint answering anyone who was logged in.
+    const storedHash = await getStoredPinHash(config);
+    if (!storedHash) {
+      sendJson(res, 403, { error: "Set a profit PIN first.", pinRequired: true, pinSet: false });
+      return;
+    }
+    if (!isUnlockTokenValid(config, getCookie(req, UNLOCK_COOKIE), authContext.user.email)) {
+      sendJson(res, 403, { error: "Enter your profit PIN.", pinRequired: true, pinSet: true });
+      return;
+    }
 
     const period = (req.query?.period || "all").toLowerCase();
     const start  = getPeriodStart(period);

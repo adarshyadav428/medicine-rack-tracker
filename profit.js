@@ -1,24 +1,40 @@
 (function () {
   "use strict";
 
-  // ── PIN helpers (Web Crypto SHA-256) ──────────────────────────────────────
-  var PIN_HASH_KEY   = "am.profitPinHash";
-  var SESSION_KEY    = "am.profitOk";
-  var PIN_SALT       = "adarsh-medicals-profit-2026";
+  // ── PIN state ─────────────────────────────────────────────────────────────
+  //
+  // The PIN hash lives in the database and is checked on the server, which
+  // also refuses to return any figures without a valid unlock. Nothing about
+  // the PIN is kept in this browser: it used to sit in localStorage, which
+  // meant the dashboard was only protected on whichever machine had set it.
+  var pinState = { isSet: false, unlocked: false, lockedOutMinutes: 0 };
 
-  async function sha256(str) {
-    var buf = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(PIN_SALT + str)
-    );
-    return Array.from(new Uint8Array(buf))
-      .map(function (b) { return b.toString(16).padStart(2, "0"); })
-      .join("");
+  // This page does not load app.js, so it carries its own small fetch helper.
+  async function requestApi(path, options) {
+    options = options || {};
+    var hasBody = options.body !== undefined;
+    var response = await fetch(path, {
+      method: options.method || "GET",
+      cache: "no-store",
+      credentials: "include",
+      headers: hasBody ? { "Content-Type": "application/json" } : {},
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+    });
+
+    var text = await response.text();
+    var payload = {};
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = {}; } }
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Request failed (" + response.status + ").");
+    }
+    return payload;
   }
 
-  function getStoredHash()   { return localStorage.getItem(PIN_HASH_KEY) || ""; }
-  function isSessionOpen()   { return sessionStorage.getItem(SESSION_KEY) === "1"; }
-  function markSessionOpen() { sessionStorage.setItem(SESSION_KEY, "1"); }
+  async function fetchPinState() {
+    pinState = await requestApi("/api/profit-pin", { method: "GET" });
+    return pinState;
+  }
 
   // ── DOM refs ─────────────────────────────────────────────────────────────
   var lockScreen   = document.getElementById("lock-screen");
@@ -104,31 +120,43 @@
       return;
     }
 
-    var storedHash = getStoredHash();
-
-    // Setup mode
-    if (!storedHash) {
-      var confirm = pinConfirm ? pinConfirm.value.trim() : pin;
-      if (pin !== confirm) {
+    // Setup mode is checked here for a quick message; the server checks it
+    // again, so a mistyped confirmation can never be stored.
+    if (!pinState.isSet || changingPin) {
+      var confirmValue = pinConfirm ? pinConfirm.value.trim() : pin;
+      if (pin !== confirmValue) {
         pinMsg.textContent = "PINs do not match.";
         return;
       }
-      var hash = await sha256(pin);
-      localStorage.setItem(PIN_HASH_KEY, hash);
-      markSessionOpen();
-      showDashboard();
-      return;
     }
 
-    // Verify mode
-    var entered = await sha256(pin);
-    if (entered === storedHash) {
-      markSessionOpen();
+    pinSubmit.disabled = true;
+    pinMsg.textContent = pinState.isSet ? "Checking…" : "Saving…";
+
+    try {
+      if (changingPin) {
+        await requestApi("/api/profit-pin", {
+          method: "PUT",
+          body: { currentPin: currentPinForChange, newPin: pin },
+        });
+        changingPin = false;
+        currentPinForChange = "";
+      } else {
+        await requestApi("/api/profit-pin", {
+          method: "POST",
+          body: { pin: pin, confirm: pinConfirm ? pinConfirm.value.trim() : pin },
+        });
+      }
+      pinState.isSet = true;
+      pinState.unlocked = true;
+      pinMsg.textContent = "";
       showDashboard();
-    } else {
-      pinMsg.textContent = "Incorrect PIN. Try again.";
+    } catch (error) {
+      pinMsg.textContent = error.message || "Could not verify the PIN.";
       pinInput.value = "";
       pinInput.focus();
+    } finally {
+      pinSubmit.disabled = false;
     }
   }
 
@@ -139,30 +167,56 @@
 
   if (changeBtn) {
     changeBtn.addEventListener("click", function () {
-      localStorage.removeItem(PIN_HASH_KEY);
-      sessionStorage.removeItem(SESSION_KEY);
+      // Changing the PIN requires the current one. Without that, "Change PIN"
+      // would be an unlock button for anyone who reached the dashboard.
+      var current = prompt("Enter your current PIN:");
+      if (current === null) return;
+      current = current.trim();
+      if (!current) return;
+
+      changingPin = true;
+      currentPinForChange = current;
       showLock(true);
+      pinTitle.textContent = "Set a New PIN";
+      pinSubmit.textContent = "Change PIN";
     });
   }
 
   if (resetBtn) {
+    // This used to wipe the saved PIN and offer to set a fresh one, which let
+    // anyone at the lock screen walk straight past it.
     resetBtn.addEventListener("click", function () {
-      if (!confirm("This will clear your saved PIN and let you set a new one. Continue?")) return;
-      localStorage.removeItem(PIN_HASH_KEY);
-      sessionStorage.removeItem(SESSION_KEY);
-      showLock(true);
+      pinMsg.textContent =
+        "A forgotten PIN has to be cleared in Supabase: delete the " +
+        "'profit_pin' row from app_settings, then reload this page to set a new one.";
     });
   }
 
   // ── Boot ─────────────────────────────────────────────────────────────────
-  var storedHash = getStoredHash();
-  if (!storedHash) {
-    showLock(true);
-  } else if (isSessionOpen()) {
-    showDashboard();
-  } else {
-    showLock(false);
-  }
+  var changingPin = false;
+  var currentPinForChange = "";
+
+  (async function boot() {
+    try {
+      await fetchPinState();
+    } catch (error) {
+      showLock(false);
+      pinMsg.textContent = error.message || "Could not reach the server.";
+      return;
+    }
+
+    if (!pinState.isSet) {
+      showLock(true);
+    } else if (pinState.unlocked) {
+      showDashboard();
+    } else {
+      showLock(false);
+      if (pinState.lockedOutMinutes) {
+        pinMsg.textContent =
+          "Too many wrong attempts. Try again in " + pinState.lockedOutMinutes + " minute(s).";
+      }
+    }
+  })();
 
   // ── Period tabs ───────────────────────────────────────────────────────────
   periodBtns.forEach(function (btn) {
@@ -184,6 +238,15 @@
       var res = await fetch("/api/profit?period=" + period, { credentials: "include" });
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
+        // The unlock expires on its own, so a dashboard left open overnight
+        // returns here rather than showing a stale error.
+        if (err.pinRequired) {
+          pinState.isSet = Boolean(err.pinSet);
+          pinState.unlocked = false;
+          showLock(!pinState.isSet);
+          pinMsg.textContent = pinState.isSet ? "Session expired — enter your PIN again." : "";
+          return;
+        }
         throw new Error(err.error || "Request failed (" + res.status + ")");
       }
       var data = await res.json();
