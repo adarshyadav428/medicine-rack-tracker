@@ -651,6 +651,7 @@
       var lastPriceInfo = bState.customerLastPrices[medicineLower];
 
       var metaParts = [];
+      if (item.seller) metaParts.push("🏢 " + item.seller);
       if (item.location) metaParts.push("📍 " + item.location);
       if (item.mrp !== null && item.mrp !== undefined) metaParts.push("MRP: ₹" + item.mrp);
       if (purchase !== null) metaParts.push("Buy: ₹" + purchase);
