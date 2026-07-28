@@ -1497,8 +1497,20 @@
           var newBalance = round2(grandTot + prevBal - received);
 
           if (idx < 0) {
-            // New customer — create entry
-            custList.push({ name: custName, phone: custPhone || "", balance: newBalance });
+            // New customer — create entry.
+            //
+            // prevBal is what they already owed before this first bill, typed
+            // into Opening Balance. It has to be stored as the customer's
+            // opening balance: the derived balance is built from opening plus
+            // bill totals less receipts, so an opening amount that is only
+            // recorded on the bill would drop straight out of it.
+            custList.push({
+              name: custName,
+              phone: custPhone || "",
+              balance: newBalance,
+              openingBalance: prevBal,
+              _dirty: true,
+            });
             idx = custList.length - 1;
           } else {
             custList[idx].balance = newBalance;

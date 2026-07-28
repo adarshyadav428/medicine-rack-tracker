@@ -12,6 +12,8 @@ const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
 const HISTORY_LIMIT = 100;
 const PAGE_SIZE = 1000;
+// Keep the bill_id=in.(...) filter inside sane URL length limits.
+const BILL_ID_CHUNK = 200;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -198,27 +200,50 @@ module.exports = async (req, res) => {
           return;
         }
 
-        // Step 2: get all items for those bills, most recent first
-        const encodedIds = billIds.map(id => encodeURIComponent(id)).join(",");
-        const itemRows = await callSupabaseRest(
-          config,
-          `${ITEMS_TABLE}?bill_id=in.(${encodedIds})&select=medicine_name,sell_price,markup_percent,created_at&order=created_at.desc&limit=500`,
-          { method: "GET" }
+        // Step 2: get every item for those bills.
+        //
+        // Paged and chunked rather than capped at a fixed number of rows: a cap
+        // meant a medicine last sold to this customer beyond the cutoff simply
+        // had no remembered price and quietly fell back to MRP.
+        const itemRows = [];
+        for (let i = 0; i < billIds.length; i += BILL_ID_CHUNK) {
+          const encodedIds = billIds
+            .slice(i, i + BILL_ID_CHUNK)
+            .map((billId) => encodeURIComponent(billId))
+            .join(",");
+
+          let offset = 0;
+          for (;;) {
+            const page = await callSupabaseRest(
+              config,
+              `${ITEMS_TABLE}?bill_id=in.(${encodedIds})` +
+                `&select=medicine_name,sell_price,markup_percent,created_at` +
+                `&order=created_at.desc&limit=${PAGE_SIZE}&offset=${offset}`,
+              { method: "GET" }
+            );
+            const batch = Array.isArray(page) ? page : [];
+            itemRows.push(...batch);
+            if (batch.length < PAGE_SIZE) break;
+            offset += PAGE_SIZE;
+          }
+        }
+
+        // Chunking breaks the overall ordering, so re-sort newest-first before
+        // taking the first occurrence of each medicine as its latest price.
+        itemRows.sort((x, y) =>
+          String(y.created_at || "").localeCompare(String(x.created_at || ""))
         );
 
-        // Build map: first occurrence = most recent price per medicine
         const priceMap = {};
-        if (Array.isArray(itemRows)) {
-          for (const item of itemRows) {
-            const key = (item.medicine_name || "").toLowerCase().trim();
-            if (key && !priceMap[key]) {
-              priceMap[key] = {
-                sellPrice: parseFloat(item.sell_price) ?? 0,
-                markupPercent: item.markup_percent != null
-                  ? parseFloat(item.markup_percent)
-                  : null,
-              };
-            }
+        for (const item of itemRows) {
+          const key = (item.medicine_name || "").toLowerCase().trim();
+          if (key && !priceMap[key]) {
+            priceMap[key] = {
+              sellPrice: parseFloat(item.sell_price) ?? 0,
+              markupPercent: item.markup_percent != null
+                ? parseFloat(item.markup_percent)
+                : null,
+            };
           }
         }
 
@@ -255,14 +280,25 @@ module.exports = async (req, res) => {
       // Distinct customer list for restore-from-history (no cap)
       if (req.query?.customers === "1") {
         // Order by created_at desc so first occurrence per customer = most recent bill
-        const rows = await callSupabaseRest(
-          config,
-          `${BILLS_TABLE}?select=customer_name,customer_phone&customer_name=not.is.null&order=created_at.desc&limit=5000`,
-          { method: "GET" }
-        );
+        // Paged: a fixed cap would quietly omit the oldest customers from the
+        // restore list, and there is nothing on screen to say any were missed.
+        const rows = [];
+        let custOffset = 0;
+        for (;;) {
+          const page = await callSupabaseRest(
+            config,
+            `${BILLS_TABLE}?select=customer_name,customer_phone&customer_name=not.is.null` +
+              `&order=created_at.desc&limit=${PAGE_SIZE}&offset=${custOffset}`,
+            { method: "GET" }
+          );
+          const batch = Array.isArray(page) ? page : [];
+          rows.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          custOffset += PAGE_SIZE;
+        }
         const seen = new Set();
         const customers = [];
-        for (const r of (Array.isArray(rows) ? rows : [])) {
+        for (const r of rows) {
           const name = (r.customer_name || "").trim();
           if (!name) continue;
           const key = name.toLowerCase();

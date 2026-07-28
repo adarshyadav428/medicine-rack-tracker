@@ -9,6 +9,7 @@ const {
 } = require("../lib/supabase-server");
 
 const TABLE = "payments";
+const PAGE_SIZE = 1000;
 
 module.exports = async (req, res) => {
   if (!allowMethods(req, res, ["GET", "POST", "DELETE"])) return;
@@ -33,14 +34,23 @@ module.exports = async (req, res) => {
       // payments the customer's history does not list.
       // ilike casts the net wide (its wildcards can only over-match); the exact
       // normalized comparison below narrows it back.
-      const rows = await callSupabaseRest(
-        config,
-        `${TABLE}?customer_name=ilike.${encodeURIComponent(customer)}&order=created_at.desc&limit=500`,
-        { method: "GET" }
-      );
+      const rows = [];
+      let offset = 0;
+      for (;;) {
+        const page = await callSupabaseRest(
+          config,
+          `${TABLE}?customer_name=ilike.${encodeURIComponent(customer)}` +
+            `&order=created_at.desc&limit=${PAGE_SIZE}&offset=${offset}`,
+          { method: "GET" }
+        );
+        const batch = Array.isArray(page) ? page : [];
+        rows.push(...batch);
+        if (batch.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+      }
 
       const wanted = customer.trim().toLowerCase();
-      const payments = (Array.isArray(rows) ? rows : []).filter(
+      const payments = rows.filter(
         (row) => normalizeString(row.customer_name).toLowerCase() === wanted
       );
 
