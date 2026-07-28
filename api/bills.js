@@ -247,6 +247,8 @@ module.exports = async (req, res) => {
       if (!validateItems(items, res)) return;
 
       const { subtotal, gstAmount, grandTotal, gstPct } = calcTotals(items, body.gstPercent);
+      const previousBalance = round2(toDecimalOrNull(body.previousBalance) ?? 0);
+      const amountReceived = Math.max(0, round2(toDecimalOrNull(body.amountReceived) ?? 0));
 
       const billNumber = await generateBillNumber(config);
 
@@ -265,6 +267,9 @@ module.exports = async (req, res) => {
             gst_percent: gstPct,
             gst_amount: gstAmount,
             grand_total: grandTotal,
+            previous_balance: previousBalance,
+            amount_received: amountReceived,
+            balance_due: round2(previousBalance + grandTotal - amountReceived),
             created_by: authContext.user.email,
           },
           prefer: "resolution=merge-duplicates,return=representation",
@@ -310,6 +315,41 @@ module.exports = async (req, res) => {
     // -----------------------------------------------------------------------
     if (req.method === "PUT") {
       const body = await parseJsonBody(req);
+
+      // Bulk ledger re-chain (Repair Balance): rewrite only the payment
+      // columns on many bills at once, leaving their items untouched.
+      if (Array.isArray(body.ledgerUpdates)) {
+        let updated = 0;
+
+        for (const entry of body.ledgerUpdates) {
+          const billId = normalizeString(entry.id);
+          if (!billId) continue;
+
+          const prev = round2(toDecimalOrNull(entry.previousBalance) ?? 0);
+          const recv = Math.max(0, round2(toDecimalOrNull(entry.amountReceived) ?? 0));
+          const total = round2(toDecimalOrNull(entry.grandTotal) ?? 0);
+
+          await callSupabaseRest(
+            config,
+            `${BILLS_TABLE}?id=eq.${encodeURIComponent(billId)}`,
+            {
+              method: "PATCH",
+              body: {
+                previous_balance: prev,
+                amount_received: recv,
+                balance_due: round2(prev + total - recv),
+                updated_at: new Date().toISOString(),
+              },
+              prefer: "return=minimal",
+            }
+          );
+          updated += 1;
+        }
+
+        sendJson(res, 200, { ok: true, updated });
+        return;
+      }
+
       const id = normalizeString(body.id || req.query?.id);
 
       if (!id) {
@@ -321,6 +361,8 @@ module.exports = async (req, res) => {
       if (!validateItems(items, res)) return;
 
       const { subtotal, gstAmount, grandTotal, gstPct } = calcTotals(items, body.gstPercent);
+      const previousBalance = round2(toDecimalOrNull(body.previousBalance) ?? 0);
+      const amountReceived = Math.max(0, round2(toDecimalOrNull(body.amountReceived) ?? 0));
 
       // Update bill header
       await callSupabaseRest(
@@ -336,6 +378,9 @@ module.exports = async (req, res) => {
             gst_percent: gstPct,
             gst_amount: gstAmount,
             grand_total: grandTotal,
+            previous_balance: previousBalance,
+            amount_received: amountReceived,
+            balance_due: round2(previousBalance + grandTotal - amountReceived),
             updated_at: new Date().toISOString(),
           },
           prefer: "return=minimal",

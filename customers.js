@@ -49,12 +49,49 @@
   // Helpers
   // -------------------------------------------------------------------------
 
+  // Customers live in the `customers` table; each balance is derived by the
+  // server from that customer's bills and payments. This array is a read cache
+  // so the synchronous callers below keep working unchanged.
+  var customerCache = [];
+
   function loadCustomers() {
-    try { return JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]"); } catch (_) { return []; }
+    return customerCache;
   }
 
+  /** Cache locally, then persist name / phone / opening balance. */
   function saveCustomers(list) {
-    try { localStorage.setItem(CUSTOMERS_KEY, JSON.stringify(list)); } catch (_) {}
+    customerCache = Array.isArray(list) ? list : [];
+
+    customerCache.forEach(function (c) {
+      if (!c || !c.name || !String(c.name).trim()) return;
+      if (c._synced) return;
+      c._synced = true;
+
+      requestApi("/api/customers", {
+        method: "POST",
+        body: { name: c.name, phone: c.phone || "", openingBalance: c.openingBalance },
+      }).catch(function () { c._synced = false; });
+    });
+  }
+
+  /** Load the list and the server-derived balances. */
+  async function refreshCustomers() {
+    var result = await requestApi("/api/customers", { method: "GET" });
+    customerCache = (result.customers || []).map(function (c) {
+      return {
+        id: c.id,
+        name: c.name,
+        phone: c.phone || "",
+        balance: parseFloat(c.balance) || 0,
+        openingBalance: parseFloat(c.openingBalance) || 0,
+        billCount: c.billCount || 0,
+        totalBilled: parseFloat(c.totalBilled) || 0,
+        totalReceived: parseFloat(c.totalReceived) || 0,
+        totalPayments: parseFloat(c.totalPayments) || 0,
+        _synced: true,
+      };
+    });
+    return customerCache;
   }
 
   function round2(n) { return Math.round(n * 100) / 100; }
@@ -257,29 +294,6 @@
     renderCustomerList();
   }
 
-  // Apply a payment amount across a customer's bills (oldest unpaid first).
-  // Updates am.billRecv.<id> in localStorage so bill printouts show the received amount.
-  function applyPaymentToBills(customerName, paymentAmt) {
-    if (!cState.allBills || paymentAmt <= 0) return;
-    var nameLower = customerName.toLowerCase().trim();
-    var custBills = cState.allBills
-      .filter(function (b) { return (b.customer_name || "").toLowerCase().trim() === nameLower; })
-      .slice() // don't mutate cached array
-      .sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }); // oldest first
-
-    var remaining = paymentAmt;
-    for (var i = 0; i < custBills.length && remaining > 0; i++) {
-      var bill = custBills[i];
-      var grandTotal = parseFloat(bill.grand_total) || 0;
-      var alreadyRecv = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
-      var outstanding = round2(grandTotal - alreadyRecv);
-      if (outstanding <= 0) continue;
-      var applying = Math.min(outstanding, remaining);
-      var newRecv = round2(alreadyRecv + applying);
-      try { localStorage.setItem("am.billRecv." + bill.id, String(newRecv)); } catch (_) {}
-      remaining = round2(remaining - applying);
-    }
-  }
 
   // -------------------------------------------------------------------------
   // Record payment
@@ -304,12 +318,18 @@
 
       var prevBal = parseFloat(c.balance) || 0;
       var newBal  = round2(prevBal - amt);
-      list[cState.selectedIdx].balance = newBal;
-      saveCustomers(list);
-      updateBalanceDisplay(newBal);
+      updateBalanceDisplay(newBal); // optimistic; the refresh below confirms it
 
-      // Apply payment to bills so printouts show updated received amount
-      applyPaymentToBills(c.name, amt);
+      try {
+        await refreshCustomers();
+        var fresh = customerCache.find(function (x) {
+          return x.name.toLowerCase().trim() === c.name.toLowerCase().trim();
+        });
+        if (fresh) {
+          newBal = fresh.balance;
+          updateBalanceDisplay(newBal);
+        }
+      } catch (_) { /* keep the optimistic figure */ }
 
       if (cEl.payAmount) cEl.payAmount.value = "";
       if (cEl.payNote)   cEl.payNote.value   = "";
@@ -341,8 +361,10 @@
     var c = list[cState.selectedIdx];
     if (!c) return;
     if (!window.confirm('Delete customer "' + c.name + '"? This cannot be undone.')) return;
+    requestApi("/api/customers?name=" + encodeURIComponent(c.name), { method: "DELETE" })
+      .catch(function () {});
     list.splice(cState.selectedIdx, 1);
-    saveCustomers(list);
+    customerCache = list;
     closeProfile();
   }
 
@@ -449,6 +471,78 @@
   // Init
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // One-time import of balances that used to live in this browser
+  //
+  // Balances now live in the database. Any customer still carrying a balance in
+  // this browser's localStorage is offered as an import so nothing is lost when
+  // switching over. Runs once per browser.
+  // -------------------------------------------------------------------------
+  var IMPORT_DONE_KEY = "medicineRackTracker.balancesImported.v1";
+
+  function readLegacyCustomers() {
+    try { return JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]"); } catch (_) { return []; }
+  }
+
+  function offerLocalImport() {
+    if (localStorage.getItem(IMPORT_DONE_KEY)) return;
+
+    var legacy = readLegacyCustomers().filter(function (c) {
+      return c && String(c.name || "").trim() && (parseFloat(c.balance) || 0) !== 0;
+    });
+    if (!legacy.length) {
+      try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
+      return;
+    }
+
+    // Only import customers whose balance the database doesn't already explain,
+    // so running this twice can't double anyone's opening amount.
+    var pending = legacy.filter(function (c) {
+      var match = customerCache.find(function (x) {
+        return x.name.toLowerCase().trim() === String(c.name).toLowerCase().trim();
+      });
+      return !match || match.openingBalance === 0;
+    });
+    if (!pending.length) {
+      try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
+      return;
+    }
+
+    var total = pending.reduce(function (sum, c) { return sum + (parseFloat(c.balance) || 0); }, 0);
+
+    if (!window.confirm(
+      "This browser still has saved balances for " + pending.length + " customer(s), " +
+      "totalling " + fmtMoney(total) + ".\n\n" +
+      "Import them into the database as opening balances so every device sees them?\n\n" +
+      "Do this on ONE device only — importing again elsewhere would add the amounts twice."
+    )) {
+      return; // ask again next time
+    }
+
+    requestApi("/api/customers", {
+      method: "PUT",
+      body: {
+        customers: pending.map(function (c) {
+          return {
+            name: c.name,
+            phone: c.phone || "",
+            // The old running balance becomes the opening anchor; bills already
+            // in the database then chain forward from it.
+            openingBalance: parseFloat(c.balance) || 0,
+          };
+        }),
+      },
+    })
+      .then(function (result) {
+        try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
+        setPageStatus("✅ Imported balances for " + result.imported + " customer(s).", "is-ok");
+        return refreshCustomers().then(renderCustomerList);
+      })
+      .catch(function (err) {
+        setPageStatus("Import failed: " + (err.message || "Unknown error"), "is-error");
+      });
+  }
+
   function initCustomersPage() {
     if (cState.initialized) return;
     cState.initialized = true;
@@ -458,8 +552,22 @@
       return;
     }
 
-    setPageStatus("", "");
+    setPageStatus("Loading customers…", "is-info");
     renderCustomerList();
+
+    refreshCustomers()
+      .then(function () {
+        setPageStatus("", "");
+        renderCustomerList();
+        offerLocalImport();
+      })
+      .catch(function (err) {
+        setPageStatus(
+          "Could not load customers: " + (err.message || "Unknown error") +
+            " — if this is the first run, make sure add-db-balances.sql has been applied.",
+          "is-error"
+        );
+      });
 
     if (cEl.searchInput) {
       cEl.searchInput.addEventListener("input", function () {
