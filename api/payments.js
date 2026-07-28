@@ -11,7 +11,7 @@ const {
 const TABLE = "payments";
 
 module.exports = async (req, res) => {
-  if (!allowMethods(req, res, ["GET", "POST"])) return;
+  if (!allowMethods(req, res, ["GET", "POST", "DELETE"])) return;
 
   const config = getServerConfig();
 
@@ -71,6 +71,24 @@ module.exports = async (req, res) => {
       }
 
       sendJson(res, 200, { payment: saved });
+      return;
+    }
+
+    // A mistyped amount would otherwise be permanent, since the only other
+    // way to correct it is doctoring the customer's opening balance.
+    if (req.method === "DELETE") {
+      const id = normalizeString(req.query?.id);
+      if (!id) {
+        sendJson(res, 400, { error: "Payment id is required." });
+        return;
+      }
+
+      await callSupabaseRest(config, `${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+
+      sendJson(res, 200, { ok: true });
+      return;
     }
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Payments API failed." });

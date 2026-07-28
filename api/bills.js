@@ -11,6 +11,7 @@ const {
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
 const HISTORY_LIMIT = 100;
+const PAGE_SIZE = 1000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,26 +29,67 @@ function round2(n) {
 
 /**
  * Generate a date-based bill number: AM-YYYYMMDD-NNN
- * Counts existing bills for today and increments.
- * Retries with a random suffix on unique-constraint failure.
+ *
+ * Uses the highest sequence already issued today rather than the number of
+ * bills, so deleting a bill can never hand its number to a later one.
+ * `attempt` bumps the sequence further when a concurrent insert took it first.
  */
-async function generateBillNumber(config) {
+async function generateBillNumber(config, attempt = 0) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
   const dateStr =
     String(now.getFullYear()) + pad(now.getMonth() + 1) + pad(now.getDate());
   const prefix = `AM-${dateStr}-`;
 
-  // Count bills created today
   const encodedPrefix = encodeURIComponent(prefix);
-  const countRows = await callSupabaseRest(
+  const rows = await callSupabaseRest(
     config,
-    `${BILLS_TABLE}?bill_number=like.${encodedPrefix}*&select=id`,
+    `${BILLS_TABLE}?bill_number=like.${encodedPrefix}*&select=bill_number`,
     { method: "GET" }
   );
-  const count = Array.isArray(countRows) ? countRows.length : 0;
-  const seq = String(count + 1).padStart(3, "0");
+
+  let maxSeq = 0;
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      const match = /-(\d+)$/.exec(String(row.bill_number || ""));
+      if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10) || 0);
+    }
+  }
+
+  const seq = String(maxSeq + 1 + attempt).padStart(3, "0");
   return `${prefix}${seq}`;
+}
+
+/**
+ * Insert a bill header, retrying with a fresh number if the unique constraint
+ * on bill_number collides — which happens when two tills save at the same
+ * moment. Never merges on conflict, so an existing bill can never be
+ * silently overwritten by a new one.
+ */
+async function insertBillHeader(config, headerBase) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const billNumber = await generateBillNumber(config, attempt);
+    try {
+      const rows = await callSupabaseRest(config, BILLS_TABLE, {
+        method: "POST",
+        body: { ...headerBase, bill_number: billNumber },
+        prefer: "return=representation",
+      });
+      const savedBill = Array.isArray(rows) ? rows[0] : null;
+      if (savedBill) return { savedBill, billNumber };
+      lastError = new Error("Could not save bill header.");
+    } catch (error) {
+      lastError = error;
+      if (!/duplicate|unique|conflict|23505/i.test(String(error.message || ""))) {
+        throw error;
+      }
+      // Number was taken between our read and write — try the next one.
+    }
+  }
+
+  throw lastError || new Error("Could not generate a unique bill number.");
 }
 
 function buildItemRows(billId, items) {
@@ -80,6 +122,65 @@ function calcTotals(items, gstPercent) {
   const gstAmount = round2(subtotal * gstPct / 100);
   const grandTotal = Math.ceil(round2(subtotal + gstAmount));
   return { subtotal: round2(subtotal), gstAmount, grandTotal, gstPct };
+}
+
+// ---------------------------------------------------------------------------
+// Inventory — keep medicine stock in step with what has been billed
+// ---------------------------------------------------------------------------
+
+/** Accumulate a per-medicine change. Negative = sold, positive = returned. */
+function addStockDelta(map, medicineId, deltaQty) {
+  const id = normalizeString(medicineId);
+  if (!id || !deltaQty) return;
+  map.set(id, (map.get(id) || 0) + deltaQty);
+}
+
+/**
+ * Apply accumulated stock changes. Best-effort by design: it runs after the
+ * bill is already saved, so a stock write failing can never cost you a sale.
+ * A medicine with unknown (null) stock is left alone rather than guessed at,
+ * and stock never goes below zero.
+ */
+async function applyStockDeltas(config, deltaMap) {
+  const ids = [...deltaMap.keys()].filter(Boolean);
+  if (!ids.length) return;
+
+  let rows = [];
+  try {
+    rows = await callSupabaseRest(
+      config,
+      `${config.tableName}?id=in.(${ids.map(encodeURIComponent).join(",")})&select=id,quantity`,
+      { method: "GET" }
+    );
+  } catch {
+    return; // Could not read current stock — leave it untouched.
+  }
+
+  const current = new Map();
+  if (Array.isArray(rows)) {
+    for (const row of rows) current.set(normalizeString(row.id), row.quantity);
+  }
+
+  for (const [id, delta] of deltaMap) {
+    if (!current.has(id)) continue;                    // medicine deleted since
+    const cur = current.get(id);
+    if (cur === null || cur === undefined) continue;   // stock unknown — don't invent one
+    const next = Math.max(0, Number(cur) + delta);
+    if (next === Number(cur)) continue;
+    try {
+      await callSupabaseRest(
+        config,
+        `${config.tableName}?id=eq.${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: { quantity: next, updated_at: new Date().toISOString() },
+          prefer: "return=minimal",
+        }
+      );
+    } catch {
+      // One medicine failing must not stop the rest.
+    }
+  }
 }
 
 function validateItems(items, res) {
@@ -227,7 +328,29 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Bill history list (most recent first)
+      // Bill history list (most recent first).
+      //
+      // Balance chaining and a customer's full history need every bill, not
+      // just a recent window — a truncated list silently produces wrong
+      // running balances. `?all=1` pages through the lot.
+      if (req.query?.all === "1") {
+        const all = [];
+        let offset = 0;
+        for (;;) {
+          const page = await callSupabaseRest(
+            config,
+            `${BILLS_TABLE}?select=*&order=created_at.desc&limit=${PAGE_SIZE}&offset=${offset}`,
+            { method: "GET" }
+          );
+          const batch = Array.isArray(page) ? page : [];
+          all.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          offset += PAGE_SIZE;
+        }
+        sendJson(res, 200, { bills: all });
+        return;
+      }
+
       const bills = await callSupabaseRest(
         config,
         `${BILLS_TABLE}?select=*&order=created_at.desc&limit=${HISTORY_LIMIT}`,
@@ -250,33 +373,21 @@ module.exports = async (req, res) => {
       const previousBalance = round2(toDecimalOrNull(body.previousBalance) ?? 0);
       const amountReceived = Math.max(0, round2(toDecimalOrNull(body.amountReceived) ?? 0));
 
-      const billNumber = await generateBillNumber(config);
-
-      // Insert bill header
-      const billRows = await callSupabaseRest(
-        config,
-        `${BILLS_TABLE}?on_conflict=bill_number`,
-        {
-          method: "POST",
-          body: {
-            bill_number: billNumber,
-            customer_name: normalizeString(body.customerName),
-            customer_phone: normalizeString(body.customerPhone),
-            notes: normalizeString(body.notes),
-            subtotal,
-            gst_percent: gstPct,
-            gst_amount: gstAmount,
-            grand_total: grandTotal,
-            previous_balance: previousBalance,
-            amount_received: amountReceived,
-            balance_due: round2(previousBalance + grandTotal - amountReceived),
-            created_by: authContext.user.email,
-          },
-          prefer: "resolution=merge-duplicates,return=representation",
-        }
-      );
-
-      const savedBill = Array.isArray(billRows) ? billRows[0] : null;
+      // Retries on a bill_number collision; never merges, so a live bill can
+      // never be overwritten by a new one.
+      const { savedBill, billNumber } = await insertBillHeader(config, {
+        customer_name: normalizeString(body.customerName),
+        customer_phone: normalizeString(body.customerPhone),
+        notes: normalizeString(body.notes),
+        subtotal,
+        gst_percent: gstPct,
+        gst_amount: gstAmount,
+        grand_total: grandTotal,
+        previous_balance: previousBalance,
+        amount_received: amountReceived,
+        balance_due: round2(previousBalance + grandTotal - amountReceived),
+        created_by: authContext.user.email,
+      });
       if (!savedBill) {
         sendJson(res, 500, { error: "Could not save bill header." });
         return;
@@ -302,6 +413,13 @@ module.exports = async (req, res) => {
           throw itemErr;
         }
       }
+
+      // Deduct the quantities just sold from inventory.
+      const saleDeltas = new Map();
+      for (const item of items) {
+        addStockDelta(saleDeltas, item.medicineId, -(parseFloat(item.quantity) || 0));
+      }
+      await applyStockDeltas(config, saleDeltas);
 
       sendJson(res, 200, {
         bill: savedBill,
@@ -387,7 +505,14 @@ module.exports = async (req, res) => {
         }
       );
 
-      // Replace line items: delete old, insert new
+      // Read the old items before replacing them: they are needed both to
+      // restore stock and to put the bill back if the insert fails.
+      const oldItems = await callSupabaseRest(
+        config,
+        `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=*`,
+        { method: "GET" }
+      );
+
       await callSupabaseRest(
         config,
         `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}`,
@@ -396,12 +521,41 @@ module.exports = async (req, res) => {
 
       const itemRows = buildItemRows(id, items);
       if (itemRows.length) {
-        await callSupabaseRest(config, ITEMS_TABLE, {
-          method: "POST",
-          body: itemRows,
-          prefer: "return=minimal",
-        });
+        try {
+          await callSupabaseRest(config, ITEMS_TABLE, {
+            method: "POST",
+            body: itemRows,
+            prefer: "return=minimal",
+          });
+        } catch (itemErr) {
+          // Put the original items back rather than leaving an empty bill.
+          if (Array.isArray(oldItems) && oldItems.length) {
+            try {
+              await callSupabaseRest(config, ITEMS_TABLE, {
+                method: "POST",
+                body: oldItems.map(({ id: _drop, created_at: _drop2, ...rest }) => rest),
+                prefer: "return=minimal",
+              });
+            } catch {
+              // Restore failed too — surface the original error below.
+            }
+          }
+          throw itemErr;
+        }
       }
+
+      // Net stock change: give back what the bill used to contain, take what
+      // it contains now.
+      const editDeltas = new Map();
+      if (Array.isArray(oldItems)) {
+        for (const old of oldItems) {
+          addStockDelta(editDeltas, old.medicine_id, parseFloat(old.quantity) || 0);
+        }
+      }
+      for (const item of items) {
+        addStockDelta(editDeltas, item.medicineId, -(parseFloat(item.quantity) || 0));
+      }
+      await applyStockDeltas(config, editDeltas);
 
       sendJson(res, 200, { ok: true });
       return;
@@ -417,11 +571,26 @@ module.exports = async (req, res) => {
         return;
       }
 
+      // Read the items before the cascade removes them, so stock can go back.
+      const deletedItems = await callSupabaseRest(
+        config,
+        `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=medicine_id,quantity`,
+        { method: "GET" }
+      );
+
       await callSupabaseRest(
         config,
         `${BILLS_TABLE}?id=eq.${encodeURIComponent(id)}`,
         { method: "DELETE" }
       );
+
+      const restockDeltas = new Map();
+      if (Array.isArray(deletedItems)) {
+        for (const item of deletedItems) {
+          addStockDelta(restockDeltas, item.medicine_id, parseFloat(item.quantity) || 0);
+        }
+      }
+      await applyStockDeltas(config, restockDeltas);
 
       sendJson(res, 200, { ok: true });
       return;

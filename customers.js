@@ -393,7 +393,7 @@
 
     try {
       if (cState.allBills === null) {
-        var result = await requestApi("/api/bills", { method: "GET" });
+        var result = await requestApi("/api/bills?all=1", { method: "GET" });
         cState.allBills = result.bills || [];
       }
 
@@ -451,6 +451,7 @@
             '<td class="num-col">' + fmtMoney(subtotal) + "</td>" +
             '<td class="num-col">' + (gstAmt > 0 ? fmtMoney(gstAmt) : "—") + "</td>" +
             '<td class="num-col"><strong>' + fmtMoney(grandTotal) + "</strong></td>" +
+            "<td></td>" +
           "</tr>"
         );
       } else {
@@ -462,6 +463,9 @@
             "<td>" + fmtDate(p.created_at) + "</td>" +
             '<td class="num-col" colspan="2" style="color:#64748b;font-size:0.82rem;">Amount received</td>' +
             '<td class="num-col" style="color:#16a34a;font-weight:600;">−' + fmtMoney(p.amount) + "</td>" +
+            '<td><button class="btn btn-danger btn-xs" data-del-payment="' + escHtml(p.id) +
+              '" data-amount="' + escHtml(String(p.amount)) +
+              '" title="Delete this payment" type="button">🗑️</button></td>' +
           "</tr>"
         );
       }
@@ -476,10 +480,51 @@
             '<th class="num-col">Subtotal</th>' +
             '<th class="num-col">GST</th>' +
             '<th class="num-col">Total / Paid</th>' +
+            "<th></th>" +
           "</tr></thead>" +
           "<tbody>" + rows + "</tbody>" +
         "</table>" +
       "</div>";
+
+    cEl.billsContainer.querySelectorAll("[data-del-payment]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        deletePayment(btn.dataset.delPayment, btn.dataset.amount);
+      });
+    });
+  }
+
+  /** Remove a payment entered by mistake and re-derive the balance. */
+  async function deletePayment(paymentId, amountLabel) {
+    if (!paymentId) return;
+    if (!window.confirm(
+      "Delete this payment of " + fmtMoney(amountLabel) +
+      "? The customer's balance will go back up by that amount."
+    )) return;
+
+    setPayStatus("Deleting payment…", "is-info");
+
+    try {
+      await requestApi("/api/payments?id=" + encodeURIComponent(paymentId), { method: "DELETE" });
+
+      var list = loadCustomers();
+      var c = list[cState.selectedIdx];
+
+      // Drop the cached payments for this customer so the history re-fetches.
+      if (c) delete cState.allPayments[c.name.toLowerCase().trim()];
+
+      await refreshCustomers();
+      renderCustomerList();
+
+      var fresh = c && loadCustomers().find(function (x) {
+        return x.name.toLowerCase().trim() === c.name.toLowerCase().trim();
+      });
+      if (fresh) updateBalanceDisplay(fresh.balance);
+
+      setPayStatus("Payment deleted.", "is-ok");
+      if (c) await loadAndRenderBills(c.name);
+    } catch (err) {
+      setPayStatus("Could not delete payment: " + (err.message || "unknown error"), "is-warn");
+    }
   }
 
   // -------------------------------------------------------------------------

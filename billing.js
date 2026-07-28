@@ -2103,7 +2103,7 @@
   // -------------------------------------------------------------------------
   async function loadBillHistory() {
     try {
-      var result = await requestApi("/api/bills", { method: "GET" });
+      var result = await requestApi("/api/bills?all=1", { method: "GET" });
       bState.billHistory = result.bills || [];
       noteBillLedgerRows(bState.billHistory);
       renderBillHistory();
