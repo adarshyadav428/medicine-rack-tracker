@@ -64,13 +64,17 @@
 
     customerCache.forEach(function (c) {
       if (!c || !c.name || !String(c.name).trim()) return;
-      if (c._synced) return;
-      c._synced = true;
+      if (c._clean && !c._dirty) return;
+      c._dirty = false;
+      c._clean = true;
 
-      requestApi("/api/customers", {
-        method: "POST",
-        body: { name: c.name, phone: c.phone || "", openingBalance: c.openingBalance },
-      }).catch(function () { c._synced = false; });
+      var body = { name: c.name, phone: c.phone || "" };
+      if (c.openingBalance !== undefined && c.openingBalance !== null) {
+        body.openingBalance = c.openingBalance;
+      }
+
+      requestApi("/api/customers", { method: "POST", body: body })
+        .catch(function () { c._clean = false; });
     });
   }
 
@@ -88,7 +92,7 @@
         totalBilled: parseFloat(c.totalBilled) || 0,
         totalReceived: parseFloat(c.totalReceived) || 0,
         totalPayments: parseFloat(c.totalPayments) || 0,
-        _synced: true,
+        _clean: true,
       };
     });
     return customerCache;
@@ -280,9 +284,20 @@
     });
     if (dup >= 0) { setEditStatus("Another customer with this name already exists.", "is-warn"); return; }
 
-    list[cState.selectedIdx].name    = name;
-    list[cState.selectedIdx].phone   = phone;
-    list[cState.selectedIdx].balance = bal;
+    var current = list[cState.selectedIdx];
+
+    // The balance shown is derived: opening balance + everything billed, less
+    // everything received. To make it read as the figure just typed, adjust
+    // the opening balance by the difference — overwriting it outright would
+    // silently discard every bill and payment on the account.
+    var activity = round2((parseFloat(current.balance) || 0) -
+                          (parseFloat(current.openingBalance) || 0));
+
+    current.name           = name;
+    current.phone          = phone;
+    current.openingBalance = round2(bal - activity);
+    current.balance        = bal;
+    current._dirty         = true;
     saveCustomers(list);
 
     if (cEl.profileName)  cEl.profileName.textContent  = name;

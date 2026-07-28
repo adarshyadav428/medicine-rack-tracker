@@ -143,26 +143,33 @@
     return savedCustomerCache;
   }
 
-  /** Cache locally, then push name/phone/opening balance to the server. */
+  /**
+   * Cache locally, then push name/phone/opening balance to the server.
+   * Anything the caller touched is marked `_dirty`; rows loaded from the
+   * server are clean until edited, so a routine save is not a write storm but
+   * a real edit is never dropped.
+   */
   function persistSavedCustomers(list) {
     savedCustomerCache = Array.isArray(list) ? list : [];
 
     savedCustomerCache.forEach(function (customer) {
       if (!customer || !normalizeString(customer.name)) return;
-      if (customer._synced) return;
-      customer._synced = true;
+      if (customer._clean && !customer._dirty) return;
+      customer._dirty = false;
+      customer._clean = true;
 
-      requestApi("/api/customers", {
-        method: "POST",
-        body: {
-          name: customer.name,
-          phone: customer.phone || "",
-          // Only send an opening balance when one was explicitly set, so a
-          // routine save can never wipe a customer's opening amount.
-          openingBalance: customer.openingBalance,
-        },
-      }).catch(function () {
-        customer._synced = false; // let a later save retry
+      var body = {
+        name: customer.name,
+        phone: customer.phone || "",
+      };
+      // Only send an opening balance when one was actually set, so a routine
+      // save can never wipe a customer's opening amount.
+      if (customer.openingBalance !== undefined && customer.openingBalance !== null) {
+        body.openingBalance = customer.openingBalance;
+      }
+
+      requestApi("/api/customers", { method: "POST", body: body }).catch(function () {
+        customer._clean = false; // let a later save retry
       });
     });
   }
@@ -178,12 +185,33 @@
           phone: c.phone || "",
           balance: parseFloat(c.balance) || 0,
           openingBalance: parseFloat(c.openingBalance) || 0,
-          _synced: true,
+          _clean: true,
         };
       });
+
+      // The server returns the list sorted by name, so any index held from
+      // before this refresh now points at the wrong person. Re-resolve it by
+      // name. The balance is deliberately left alone: it is this bill's
+      // previous balance and must not change under an open bill.
+      if (bState.currentCustomerIdx !== null && bEl.customerName) {
+        var openName = normalizeString(bEl.customerName.value).toLowerCase();
+        bState.currentCustomerIdx = openName
+          ? savedCustomerCache.findIndex(function (c) {
+              return c.name.toLowerCase() === openName;
+            })
+          : -1;
+        if (bState.currentCustomerIdx < 0) bState.currentCustomerIdx = null;
+      }
+
       renderCustomerSelect();
-    } catch (_) {
-      // Offline or migration not run — keep whatever is cached.
+    } catch (error) {
+      // Carry-forward silently reading zero is worse than a visible failure —
+      // it looks like the customer simply owes nothing.
+      setSaveCustomerStatus(
+        "⚠ Could not load customer balances: " + (error.message || "unknown error") +
+          ". Previous balances will show as 0 until this is fixed.",
+        "is-warn"
+      );
     }
     return savedCustomerCache;
   }
@@ -290,12 +318,24 @@
     if (idx >= 0) {
       list[idx].name  = name;
       list[idx].phone = phone;
-      if (balRaw !== "") list[idx].balance = balance;
+      list[idx]._dirty = true;
+      // The Opening Balance box is the anchor the running balance chains from,
+      // so it has to be sent as openingBalance, not just cached as `balance`.
+      if (balRaw !== "") {
+        list[idx].balance = balance;
+        list[idx].openingBalance = balance;
+      }
       bState.currentCustomerIdx     = idx;
       bState.currentCustomerBalance = list[idx].balance || 0;
       setSaveCustomerStatus("Customer updated.", "is-ok");
     } else {
-      list.push({ name: name, phone: phone, balance: balance });
+      list.push({
+        name: name,
+        phone: phone,
+        balance: balance,
+        openingBalance: balance,
+        _dirty: true,
+      });
       bState.currentCustomerIdx     = list.length - 1;
       bState.currentCustomerBalance = balance;
       setSaveCustomerStatus("Customer saved.", "is-ok");
