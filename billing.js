@@ -13,6 +13,10 @@
     return;
   }
 
+  // How many bills the history table draws. The full list is still held in
+  // state, because balance chaining has to see every bill.
+  var HISTORY_RENDER_LIMIT = 100;
+
   // -------------------------------------------------------------------------
   // Billing state
   // -------------------------------------------------------------------------
@@ -342,18 +346,39 @@
     }
     persistSavedCustomers(list);
 
-    // Backfill missing am.billPrev snapshots for this customer's historical bills
-    // so that viewing old bills from history always shows the correct Previous Balance
-    // without relying on live inference every time.
+    // Backfill missing previous-balance snapshots for this customer's historical
+    // bills so that viewing an old bill from history always shows the correct
+    // Previous Balance without relying on live inference every time.
     var finalBalance = (idx >= 0 ? list[idx].balance : list[list.length - 1].balance) || 0;
-    if (finalBalance > 0) reconstructBillSnapshots(name, finalBalance);
+    if (finalBalance > 0) {
+      reconstructBillSnapshots(name, finalBalance);
+      flushLedgerWrites();
+    }
 
     renderCustomerSelect();
     recalcPayment();
   }
 
+  // Snapshots rebuilt below are queued here and written to the server, so the
+  // repair survives a reload instead of living only in this tab.
+  var pendingLedgerWrites = [];
+
+  function flushLedgerWrites() {
+    if (!pendingLedgerWrites.length) return Promise.resolve();
+    var batch = pendingLedgerWrites;
+    pendingLedgerWrites = [];
+    return requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: batch } })
+      .catch(function (err) {
+        setSaveCustomerStatus(
+          "Rebuilt on screen, but saving to the server failed: " +
+            (err.message || "unknown error"),
+          "is-warn"
+        );
+      });
+  }
+
   // Walk backwards through bill history for a customer and fill in any missing
-  // missing previous-balance snapshots, using currentBalance as the anchor.
+  // previous-balance snapshots, using currentBalance as the anchor.
   // Existing snapshots are never overwritten.
   function reconstructBillSnapshots(custName, currentBalance) {
     var cname = custName.toLowerCase();
@@ -366,10 +391,16 @@
     var runningBal = balance;
     for (var i = 0; i < customerBills.length; i++) {
       var b = customerBills[i];
-      var billRecv = billRecv(b.id);
-      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
+      var recvForBill = billRecv(b.id);
+      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + recvForBill);
       if (billPrev(b.id) === null) {
-        setBillLedger(b.id, Math.max(0, prevBal), billRecv(b.id));
+        setBillLedger(b.id, Math.max(0, prevBal), recvForBill);
+        pendingLedgerWrites.push({
+          id: b.id,
+          previousBalance: Math.max(0, prevBal),
+          amountReceived: recvForBill,
+          grandTotal: Math.ceil(b.grand_total),
+        });
       }
       runningBal = prevBal;
     }
@@ -2226,8 +2257,8 @@
     var runningBal = currentBalance;
     for (var i = 0; i < customerBills.length; i++) {
       var b = customerBills[i];
-      var billRecv = billRecv(b.id);
-      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
+      var recvForBill = billRecv(b.id);
+      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + recvForBill);
       if (b.id === bill.id) return Math.max(0, prevBal);
       runningBal = prevBal;
     }
@@ -2303,17 +2334,21 @@
       return;
     }
 
-    var rowsHtml = bState.billHistory.map(function (bill) {
+    // The full list is kept in state for balance chaining, but rendering every
+    // bill ever would build an unusable table once the shop has a few thousand.
+    var visible = bState.billHistory.slice(0, HISTORY_RENDER_LIMIT);
+
+    var rowsHtml = visible.map(function (bill) {
       return (
         "<tr>" +
-          '<td><span class="bill-history-number">' + bill.bill_number + "</span></td>" +
+          '<td><span class="bill-history-number">' + escHtml(bill.bill_number) + "</span></td>" +
           "<td>" + fmtDate(bill.created_at) + "</td>" +
           "<td>" + (bill.customer_name
-            ? bill.customer_name
+            ? escHtml(bill.customer_name)
             : '<span style="color:var(--muted)">Walk-in</span>') +
           "</td>" +
           '<td style="font-family:var(--font-mono);font-size:0.78rem;color:var(--muted);">' +
-            bill.created_by +
+            escHtml(bill.created_by) +
           "</td>" +
           '<td class="num-col"><span class="bill-history-total">' + fmtMoney(Math.ceil(bill.grand_total)) + "</span></td>" +
           "<td>" +

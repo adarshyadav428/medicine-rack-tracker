@@ -180,13 +180,18 @@ module.exports = async (req, res) => {
           return;
         }
 
-        // Step 1: get bill IDs for this customer
+        // Step 1: get bill IDs for this customer. Matched case-insensitively,
+        // so "Dr.Sanjay" and "dr.sanjay" share one price history rather than
+        // silently starting again from MRP.
         const billRows = await callSupabaseRest(
           config,
-          `${BILLS_TABLE}?customer_name=eq.${encodeURIComponent(customer)}&select=id`,
+          `${BILLS_TABLE}?customer_name=ilike.${encodeURIComponent(customer)}&select=id,customer_name`,
           { method: "GET" }
         );
-        const billIds = Array.isArray(billRows) ? billRows.map(b => b.id) : [];
+        const wanted = customer.trim().toLowerCase();
+        const billIds = (Array.isArray(billRows) ? billRows : [])
+          .filter((b) => normalizeString(b.customer_name).toLowerCase() === wanted)
+          .map((b) => b.id);
 
         if (!billIds.length) {
           sendJson(res, 200, { priceMap: {} });

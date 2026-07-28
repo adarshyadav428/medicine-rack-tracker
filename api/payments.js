@@ -28,13 +28,23 @@ module.exports = async (req, res) => {
         return;
       }
 
+      // Balances match customers case-insensitively, so the history must too —
+      // otherwise a name typed with different case shows a balance that counts
+      // payments the customer's history does not list.
+      // ilike casts the net wide (its wildcards can only over-match); the exact
+      // normalized comparison below narrows it back.
       const rows = await callSupabaseRest(
         config,
-        `${TABLE}?customer_name=eq.${encodeURIComponent(customer)}&order=created_at.desc&limit=500`,
+        `${TABLE}?customer_name=ilike.${encodeURIComponent(customer)}&order=created_at.desc&limit=500`,
         { method: "GET" }
       );
 
-      sendJson(res, 200, { payments: Array.isArray(rows) ? rows : [] });
+      const wanted = customer.trim().toLowerCase();
+      const payments = (Array.isArray(rows) ? rows : []).filter(
+        (row) => normalizeString(row.customer_name).toLowerCase() === wanted
+      );
+
+      sendJson(res, 200, { payments });
       return;
     }
 
