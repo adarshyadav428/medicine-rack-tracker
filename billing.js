@@ -1577,9 +1577,13 @@
     var billNo    = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
     var prevBal   = (overrides && overrides.prevBalance  !== undefined) ? overrides.prevBalance  : (bState.currentCustomerBalance || 0);
     var received  = (overrides && overrides.received     !== undefined) ? overrides.received     : (parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0);
-    var now      = new Date();
-    var dateStr  = now.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-    var timeStr  = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    // A reprinted or re-shared bill must carry the date it was actually
+    // issued. Only a live draft, which has no stored date yet, falls back to
+    // the clock — otherwise an old bill goes to the customer dated today.
+    var issued = (overrides && overrides.createdAt) ? new Date(overrides.createdAt) : new Date();
+    if (isNaN(issued.getTime())) issued = new Date();
+    var dateStr  = issued.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    var timeStr  = issued.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
     var subtotal   = round2(items.reduce(function (s, it) {
       return s + round2((it.sell_price !== undefined ? it.sell_price : it.sellPrice) * it.quantity);
@@ -1970,10 +1974,13 @@
         date: "", bill_number: "", customer_name: "", customer_phone: "",
         notes: "", gst_percent: "",
         medicine_name: name, location: "",
-        quantity:       assigned.qty      ? String(assigned.qty)      : "1",
-        mrp:            assigned.mrp      ? String(assigned.mrp)      : "",
-        purchase_price: assigned.purchase ? String(assigned.purchase) : "",
-        sell_price:     assigned.sell     ? String(assigned.sell)     : "",
+        // `x ? ... : fallback` rewrote a genuinely parsed 0 — a zero quantity
+        // became 1, and a free line's 0 price became blank. Test for "unset"
+        // rather than for falsiness.
+        quantity:       assigned.qty      === "" ? "1" : String(assigned.qty),
+        mrp:            assigned.mrp      === "" ? ""  : String(assigned.mrp),
+        purchase_price: assigned.purchase === "" ? ""  : String(assigned.purchase),
+        sell_price:     assigned.sell     === "" ? ""  : String(assigned.sell),
       });
     });
     return rows;
@@ -2015,6 +2022,13 @@
     }
   }
 
+  function setImportInfo(message) {
+    var preview = document.getElementById("import-preview");
+    var info    = document.getElementById("import-preview-info");
+    if (preview) preview.classList.remove("hidden");
+    if (info) info.textContent = message;
+  }
+
   function handleImportFile(file) {
     if (!file) return;
     var pdfNote = document.getElementById("import-pdf-note");
@@ -2025,8 +2039,16 @@
     }
     var reader = new FileReader();
     reader.onload = function (e) {
-      importParsedRows = parseCSV(e.target.result);
-      renderImportPreview(importParsedRows);
+      try {
+        importParsedRows = parseCSV(e.target.result);
+        renderImportPreview(importParsedRows);
+      } catch (err) {
+        setImportInfo("Could not read that file: " + (err.message || "unknown error"));
+      }
+    };
+    // Without this, an unreadable file simply did nothing and looked ignored.
+    reader.onerror = function () {
+      setImportInfo("Could not read that file. Check it is not open in another program.");
     };
     reader.readAsText(file);
   }
@@ -2293,6 +2315,7 @@
       }
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
+        createdAt:     bill.created_at,
         customerName:  bill.customer_name,
         customerPhone: bill.customer_phone,
         notes:         bill.notes,
@@ -2323,6 +2346,7 @@
       }
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
+        createdAt:     bill.created_at,
         customerName:  bill.customer_name,
         customerPhone: bill.customer_phone,
         notes:         bill.notes,
@@ -2521,6 +2545,7 @@
       }
       bEl.printArea.innerHTML = buildReceiptHtml({
         billNumber:    bill.bill_number,
+        createdAt:     bill.created_at,
         customerName:  bill.customer_name,
         customerPhone: bill.customer_phone,
         notes:         bill.notes,
