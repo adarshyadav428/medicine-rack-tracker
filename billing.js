@@ -1407,44 +1407,16 @@
         await requestApi("/api/bills", { method: "PUT", body: payload });
         setSaveStatus("✅ Bill " + bState.currentBillNumber + " updated successfully.", "is-ok");
 
-        // Adjust customer balance for changes in bill total, received, or opening balance
-        var _editCustName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
-        if (_editCustName && bState.editOriginalGrandTotal !== null) {
-          var _newRecv    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
-          var _newPrevBal = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
-          var _sub2  = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
-          var _gst2  = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-          var _newGT = Math.ceil(round2(round2(_sub2) + round2(round2(_sub2) * _gst2 / 100)));
-
-          // Delta from bill amount / received changes
-          var _billAdj = round2((_newGT - _newRecv) - (bState.editOriginalGrandTotal - bState.editOriginalReceived));
-          // Delta from opening balance correction (e.g. user fixing a wrong prev balance)
-          var _prevAdj = round2(_newPrevBal - (bState.editOriginalPrevBalance || 0));
-          var _totalAdj = round2(_billAdj + _prevAdj);
-
-          if (_totalAdj !== 0) {
-            var _cl  = loadSavedCustomers();
-            var _cidx = bState.currentCustomerIdx;
-            if (_cidx === null) {
-              _cidx = _cl.findIndex(function (c) { return c.name.toLowerCase() === _editCustName.toLowerCase(); });
-            }
-            if (_cidx >= 0) {
-              _cl[_cidx].balance = round2((parseFloat(_cl[_cidx].balance) || 0) + _totalAdj);
-              persistSavedCustomers(_cl);
-              bState.currentCustomerBalance = _cl[_cidx].balance;
-              renderCustomerSelect();
-              recalcPayment();
-            }
-          }
-
-          // Persist snapshots for this bill (opening balance stays as what user typed)
-          var _bid = bState.currentBillId;
-          setBillLedger(_bid, _newPrevBal, _newRecv);
-          // Update originals so a second re-save doesn't double-adjust
-          bState.editOriginalGrandTotal  = _newGT;
-          bState.editOriginalReceived    = _newRecv;
-          bState.editOriginalPrevBalance = _newPrevBal;
-        }
+        // The customer's balance is derived on the server from every bill and
+        // payment, so an edit needs no local adjustment — recomputing it here
+        // added the edited amount a second time. Only the per-bill snapshot is
+        // recorded, and the form keeps showing this bill's own previous
+        // balance, which an edit never changes.
+        var _newRecv    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+        var _newPrevBal = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
+        setBillLedger(bState.currentBillId, _newPrevBal, _newRecv);
+        bState.editOriginalPrevBalance = _newPrevBal;
+        bState.editOriginalReceived    = _newRecv;
       } else {
         // Create new bill
         var result = await requestApi("/api/bills", { method: "POST", body: payload });
@@ -1494,8 +1466,6 @@
             setBillLedger(_sid, prevBal, received);
           }
 
-          var newBalance = round2(grandTot + prevBal - received);
-
           if (idx < 0) {
             // New customer — create entry.
             //
@@ -1507,26 +1477,23 @@
             custList.push({
               name: custName,
               phone: custPhone || "",
-              balance: newBalance,
+              balance: round2(prevBal + grandTot - received),
               openingBalance: prevBal,
               _dirty: true,
             });
             idx = custList.length - 1;
-          } else {
-            custList[idx].balance = newBalance;
           }
 
           persistSavedCustomers(custList);
           bState.currentCustomerIdx     = idx;
-          bState.currentCustomerBalance = newBalance;
           bState.balanceCarriedForward  = true;
-          // Clear received so it doesn't appear double-applied if user re-saves
-          if (bEl.receivedAmount) bEl.receivedAmount.value = "0";
-          if (bEl.openingBalance) bEl.openingBalance.value = newBalance > 0 ? newBalance : "";
-          // Prime edit originals so subsequent re-saves compute correct deltas
+          // The bill on screen has not gone anywhere, so its Previous Balance
+          // stays what it was before the bill. Advancing it here (and blanking
+          // Received) made the bill's own amount show up twice in Total Due,
+          // and a re-save then wrote that doubled figure onto the bill.
           bState.editOriginalGrandTotal  = grandTot;
-          bState.editOriginalReceived    = 0;
-          bState.editOriginalPrevBalance = newBalance;
+          bState.editOriginalReceived    = received;
+          bState.editOriginalPrevBalance = prevBal;
           renderCustomerSelect();
           recalcPayment();
         }

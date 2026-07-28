@@ -248,6 +248,33 @@ const item = (qty, price) => ([{ medicineName: "Paracetamol", sellPrice: price, 
   eq("opening balance stored", nc.openingBalance, 800);
   eq("balance = 800 + 200 - 100", nc.balance, 900);
 
+  console.log("\n--- re-saving a bill must not add it a second time ---");
+  // The billing page used to advance the customer's balance after each save
+  // and feed that back into the still-open bill, so the bill's own amount was
+  // counted twice — on screen, and again on the next save.
+  await custs("POST", { body: { name: "Vijay", phone: "222", openingBalance: 0 } });
+  r = await bills("POST", { body: { customerName: "Vijay", previousBalance: 0,
+    amountReceived: 0, items: item(10, 10) } });
+  const vBill = r.json.bill.id;
+  r = await custs("GET");
+  eq("after the first save", r.json.customers.find((c) => c.name === "Vijay").balance, 100);
+
+  // Re-save with no changes: previousBalance is still this bill's own prev (0).
+  await bills("PUT", { body: { id: vBill, customerName: "Vijay",
+    previousBalance: 0, amountReceived: 0, items: item(10, 10) } });
+  r = await custs("GET");
+  eq("re-save leaves it at 100", r.json.customers.find((c) => c.name === "Vijay").balance, 100);
+  eq("bill's previous_balance not inflated",
+     db.bills.find((b) => b.id === vBill).previous_balance, 0);
+
+  // Adding a medicine on an edit adds only that medicine.
+  await bills("PUT", { body: { id: vBill, customerName: "Vijay",
+    previousBalance: 0, amountReceived: 0,
+    items: [{ medicineName: "Paracetamol", sellPrice: 10, quantity: 10 },
+            { medicineName: "Crocin", sellPrice: 10, quantity: 5 }] } });
+  r = await custs("GET");
+  eq("edit adds 50, not 150", r.json.customers.find((c) => c.name === "Vijay").balance, 150);
+
   console.log("\n--- validation ---");
   eq("rejects nameless customer", (await custs("POST", { body: { name: "" } })).status, 400);
   eq("rejects empty import", (await custs("PUT", { body: { customers: [] } })).status, 400);
