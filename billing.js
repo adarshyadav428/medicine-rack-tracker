@@ -129,16 +129,105 @@
   }
 
   // -------------------------------------------------------------------------
-  // Saved customers (localStorage)
+  // Saved customers (database-backed)
+  //
+  // The list lives in the `customers` table and each balance is DERIVED by the
+  // server from that customer's bills and payments. The array below is only a
+  // read cache so the synchronous callers throughout this file keep working;
+  // `balance` written into it locally is an optimistic value that the next
+  // refresh replaces with the server's figure.
   // -------------------------------------------------------------------------
-  var CUSTOMERS_KEY = "medicineRackTracker.customers.v1";
+  var savedCustomerCache = [];
 
   function loadSavedCustomers() {
-    try { return JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]"); } catch (_) { return []; }
+    return savedCustomerCache;
   }
 
+  /** Cache locally, then push name/phone/opening balance to the server. */
   function persistSavedCustomers(list) {
-    try { localStorage.setItem(CUSTOMERS_KEY, JSON.stringify(list)); } catch (_) {}
+    savedCustomerCache = Array.isArray(list) ? list : [];
+
+    savedCustomerCache.forEach(function (customer) {
+      if (!customer || !normalizeString(customer.name)) return;
+      if (customer._synced) return;
+      customer._synced = true;
+
+      requestApi("/api/customers", {
+        method: "POST",
+        body: {
+          name: customer.name,
+          phone: customer.phone || "",
+          // Only send an opening balance when one was explicitly set, so a
+          // routine save can never wipe a customer's opening amount.
+          openingBalance: customer.openingBalance,
+        },
+      }).catch(function () {
+        customer._synced = false; // let a later save retry
+      });
+    });
+  }
+
+  /** Pull the customer list and their server-derived balances. */
+  async function refreshSavedCustomers() {
+    try {
+      var result = await requestApi("/api/customers", { method: "GET" });
+      savedCustomerCache = (result.customers || []).map(function (c) {
+        return {
+          id: c.id,
+          name: c.name,
+          phone: c.phone || "",
+          balance: parseFloat(c.balance) || 0,
+          openingBalance: parseFloat(c.openingBalance) || 0,
+          _synced: true,
+        };
+      });
+      renderCustomerSelect();
+    } catch (_) {
+      // Offline or migration not run — keep whatever is cached.
+    }
+    return savedCustomerCache;
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-bill ledger snapshots (previous balance / amount received)
+  //
+  // Previously "am.billPrev.<id>" and "am.billRecv.<id>" in localStorage; now
+  // columns on the bills table. This map mirrors them for synchronous reads
+  // and is filled from whatever bill rows the page has already loaded.
+  // -------------------------------------------------------------------------
+  var billLedger = {};
+
+  function noteBillLedger(bill) {
+    if (!bill || !bill.id) return;
+    if (bill.previous_balance === undefined && bill.amount_received === undefined) return;
+    billLedger[bill.id] = {
+      prev: parseFloat(bill.previous_balance) || 0,
+      recv: parseFloat(bill.amount_received) || 0,
+    };
+  }
+
+  function noteBillLedgerRows(bills) {
+    (bills || []).forEach(noteBillLedger);
+  }
+
+  /** Previous-balance snapshot, or null when this bill has none recorded. */
+  function billPrev(billId) {
+    var entry = billLedger[billId];
+    return entry ? entry.prev : null;
+  }
+
+  function billRecv(billId) {
+    var entry = billLedger[billId];
+    return entry ? entry.recv : 0;
+  }
+
+  /** Local mirror only — the durable write rides along with the bill save. */
+  function setBillLedger(billId, prev, recv) {
+    if (!billId) return;
+    billLedger[billId] = {
+      prev: parseFloat(prev) || 0,
+      recv: parseFloat(recv) || 0,
+    };
   }
 
   function renderCustomerSelect() {
@@ -224,7 +313,7 @@
   }
 
   // Walk backwards through bill history for a customer and fill in any missing
-  // am.billPrev.<id> localStorage snapshots, using currentBalance as the anchor.
+  // missing previous-balance snapshots, using currentBalance as the anchor.
   // Existing snapshots are never overwritten.
   function reconstructBillSnapshots(custName, currentBalance) {
     var cname = custName.toLowerCase();
@@ -237,10 +326,10 @@
     var runningBal = balance;
     for (var i = 0; i < customerBills.length; i++) {
       var b = customerBills[i];
-      var billRecv = parseFloat(localStorage.getItem("am.billRecv." + b.id) || "0") || 0;
+      var billRecv = billRecv(b.id);
       var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
-      if (localStorage.getItem("am.billPrev." + b.id) === null) {
-        try { localStorage.setItem("am.billPrev." + b.id, String(Math.max(0, prevBal))); } catch (_e) {}
+      if (billPrev(b.id) === null) {
+        setBillLedger(b.id, Math.max(0, prevBal), billRecv(b.id));
       }
       runningBal = prevBal;
     }
@@ -314,19 +403,37 @@
     // Anchor: whatever is stored for the FIRST (oldest) bill — user should have
     // already corrected this if it was wrong (e.g. via Edit bill + change Opening Balance).
     var firstBill = customerBills[0];
-    var startingBalance = parseFloat(localStorage.getItem("am.billPrev." + firstBill.id) || "0") || 0;
+    var startingBalance = (billPrev(firstBill.id) || 0);
 
     // Walk forward: set each bill's snapshot, then advance by (grandTotal - received)
     var runningBalance = startingBalance;
+    var ledgerUpdates = [];
     for (var i = 0; i < customerBills.length; i++) {
       var bill = customerBills[i];
       var grandTotal = Math.ceil(bill.grand_total);
-      var received   = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
+      var received   = billRecv(bill.id);
 
-      try { localStorage.setItem("am.billPrev." + bill.id, String(runningBalance)); } catch (_e) {}
+      setBillLedger(bill.id, runningBalance, received);
+      ledgerUpdates.push({
+        id: bill.id,
+        previousBalance: runningBalance,
+        amountReceived: received,
+        grandTotal: grandTotal,
+      });
 
       runningBalance = round2(runningBalance + grandTotal - received);
     }
+
+    // Write the re-chained snapshots back so every device sees the repair.
+    requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: ledgerUpdates } })
+      .then(function () { refreshSavedCustomers(); })
+      .catch(function (err) {
+        setSaveCustomerStatus(
+          "Re-chained on screen, but saving to the server failed: " +
+            (err.message || "unknown error"),
+          "is-warn"
+        );
+      });
 
     // Persist the corrected customer balance
     var custList = loadSavedCustomers();
@@ -346,7 +453,7 @@
     // — in edit mode: show the corrected snapshot for the bill being edited
     // — in new-bill mode: show the customer's running total (= prev balance for next bill)
     if (bState.currentBillId) {
-      var thisBillPrev = parseFloat(localStorage.getItem("am.billPrev." + bState.currentBillId) || "0") || 0;
+      var thisBillPrev = (billPrev(bState.currentBillId) || 0);
       bState.editOriginalPrevBalance = thisBillPrev;
       bState.currentCustomerBalance  = thisBillPrev;
       if (bEl.openingBalance) bEl.openingBalance.value = thisBillPrev > 0 ? String(thisBillPrev) : "";
@@ -1193,6 +1300,9 @@
       customerPhone: normalizeString(bEl.customerPhone ? bEl.customerPhone.value : ""),
       notes:         normalizeString(bEl.notes         ? bEl.notes.value         : ""),
       gstPercent:    gstPct,
+      // Persisted on the bill so balances survive a different device/browser.
+      previousBalance: bState.currentCustomerBalance || 0,
+      amountReceived:  parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0,
       items: bState.lineItems.map(function (item) {
         return {
           medicineId:    item.medicineId,
@@ -1258,8 +1368,7 @@
 
           // Persist snapshots for this bill (opening balance stays as what user typed)
           var _bid = bState.currentBillId;
-          try { localStorage.setItem("am.billPrev." + _bid, String(_newPrevBal)); } catch (_e) {}
-          try { localStorage.setItem("am.billRecv." + _bid, String(_newRecv)); } catch (_e) {}
+          setBillLedger(_bid, _newPrevBal, _newRecv);
           // Update originals so a second re-save doesn't double-adjust
           bState.editOriginalGrandTotal  = _newGT;
           bState.editOriginalReceived    = _newRecv;
@@ -1299,7 +1408,7 @@
           }
 
           // Existing customer → use the stored balance (authoritative running ledger).
-          // New customer (not yet in localStorage) → fall back to the Opening Balance
+          // New customer (not yet saved) → fall back to the Opening Balance
           // field, which is the ONLY place the user's manually-entered opening amount lives.
           // This was the root bug: idx < 0 was always returning 0, silently discarding
           // whatever the user typed in the Opening Balance input.
@@ -1311,8 +1420,7 @@
           // the exact receipt instead of using stale current-form state.
           var _sid = bState.currentBillId;
           if (_sid) {
-            try { localStorage.setItem("am.billPrev." + _sid, String(prevBal)); } catch (_e) {}
-            try { localStorage.setItem("am.billRecv." + _sid, String(received)); } catch (_e) {}
+            setBillLedger(_sid, prevBal, received);
           }
 
           var newBalance = round2(grandTot + prevBal - received);
@@ -1342,6 +1450,7 @@
       }
 
       await loadBillHistory();
+      await refreshSavedCustomers();
 
     } catch (error) {
       setSaveStatus("Save failed: " + (error.message || "Unknown error"), "is-error");
@@ -1956,6 +2065,7 @@
     try {
       var result = await requestApi("/api/bills", { method: "GET" });
       bState.billHistory = result.bills || [];
+      noteBillLedgerRows(bState.billHistory);
       renderBillHistory();
     } catch (error) {
       if (bEl.historyContainer) {
@@ -2060,7 +2170,7 @@
   // Walk backwards through bill history for a customer to infer what prevBal was
   // at the time a specific bill was created. Uses the customer's current stored
   // balance as the starting point and subtracts grand_totals going backwards.
-  // Only used for old bills that predate the per-bill localStorage snapshot.
+  // Only used for old bills that predate the per-bill ledger snapshot.
   function inferPrevBalanceFromHistory(bill) {
     if (!bill || !bill.customer_name) return 0;
     var cname = bill.customer_name.toLowerCase();
@@ -2076,7 +2186,7 @@
     var runningBal = currentBalance;
     for (var i = 0; i < customerBills.length; i++) {
       var b = customerBills[i];
-      var billRecv = parseFloat(localStorage.getItem("am.billRecv." + b.id) || "0") || 0;
+      var billRecv = billRecv(b.id);
       var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + billRecv);
       if (b.id === bill.id) return Math.max(0, prevBal);
       runningBal = prevBal;
@@ -2088,11 +2198,12 @@
     try {
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
+      noteBillLedger(bill);
       var items  = result.items || [];
       var prevBal, received;
-      if (localStorage.getItem("am.billPrev." + billId) !== null) {
-        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
-        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      if (billPrev(billId) !== null) {
+        prevBal  = (billPrev(billId) || 0);
+        received = billRecv(billId);
       } else {
         prevBal  = inferPrevBalanceFromHistory(bill);
         received = 0;
@@ -2117,11 +2228,12 @@
     try {
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
+      noteBillLedger(bill);
       var items  = result.items || [];
       var prevBal, received;
-      if (localStorage.getItem("am.billPrev." + billId) !== null) {
-        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
-        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      if (billPrev(billId) !== null) {
+        prevBal  = (billPrev(billId) || 0);
+        received = billRecv(billId);
       } else {
         prevBal  = inferPrevBalanceFromHistory(bill);
         received = 0;
@@ -2236,13 +2348,14 @@
       setBillingStatus("Loading bill for editing…", "is-info");
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill  = result.bill;
+      noteBillLedger(bill);
       var items = result.items || [];
 
       bState.currentBillId     = bill.id;
       bState.currentBillNumber = bill.bill_number;
       bState.balanceCarriedForward  = true; // prevent new-bill balance logic on re-save
       bState.editOriginalGrandTotal = Math.ceil(bill.grand_total);
-      bState.editOriginalReceived   = parseFloat(localStorage.getItem("am.billRecv." + bill.id) || "0") || 0;
+      bState.editOriginalReceived   = billRecv(bill.id);
 
       bState.lineItems = items.map(function (it) {
         return {
@@ -2268,7 +2381,7 @@
       // Restore the previous-balance snapshot so the form & receipt show the
       // correct "Previous Balance" for this specific bill. The user can correct
       // it in the Opening Balance field and re-save to fix historical receipts.
-      var _storedPrev = parseFloat(localStorage.getItem("am.billPrev." + bill.id) || "0") || 0;
+      var _storedPrev = (billPrev(bill.id) || 0);
       bState.currentCustomerBalance  = _storedPrev;
       bState.editOriginalPrevBalance = _storedPrev;
       if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
@@ -2307,13 +2420,14 @@
     try {
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill  = result.bill;
+      noteBillLedger(bill);
       var items = result.items || [];
 
       if (!bEl.printArea) return;
       var prevBal, received;
-      if (localStorage.getItem("am.billPrev." + billId) !== null) {
-        prevBal  = parseFloat(localStorage.getItem("am.billPrev." + billId)) || 0;
-        received = parseFloat(localStorage.getItem("am.billRecv." + billId) || "0") || 0;
+      if (billPrev(billId) !== null) {
+        prevBal  = (billPrev(billId) || 0);
+        received = billRecv(billId);
       } else {
         prevBal  = inferPrevBalanceFromHistory(bill);
         received = 0;
@@ -2466,6 +2580,7 @@
     renderLineItems();
     recalcTotals();
     loadBillHistory();
+    refreshSavedCustomers();
   }
 
   // -------------------------------------------------------------------------
