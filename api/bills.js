@@ -124,65 +124,6 @@ function calcTotals(items, gstPercent) {
   return { subtotal: round2(subtotal), gstAmount, grandTotal, gstPct };
 }
 
-// ---------------------------------------------------------------------------
-// Inventory — keep medicine stock in step with what has been billed
-// ---------------------------------------------------------------------------
-
-/** Accumulate a per-medicine change. Negative = sold, positive = returned. */
-function addStockDelta(map, medicineId, deltaQty) {
-  const id = normalizeString(medicineId);
-  if (!id || !deltaQty) return;
-  map.set(id, (map.get(id) || 0) + deltaQty);
-}
-
-/**
- * Apply accumulated stock changes. Best-effort by design: it runs after the
- * bill is already saved, so a stock write failing can never cost you a sale.
- * A medicine with unknown (null) stock is left alone rather than guessed at,
- * and stock never goes below zero.
- */
-async function applyStockDeltas(config, deltaMap) {
-  const ids = [...deltaMap.keys()].filter(Boolean);
-  if (!ids.length) return;
-
-  let rows = [];
-  try {
-    rows = await callSupabaseRest(
-      config,
-      `${config.tableName}?id=in.(${ids.map(encodeURIComponent).join(",")})&select=id,quantity`,
-      { method: "GET" }
-    );
-  } catch {
-    return; // Could not read current stock — leave it untouched.
-  }
-
-  const current = new Map();
-  if (Array.isArray(rows)) {
-    for (const row of rows) current.set(normalizeString(row.id), row.quantity);
-  }
-
-  for (const [id, delta] of deltaMap) {
-    if (!current.has(id)) continue;                    // medicine deleted since
-    const cur = current.get(id);
-    if (cur === null || cur === undefined) continue;   // stock unknown — don't invent one
-    const next = Math.max(0, Number(cur) + delta);
-    if (next === Number(cur)) continue;
-    try {
-      await callSupabaseRest(
-        config,
-        `${config.tableName}?id=eq.${encodeURIComponent(id)}`,
-        {
-          method: "PATCH",
-          body: { quantity: next, updated_at: new Date().toISOString() },
-          prefer: "return=minimal",
-        }
-      );
-    } catch {
-      // One medicine failing must not stop the rest.
-    }
-  }
-}
-
 function validateItems(items, res) {
   if (!Array.isArray(items) || !items.length) {
     sendJson(res, 400, { error: "At least one medicine item is required." });
@@ -414,13 +355,6 @@ module.exports = async (req, res) => {
         }
       }
 
-      // Deduct the quantities just sold from inventory.
-      const saleDeltas = new Map();
-      for (const item of items) {
-        addStockDelta(saleDeltas, item.medicineId, -(parseFloat(item.quantity) || 0));
-      }
-      await applyStockDeltas(config, saleDeltas);
-
       sendJson(res, 200, {
         bill: savedBill,
         billNumber,
@@ -505,8 +439,8 @@ module.exports = async (req, res) => {
         }
       );
 
-      // Read the old items before replacing them: they are needed both to
-      // restore stock and to put the bill back if the insert fails.
+      // Read the old items before replacing them, so they can be put back if
+      // the replacement insert fails.
       const oldItems = await callSupabaseRest(
         config,
         `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=*`,
@@ -544,19 +478,6 @@ module.exports = async (req, res) => {
         }
       }
 
-      // Net stock change: give back what the bill used to contain, take what
-      // it contains now.
-      const editDeltas = new Map();
-      if (Array.isArray(oldItems)) {
-        for (const old of oldItems) {
-          addStockDelta(editDeltas, old.medicine_id, parseFloat(old.quantity) || 0);
-        }
-      }
-      for (const item of items) {
-        addStockDelta(editDeltas, item.medicineId, -(parseFloat(item.quantity) || 0));
-      }
-      await applyStockDeltas(config, editDeltas);
-
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -571,26 +492,11 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Read the items before the cascade removes them, so stock can go back.
-      const deletedItems = await callSupabaseRest(
-        config,
-        `${ITEMS_TABLE}?bill_id=eq.${encodeURIComponent(id)}&select=medicine_id,quantity`,
-        { method: "GET" }
-      );
-
       await callSupabaseRest(
         config,
         `${BILLS_TABLE}?id=eq.${encodeURIComponent(id)}`,
         { method: "DELETE" }
       );
-
-      const restockDeltas = new Map();
-      if (Array.isArray(deletedItems)) {
-        for (const item of deletedItems) {
-          addStockDelta(restockDeltas, item.medicine_id, parseFloat(item.quantity) || 0);
-        }
-      }
-      await applyStockDeltas(config, restockDeltas);
 
       sendJson(res, 200, { ok: true });
       return;
