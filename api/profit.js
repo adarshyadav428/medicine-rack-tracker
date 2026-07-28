@@ -8,6 +8,9 @@ const {
 
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
+const PAGE_SIZE = 1000;
+// Keep the bill_id=in.(...) filter well inside URL length limits.
+const BILL_ID_CHUNK = 200;
 
 function round2(n) {
   return Math.round(n * 100) / 100;
@@ -144,26 +147,54 @@ module.exports = async (req, res) => {
     const period = (req.query?.period || "all").toLowerCase();
     const start  = getPeriodStart(period);
 
-    // Step 1: fetch bills in the period
-    let billsQuery = `${BILLS_TABLE}?select=id,bill_number,customer_name,grand_total,created_at&order=created_at.desc&limit=2000`;
-    if (start) billsQuery += `&created_at=gte.${encodeURIComponent(start)}`;
+    // Step 1: fetch bills in the period.
+    // Paged rather than capped: a fixed limit silently drops the oldest bills
+    // and reports profit lower than it really was, with nothing to show that
+    // anything was missed.
+    const bills = [];
+    let billOffset = 0;
+    for (;;) {
+      let billsQuery =
+        `${BILLS_TABLE}?select=id,bill_number,customer_name,grand_total,created_at` +
+        `&order=created_at.desc&limit=${PAGE_SIZE}&offset=${billOffset}`;
+      if (start) billsQuery += `&created_at=gte.${encodeURIComponent(start)}`;
 
-    const bills = await callSupabaseRest(config, billsQuery, { method: "GET" });
-    if (!Array.isArray(bills) || !bills.length) {
+      const page = await callSupabaseRest(config, billsQuery, { method: "GET" });
+      const batch = Array.isArray(page) ? page : [];
+      bills.push(...batch);
+      if (batch.length < PAGE_SIZE) break;
+      billOffset += PAGE_SIZE;
+    }
+
+    if (!bills.length) {
       sendJson(res, 200, { summary: { revenue: 0, cost: 0, profit: 0, margin: 0 }, byCustomer: [], byMedicine: [], byBill: [] });
       return;
     }
 
-    // Step 2: fetch all items for those bills
-    const billIds    = bills.map(b => b.id);
-    const encodedIds = billIds.map(id => encodeURIComponent(id)).join(",");
-    const items = await callSupabaseRest(
-      config,
-      `${ITEMS_TABLE}?bill_id=in.(${encodedIds})&select=bill_id,medicine_name,sell_price,purchase_price,quantity&limit=5000`,
-      { method: "GET" }
-    );
+    // Step 2: fetch the line items for those bills, in chunks — both to page
+    // past the row limit and to keep the bill_id=in.(...) URL a sane length.
+    const items = [];
+    for (let i = 0; i < bills.length; i += BILL_ID_CHUNK) {
+      const chunk = bills.slice(i, i + BILL_ID_CHUNK);
+      const encodedIds = chunk.map((b) => encodeURIComponent(b.id)).join(",");
 
-    sendJson(res, 200, aggregate(bills, Array.isArray(items) ? items : []));
+      let itemOffset = 0;
+      for (;;) {
+        const page = await callSupabaseRest(
+          config,
+          `${ITEMS_TABLE}?bill_id=in.(${encodedIds})` +
+            `&select=bill_id,medicine_name,sell_price,purchase_price,quantity` +
+            `&order=id.asc&limit=${PAGE_SIZE}&offset=${itemOffset}`,
+          { method: "GET" }
+        );
+        const batch = Array.isArray(page) ? page : [];
+        items.push(...batch);
+        if (batch.length < PAGE_SIZE) break;
+        itemOffset += PAGE_SIZE;
+      }
+    }
+
+    sendJson(res, 200, aggregate(bills, items));
   } catch (error) {
     sendJson(res, 500, { error: error.message || "Profit API failed." });
   }
