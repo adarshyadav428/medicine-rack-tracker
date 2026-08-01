@@ -11,6 +11,7 @@ const {
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
 const HISTORY_LIMIT = 100;
+const SHOP_TIME_ZONE = "Asia/Kolkata";
 const PAGE_SIZE = 1000;
 // Keep the bill_id=in.(...) filter inside sane URL length limits.
 const BILL_ID_CHUNK = 200;
@@ -37,10 +38,17 @@ function round2(n) {
  * `attempt` bumps the sequence further when a concurrent insert took it first.
  */
 async function generateBillNumber(config, attempt = 0) {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const dateStr =
-    String(now.getFullYear()) + pad(now.getMonth() + 1) + pad(now.getDate());
+  // Stamped in shop time, not server time. The server runs in UTC, so a local
+  // date here put bills issued before 05:30 IST under the previous day.
+  // en-CA gives YYYY-MM-DD, which only needs the dashes removed.
+  const dateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SHOP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(new Date())
+    .replace(/-/g, "");
   const prefix = `AM-${dateStr}-`;
 
   const encodedPrefix = encodeURIComponent(prefix);
