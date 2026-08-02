@@ -141,6 +141,65 @@
     return raw;
   }
 
+  /**
+   * Markup % from cost and selling price.
+   *
+   * The line-item table used to leave this box empty on a freshly added
+   * medicine — the figure was only carried over when the customer had bought
+   * the same item before. Both numbers are known the moment a line is added,
+   * so there is no reason for it ever to be blank.
+   *
+   * null means genuinely unknowable: no purchase price on record, or a zero
+   * cost, where a percentage of nothing has no answer. That is left blank on
+   * purpose rather than shown as 0%, which would read as "sold at cost".
+   */
+  function computeMarkup(purchase, sell) {
+    var p = parseFloat(purchase);
+    var s = parseFloat(sell);
+    if (isNaN(p) || isNaN(s) || p <= 0) return null;
+    return round2((s - p) / p * 100);
+  }
+
+  /**
+   * Which band a markup falls in, for colour only. Nothing here touches a
+   * price, a line total or the bill — it is a reading aid at the counter.
+   *
+   * Boundaries are inclusive at the bottom: 5 is "healthy", 15 is still
+   * "healthy", 15.01 is "high". Below cost gets its own band rather than
+   * sharing "thin" with a small profit, because the two need opposite
+   * reactions.
+   */
+  function markupBand(pct) {
+    if (pct === null || pct === undefined || isNaN(pct)) return "none";
+    var n = Number(pct);
+    if (n < 0)    return "loss";
+    if (n < 5)    return "thin";
+    if (n <= 15)  return "healthy";
+    if (n <= 25)  return "high";
+    return "steep";
+  }
+
+  var MARKUP_BAND_TITLE = {
+    none:    "No purchase price on record — set it in inventory first",
+    loss:    "Below cost — this line loses money",
+    thin:    "Under 5% — very thin margin",
+    healthy: "5–15% — normal margin",
+    high:    "15–25% — above normal",
+    steep:   "Over 25% — check this price",
+  };
+
+  /** Paint one markup box to match its band. Presentation only. */
+  function applyMarkupBand(input, pct) {
+    if (!input) return;
+    var band = markupBand(pct);
+    input.classList.remove(
+      "markup-none", "markup-loss", "markup-thin",
+      "markup-healthy", "markup-high", "markup-steep"
+    );
+    input.classList.add("markup-" + band);
+    input.title = MARKUP_BAND_TITLE[band];
+  }
+
   function escHtml(s) {
     return String(s === null || s === undefined ? "" : s)
       .replace(/&/g, "&amp;")
@@ -1300,11 +1359,13 @@
     // Override with last price for this customer if available
     var medicineLower = (medicine.medicineName || "").toLowerCase().trim();
     var lastPriceInfo = bState.customerLastPrices[medicineLower];
-    var markupPct = null;
     if (lastPriceInfo) {
       sell = lastPriceInfo.sellPrice;
-      markupPct = lastPriceInfo.markupPercent;
     }
+    // Always derived from what is actually on the line, never left blank. A
+    // remembered markup from the customer's last bill is not reused: the cost
+    // may have moved since, and the figure shown has to describe this sale.
+    var markupPct = computeMarkup(purchase, sell);
 
     var rowId = "row-" + (bState.nextRowId++);
 
@@ -1378,11 +1439,12 @@
       var sp = parseFloat(rawValue);
       item.sellPrice = isNaN(sp) ? 0 : sp;
       // Back-calculate markup %
-      if (item.purchasePrice !== null && item.purchasePrice > 0) {
-        item.markupPercent = round2((item.sellPrice - item.purchasePrice) / item.purchasePrice * 100);
-        var markupInput = document.getElementById("markup-" + rowId);
-        if (markupInput) markupInput.value = item.markupPercent;
+      var markupInput = document.getElementById("markup-" + rowId);
+      item.markupPercent = computeMarkup(item.purchasePrice, item.sellPrice);
+      if (markupInput && item.markupPercent !== null) {
+        markupInput.value = item.markupPercent;
       }
+      applyMarkupBand(markupInput, item.markupPercent);
 
     } else if (field === "markupPercent") {
       var mp = parseFloat(rawValue);
@@ -1394,6 +1456,7 @@
       } else {
         item.markupPercent = isNaN(mp) ? null : mp;
       }
+      applyMarkupBand(document.getElementById("markup-" + rowId), item.markupPercent);
     }
 
     // Update line total cell
@@ -1421,6 +1484,11 @@
       var hasPurchase = item.purchasePrice !== null && item.purchasePrice !== undefined;
       var lineTotal = round2(item.sellPrice * item.quantity);
 
+      // Recomputed at render rather than trusted from state, so a line loaded
+      // from a saved bill or an import shows a figure too.
+      if (item.markupPercent === null || item.markupPercent === undefined) {
+        item.markupPercent = computeMarkup(item.purchasePrice, item.sellPrice);
+      }
       var markupVal = item.markupPercent !== null && item.markupPercent !== undefined
         ? item.markupPercent : "";
       var sellVal = item.sellPrice !== null && item.sellPrice !== undefined
@@ -1448,7 +1516,7 @@
           ' min="-100" max="2000" step="0.01"' +
           ' value="' + markupVal + '"' +
           ' placeholder="' + (hasPurchase ? "0" : "N/A") + '"' +
-          (hasPurchase ? "" : ' disabled title="Set purchase price in inventory first"') +
+          (hasPurchase ? "" : " disabled") +
           " />" +
         "</td>" +
         '<td class="num-col">' +
@@ -1504,6 +1572,8 @@
       var qtyInput    = document.getElementById("qty-"    + item._rowId);
       var sellInput   = document.getElementById("sell-"   + item._rowId);
       var markupInput = document.getElementById("markup-" + item._rowId);
+
+      applyMarkupBand(markupInput, item.markupPercent);
 
       function bindInput(el, field, onEnter) {
         if (!el) return;

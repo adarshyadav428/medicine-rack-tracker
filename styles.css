@@ -1351,6 +1351,62 @@ button:focus-visible {
   background: #fff;
 }
 
+/* Markup % bands — a reading aid at the counter, nothing more. None of these
+   touch a price, a line total or the bill; they only tint the box the figure
+   is typed into. Text colour carries the meaning as well as the fill, so the
+   bands are still distinguishable to a colour-blind reader and on a printout
+   that drops backgrounds. */
+/* Amber, not red: below cost and over 25% are both worth stopping at, but they
+   need opposite corrections, so they must not look like the same warning. */
+.markup-loss {
+  background: #fff3e0;
+  border-color: #e8bf83;
+  color: #9a5a06;
+  font-weight: 700;
+}
+
+.markup-thin {
+  background: #f2fbf3;
+  border-color: #cbe8ce;
+  color: #4b7a52;
+}
+
+.markup-healthy {
+  background: #e7f7ea;
+  border-color: #93ce9f;
+  color: #1f7a35;
+  font-weight: 700;
+}
+
+.markup-high {
+  background: #e9f4fd;
+  border-color: #9dc9e8;
+  color: #1c5f8c;
+  font-weight: 700;
+}
+
+.markup-steep {
+  background: #fdeaea;
+  border-color: #e59b9b;
+  color: #b81f1f;
+  font-weight: 700;
+}
+
+/* No purchase price on record — the box is disabled and stays neutral, so an
+   unknown margin never reads as a judgement about the price. */
+.markup-none {
+  background: #f4f7f9;
+  color: #7a8f95;
+}
+
+.bill-table-input.markup-loss:focus,
+.bill-table-input.markup-thin:focus,
+.bill-table-input.markup-healthy:focus,
+.bill-table-input.markup-high:focus,
+.bill-table-input.markup-steep:focus {
+  background: #fff;
+}
+
 .bill-item-name {
   font-weight: 700;
   color: var(--ink);
