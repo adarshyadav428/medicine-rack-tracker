@@ -180,6 +180,60 @@ const item = (qty, price) => ([{ medicineName: "Paracetamol", sellPrice: price, 
   eq("history returns rows", r.json.bills.length > 0, true);
   eq("no customer filter applied", r.json.bills.length, db.bills.length);
 
+  console.log("\n--- medicine sales history: who bought it, at what rate ---");
+  db.bills.length = 0;
+  db.bill_items.length = 0;
+  db.bills.push(
+    { id: "mb1", bill_number: "AM-1", customer_name: "Ramesh", customer_phone: "9001",
+      created_at: "2026-05-01T09:00:00.000Z" },
+    { id: "mb2", bill_number: "AM-2", customer_name: "Sita", customer_phone: "9002",
+      created_at: "2026-06-01T09:00:00.000Z" },
+    { id: "mb3", bill_number: "AM-3", customer_name: "", customer_phone: "",
+      created_at: "2026-07-01T09:00:00.000Z" },
+  );
+  db.bill_items.push(
+    { id: "mi1", bill_id: "mb1", medicine_name: "Calpol 500 Tab", quantity: 3,
+      sell_price: 10.55, purchase_price: 8, batch_no: "B2231", expiry: "11/27" },
+    { id: "mi2", bill_id: "mb2", medicine_name: "calpol 500 tab", quantity: 2,
+      sell_price: 12.00, purchase_price: 8, batch_no: "B2240", expiry: "01/28" },
+    { id: "mi3", bill_id: "mb3", medicine_name: "Calpol 500 Tab", quantity: 1,
+      sell_price: 9.00, purchase_price: 8, batch_no: null, expiry: null },
+    { id: "mi4", bill_id: "mb1", medicine_name: "Crocin", quantity: 1,
+      sell_price: 20, purchase_price: 15, batch_no: null, expiry: null },
+  );
+
+  r = await bills("GET", { query: { medicine: "Calpol 500 Tab" } });
+  eq("three sales found", r.json.sales.length, 3);
+  eq("newest first", r.json.sales.map((s) => s.billNumber), ["AM-3", "AM-2", "AM-1"]);
+  eq("other medicines excluded",
+     r.json.sales.every((s) => s.billNumber !== "AM-1" || s.sellPrice === 10.55), true);
+
+  eq("customer carried through", r.json.sales[2].customerName, "Ramesh");
+  eq("phone carried through", r.json.sales[2].customerPhone, "9001");
+  eq("rate carried through", r.json.sales[2].sellPrice, 10.55);
+  eq("quantity carried through", r.json.sales[2].quantity, 3);
+  eq("batch carried through", r.json.sales[2].batchNo, "B2231");
+  eq("a walk-in has a blank customer", r.json.sales[0].customerName, "");
+
+  console.log("\n--- the name match is case-insensitive but exact ---");
+  eq("differently-cased line included", r.json.sales[1].customerName, "Sita");
+  r = await bills("GET", { query: { medicine: "calpol 500 tab" } });
+  eq("query case does not matter", r.json.sales.length, 3);
+  r = await bills("GET", { query: { medicine: "Calpol" } });
+  eq("a partial name is not a match", r.json.sales.length, 0);
+
+  console.log("\n--- a medicine never sold ---");
+  r = await bills("GET", { query: { medicine: "Dolo 650" } });
+  eq("empty history", r.json.sales, []);
+  eq("medicine echoed back", r.json.medicine, "Dolo 650");
+
+  console.log("\n--- a line whose bill was deleted is not reported ---");
+  db.bills = db.bills.filter((b) => b.id !== "mb2");
+  r = await bills("GET", { query: { medicine: "Calpol 500 Tab" } });
+  eq("orphaned line dropped", r.json.sales.length, 2);
+  eq("no undefined bill numbers",
+     r.json.sales.every((s) => Boolean(s.billNumber)), true);
+
   console.log("\n--- history search ---");
   db.bills.length = 0;
   db.bills.push(

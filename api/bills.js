@@ -181,6 +181,87 @@ module.exports = async (req, res) => {
 
       const id = normalizeString(req.query?.id);
 
+      // Sales history for one medicine: who bought it, when, and at what rate.
+      //
+      // The mirror image of the lastprices lookup — that answers "what do I
+      // charge this customer", this answers "what have I been charging for
+      // this medicine, and to whom".
+      const medicine = normalizeString(req.query?.medicine);
+      if (medicine) {
+        const wantedName = medicine.toLowerCase();
+
+        // Step 1: every line for this medicine. Paged rather than capped: a
+        // cap would quietly drop the oldest sales, and a price history with
+        // a silent hole in it is worse than none.
+        const lines = [];
+        let lineOffset = 0;
+        for (;;) {
+          const page = await callSupabaseRest(
+            config,
+            `${ITEMS_TABLE}?medicine_name=ilike.${encodeURIComponent(medicine)}` +
+              `&select=bill_id,medicine_name,quantity,sell_price,purchase_price,batch_no,expiry` +
+              `&limit=${PAGE_SIZE}&offset=${lineOffset}`,
+            { method: "GET" }
+          );
+          const batch = Array.isArray(page) ? page : [];
+          lines.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          lineOffset += PAGE_SIZE;
+        }
+
+        // ilike can only over-match here, so narrow to an exact name.
+        const exact = lines.filter(
+          (l) => normalizeString(l.medicine_name).toLowerCase() === wantedName
+        );
+
+        if (!exact.length) {
+          sendJson(res, 200, { medicine, sales: [] });
+          return;
+        }
+
+        // Step 2: the bills those lines belong to, for customer and date.
+        const billIds = [...new Set(exact.map((l) => l.bill_id).filter(Boolean))];
+        const billsById = new Map();
+        for (let i = 0; i < billIds.length; i += BILL_ID_CHUNK) {
+          const encodedIds = billIds
+            .slice(i, i + BILL_ID_CHUNK)
+            .map((billId) => encodeURIComponent(billId))
+            .join(",");
+          const rows = await callSupabaseRest(
+            config,
+            `${BILLS_TABLE}?id=in.(${encodedIds})` +
+              `&select=id,bill_number,customer_name,customer_phone,created_at`,
+            { method: "GET" }
+          );
+          (Array.isArray(rows) ? rows : []).forEach((b) => billsById.set(b.id, b));
+        }
+
+        const sales = exact
+          .map((line) => {
+            const bill = billsById.get(line.bill_id);
+            if (!bill) return null; // bill deleted; its lines are orphans
+            return {
+              billId: bill.id,
+              billNumber: bill.bill_number,
+              customerName: normalizeString(bill.customer_name),
+              customerPhone: normalizeString(bill.customer_phone),
+              soldAt: bill.created_at,
+              quantity: parseFloat(line.quantity) || 0,
+              sellPrice: parseFloat(line.sell_price) || 0,
+              purchasePrice: line.purchase_price != null
+                ? parseFloat(line.purchase_price)
+                : null,
+              batchNo: normalizeString(line.batch_no),
+              expiry: normalizeString(line.expiry),
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => String(b.soldAt || "").localeCompare(String(a.soldAt || "")));
+
+        sendJson(res, 200, { medicine, sales });
+        return;
+      }
+
       // Last-prices query: return price map for a specific customer
       if (req.query?.lastprices === "1") {
         const customer = normalizeString(req.query?.customer);

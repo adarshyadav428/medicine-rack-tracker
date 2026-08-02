@@ -1058,7 +1058,8 @@ button:focus-visible {
   min-width: 0;
 }
 
-.medicine-dropdown-edit-btn {
+.medicine-dropdown-edit-btn,
+.medicine-dropdown-history-btn {
   flex-shrink: 0;
   background: none;
   border: 1.5px solid var(--line);
@@ -1073,14 +1074,107 @@ button:focus-visible {
 }
 
 .medicine-dropdown-item:hover .medicine-dropdown-edit-btn,
-.medicine-dropdown-item--active .medicine-dropdown-edit-btn {
+.medicine-dropdown-item--active .medicine-dropdown-edit-btn,
+.medicine-dropdown-item:hover .medicine-dropdown-history-btn,
+.medicine-dropdown-item--active .medicine-dropdown-history-btn {
   opacity: 1;
 }
 
-.medicine-dropdown-edit-btn:hover {
+.medicine-dropdown-edit-btn:hover,
+.medicine-dropdown-history-btn:hover {
   background: var(--brand-soft);
   color: var(--brand-strong);
   border-color: var(--brand);
+}
+
+/* On touch there is no hover, so the row actions would never appear. */
+@media (hover: none) {
+  .medicine-dropdown-edit-btn,
+  .medicine-dropdown-history-btn {
+    opacity: 0.65;
+  }
+}
+
+/* ── Medicine sales history modal ──────────────────────────── */
+.medicine-sales-modal {
+  max-width: 720px;
+  width: 95%;
+}
+
+.medicine-sales-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding-bottom: 0.7rem;
+  margin-bottom: 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.medicine-sales-summary strong {
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+.medicine-sales-summary.is-warn {
+  color: #8a5500;
+}
+
+.medicine-sales-table-wrap {
+  max-height: 46vh;
+  overflow-y: auto;
+  /* Explicit, so a narrow phone scrolls the table inside this box rather than
+     pushing the whole modal sideways. */
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.medicine-sales-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.medicine-sales-table th {
+  position: sticky;
+  top: 0;
+  background: linear-gradient(145deg, #f2f8fc, #eefbf8);
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.medicine-sales-table td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.medicine-sales-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.medicine-sales-table tbody tr:hover td {
+  background: var(--brand-soft);
+}
+
+.medicine-sales-price {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.medicine-sales-price--high {
+  color: #0b6d67;
+}
+
+.medicine-sales-price--low {
+  color: #8a5500;
 }
 
 .bill-row-actions {
