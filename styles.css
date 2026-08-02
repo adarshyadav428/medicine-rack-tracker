@@ -1366,44 +1366,6 @@ button:focus-visible {
   font-family: var(--font-mono);
 }
 
-/* Batch / expiry, tucked under the medicine name so the line-item table does
-   not need two more columns. */
-.bill-item-batch-row {
-  display: flex;
-  gap: 0.3rem;
-  margin-top: 0.25rem;
-  max-width: 200px;
-}
-
-.bill-batch-input {
-  width: auto;
-  min-width: 0;
-  flex: 1 1 0;
-  padding: 0.22rem 0.4rem;
-  font-size: 0.74rem;
-  font-family: var(--font-mono);
-  border: 1px solid var(--line);
-  border-radius: 0.3rem;
-  background: #fbfdfd;
-  color: #3a5560;
-}
-
-.bill-batch-input:focus {
-  background: #fff;
-  border-color: var(--brand);
-  outline: none;
-}
-
-.bill-batch-input::placeholder {
-  color: #a8bfbc;
-  font-family: var(--font-sans, inherit);
-}
-
-.bill-batch-input--exp {
-  flex: 0 0 4.4rem;
-  text-align: center;
-}
-
 .bill-item-mrp {
   font-family: var(--font-mono);
   font-size: 0.86rem;

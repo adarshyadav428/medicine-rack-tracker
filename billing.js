@@ -1318,11 +1318,12 @@
       sellPrice:     Number(sell) || 0,
       markupPercent: markupPct,
       quantity:      1,
-      // Batch is only on the pack, so it is always typed. Expiry is prefilled
-      // from the inventory when it knows one, and stays editable — the strip
-      // in hand may be a different lot from the one last recorded.
+      // No longer entered on the bill — the boxes were removed while the batch
+      // data is still not uploaded. The columns and the API still carry these,
+      // so a bill saved earlier reopens with its values intact, and putting
+      // the inputs back is a matter of restoring the row in renderLineItems.
       batchNo:       "",
-      expiry:        toMonthYear(medicine.expiryDate),
+      expiry:        "",
     });
 
     var newRowId = rowId;
@@ -1431,19 +1432,6 @@
         "<td>" +
           '<div class="bill-item-name" title="' + escHtml(item.medicineName) + '">' + escHtml(item.medicineName) + "</div>" +
           '<div class="bill-item-location">' + escHtml(item.location || "—") + "</div>" +
-          // Batch and expiry belong to the product, so they sit under its name
-          // rather than adding two more columns to an already wide table.
-          '<div class="bill-item-batch-row">' +
-            '<input id="batch-' + item._rowId + '" class="bill-batch-input" type="text"' +
-            ' data-col="batch" maxlength="40" placeholder="Batch"' +
-            ' aria-label="Batch number for ' + escHtml(item.medicineName) + '"' +
-            ' value="' + escHtml(item.batchNo) + '" />' +
-            '<input id="expiry-' + item._rowId + '" class="bill-batch-input bill-batch-input--exp" type="text"' +
-            ' data-col="expiry" maxlength="7" placeholder="MM/YY"' +
-            ' inputmode="numeric"' +
-            ' aria-label="Expiry for ' + escHtml(item.medicineName) + '"' +
-            ' value="' + escHtml(item.expiry) + '" />' +
-          "</div>" +
         "</td>" +
         '<td class="num-col">' +
           '<input id="mrp-' + item._rowId + '" class="bill-table-input" type="number"' +
@@ -1516,8 +1504,6 @@
       var qtyInput    = document.getElementById("qty-"    + item._rowId);
       var sellInput   = document.getElementById("sell-"   + item._rowId);
       var markupInput = document.getElementById("markup-" + item._rowId);
-      var batchInput  = document.getElementById("batch-"  + item._rowId);
-      var expiryInput = document.getElementById("expiry-" + item._rowId);
 
       function bindInput(el, field, onEnter) {
         if (!el) return;
@@ -1556,30 +1542,11 @@
         var qty = document.getElementById("qty-" + item._rowId);
         if (qty) { qty.focus(); qty.select(); }
       });
-      // Enter runs money first, then the pack details, then back to search —
-      // so the fast path (price, qty, next medicine) is unchanged for anyone
-      // who tabs past batch and expiry.
+      // Qty is the last field on a line, so Enter goes straight back to the
+      // search box for the next medicine.
       bindInput(qtyInput, "quantity", function () {
-        if (batchInput) { batchInput.focus(); batchInput.select(); }
-        else if (bEl.search) bEl.search.focus();
-      });
-      bindInput(batchInput, "batchNo", function () {
-        if (expiryInput) { expiryInput.focus(); expiryInput.select(); }
-      });
-      bindInput(expiryInput, "expiry", function () {
         if (bEl.search) bEl.search.focus();
       });
-
-      // "1127" / "11-27" / "11/2027" all normalise to 11/27 on the way out.
-      if (expiryInput) {
-        expiryInput.addEventListener("blur", function () {
-          var tidy = normalizeExpiry(expiryInput.value);
-          if (tidy !== expiryInput.value) {
-            expiryInput.value = tidy;
-            updateLineItemField(item._rowId, "expiry", tidy);
-          }
-        });
-      }
     });
   }
 

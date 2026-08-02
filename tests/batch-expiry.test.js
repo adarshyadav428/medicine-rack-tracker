@@ -183,6 +183,18 @@ function bills(method, { query = {}, body = null } = {}) {
   eq("batch updated", edited[0].batch_no, "B9999");
   eq("expiry updated", edited[0].expiry, "01/28");
 
+  // The storage above is deliberately kept, but the billing form no longer
+  // collects either field and the receipt no longer prints them — the shop's
+  // batch data is not uploaded, so both would be blank in practice. These
+  // guard against the UI creeping back in without that data.
+  const render  = grab("      tr.innerHTML =", '<td class="num-col">');
+  eq("no batch input on the line-item row", render.includes('id="batch-'), false);
+  eq("no expiry input on the line-item row", render.includes('id="expiry-'), false);
+
+  const receipt = grab("  function buildReceiptHtml(", "\n  function ");
+  eq("receipt does not print a batch number", receipt.includes("B.No"), false);
+  eq("receipt does not print an expiry", receipt.includes("Exp: "), false);
+
   console.log(fails ? `\n${fails} FAILED` : "\nall batch/expiry assertions passed");
   process.exit(fails ? 1 : 0);
 })();
