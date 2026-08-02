@@ -315,6 +315,38 @@ const item = (qty, price) => ([{ medicineName: "Paracetamol", sellPrice: price, 
      db.bills.map((b) => b.bill_number).sort(),
      ["AM-20260601-002", "AM-20260601-003"]);
 
+  console.log("\n--- import: bill numbers are stamped in shop time ---");
+  db.bills.length = 0;
+  // A CSV date is stored at UTC midnight; read back in IST it must stay the
+  // same calendar day rather than slipping forward.
+  imp = await importBills({
+    body: { rows: [{ date: "2026-06-01", medicine_name: "A", quantity: "1", sell_price: "10" }] },
+  });
+  eq("CSV date kept", db.bills[0].bill_number, "AM-20260601-001");
+
+  // A row with no date falls back to now. Read in UTC that put an import run
+  // before 05:30 IST under the previous day.
+  db.bills.length = 0;
+  const istToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date()).replace(/-/g, "");
+  await importBills({
+    body: { rows: [{ medicine_name: "B", quantity: "1", sell_price: "10" }] },
+  });
+  eq("undated row carries the IST date", db.bills[0].bill_number, `AM-${istToday}-001`);
+  const utcToday = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  if (utcToday !== istToday) {
+    eq("and not the UTC date", db.bills[0].bill_number.includes(utcToday), false);
+  }
+
+  db.bills.length = 0;
+  await importBills({
+    body: { rows: [
+      { date: "2026-06-01", medicine_name: "A", quantity: "1", sell_price: "10" },
+      { date: "2026-06-01", medicine_name: "B", quantity: "1", sell_price: "10" },
+    ] },
+  });
+
   console.log("\n--- import: a number already in the file is skipped, not duplicated ---");
   imp = await importBills({
     body: { rows: [{ date: "2026-06-01", bill_number: "AM-20260601-002",

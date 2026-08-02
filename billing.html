@@ -286,6 +286,16 @@
           </div>
         </div>
 
+        <!-- Shown only while the form is bound to an existing bill, so a save
+             can never overwrite one without the user knowing. -->
+        <p id="bill-edit-banner" class="status-message is-warn hidden"
+           style="margin:0 0 0.72rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <span id="bill-edit-banner-text"></span>
+          <button id="bill-edit-banner-new" class="btn btn-ghost btn-xs" type="button">
+            ✨ Start a new bill
+          </button>
+        </p>
+
         <!-- Action buttons -->
         <div class="bill-actions-bar">
           <button id="save-bill-button" class="btn btn-primary bill-btn-main" type="button">

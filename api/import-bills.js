@@ -10,6 +10,7 @@ const {
 
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
+const SHOP_TIME_ZONE = "Asia/Kolkata";
 
 function round2(n) { return Math.round(n * 100) / 100; }
 function toNum(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
@@ -38,9 +39,18 @@ function parseDate(str) {
  * constraint. `attempt` skips further ahead when a concurrent insert wins.
  */
 async function generateBillNumberForDate(config, isoDate, attempt = 0) {
-  const d = new Date(isoDate);
-  const pad = (n) => String(n).padStart(2, "0");
-  const dateStr = String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
+  // Stamped in shop time, matching api/bills.js. A CSV date is stored at UTC
+  // midnight and reads back as the same calendar day in IST; a row with no
+  // date falls back to now, which read in UTC put an import run before
+  // 05:30 IST under the previous day.
+  const dateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SHOP_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(new Date(isoDate))
+    .replace(/-/g, "");
   const prefix = `AM-${dateStr}-`;
   const rows = await callSupabaseRest(
     config,
