@@ -908,10 +908,16 @@
               ? '<span class="medicine-last-price-badge">Last sold: ₹' + parseFloat(lastPriceInfo.sellPrice).toFixed(2) + '</span>'
               // Says why this one is near the top when it is not this
               // customer's own history doing the lifting.
+              // The price it last went out at matters more than the tally, so
+              // show it whenever the history has one.
               : (soldStats
                   ? '<span class="medicine-sold-badge" title="Sold ' + soldStats.count +
                     ' time' + (soldStats.count === 1 ? "" : "s") + ' before">Sold ' +
-                    soldStats.count + '&times;</span>'
+                    soldStats.count + '&times;' +
+                    (soldStats.lastSellPrice !== null && soldStats.lastSellPrice !== undefined
+                      ? ' · ₹' + parseFloat(soldStats.lastSellPrice).toFixed(2)
+                      : "") +
+                    '</span>'
                   : "")) +
           '</div>' +
           '<span class="medicine-dropdown-meta">' + metaParts.join(" · ") + "</span>" +

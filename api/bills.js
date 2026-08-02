@@ -354,8 +354,8 @@ module.exports = async (req, res) => {
       //
       // Feeds the ranking of the billing search box: a medicine this shop
       // sells every day should not be buried under a near-identical name it
-      // has never sold. Names only — no prices, no customers — so this stays
-      // cheap enough to fetch once when the billing page opens.
+      // has never sold. Names and the last sell price — no customers — so this
+      // stays cheap enough to fetch once when the billing page opens.
       if (req.query?.soldcounts === "1") {
         // Newest first and capped, unlike the exhaustive queries above. This
         // one is a ranking hint, not a record: what sold last month is what
@@ -366,7 +366,7 @@ module.exports = async (req, res) => {
         while (rows.length < SOLD_COUNT_LIMIT) {
           const page = await callSupabaseRest(
             config,
-            `${ITEMS_TABLE}?select=medicine_name,created_at` +
+            `${ITEMS_TABLE}?select=medicine_name,sell_price,created_at` +
               `&order=created_at.desc` +
               `&limit=${Math.min(PAGE_SIZE, SOLD_COUNT_LIMIT - rows.length)}&offset=${offset}`,
             { method: "GET" }
@@ -381,10 +381,18 @@ module.exports = async (req, res) => {
         for (const row of rows) {
           const key = normalizeString(row.medicine_name).toLowerCase();
           if (!key) continue;
-          if (!counts[key]) counts[key] = { count: 0, lastSoldAt: null };
+          if (!counts[key]) {
+            counts[key] = { count: 0, lastSoldAt: null, lastSellPrice: null };
+          }
           counts[key].count += 1;
           // Rows arrive newest-first, so the first sighting is the latest sale.
           if (!counts[key].lastSoldAt) counts[key].lastSoldAt = row.created_at || null;
+          // The price it actually went out at last time — what the counter
+          // wants to see when no customer-specific price applies.
+          if (counts[key].lastSellPrice === null) {
+            const price = parseFloat(row.sell_price);
+            if (Number.isFinite(price)) counts[key].lastSellPrice = price;
+          }
         }
 
         sendJson(res, 200, {

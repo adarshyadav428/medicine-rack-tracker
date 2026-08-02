@@ -205,10 +205,10 @@ function call(query) {
 
 (async () => {
   db.bill_items = [
-    { medicine_name: "Dolo 650", created_at: "2026-07-30" },
-    { medicine_name: "dolo 650", created_at: "2026-07-28" },
-    { medicine_name: "Crocin", created_at: "2026-07-20" },
-    { medicine_name: "  Dolo 650  ", created_at: "2026-06-01" },
+    { medicine_name: "Dolo 650", sell_price: null, created_at: "2026-07-30" },
+    { medicine_name: "dolo 650", sell_price: "24.50", created_at: "2026-07-28" },
+    { medicine_name: "Crocin", sell_price: "31", created_at: "2026-07-20" },
+    { medicine_name: "  Dolo 650  ", sell_price: "19", created_at: "2026-06-01" },
     { medicine_name: "", created_at: "2026-06-01" },
     { medicine_name: null, created_at: "2026-06-01" },
   ];
@@ -220,6 +220,11 @@ function call(query) {
   eq("blank names are skipped", Object.keys(body.counts).sort(), ["crocin", "dolo 650"]);
   eq("last sold is the newest, not the first row seen",
     body.counts["dolo 650"].lastSoldAt, "2026-07-30");
+  // The counter needs the rate it actually went out at, not the newest row's
+  // blank — so a missing price falls through to the next sale.
+  eq("last sell price skips the blank and takes the next sale",
+    body.counts["dolo 650"].lastSellPrice, 24.5);
+  eq("last sell price for a single sale", body.counts["crocin"].lastSellPrice, 31);
   eq("scanned count reported", body.scanned, 6);
   eq("not truncated on a small shop", body.truncated, false);
 
