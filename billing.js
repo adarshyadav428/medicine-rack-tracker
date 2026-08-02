@@ -1530,6 +1530,16 @@
           } else if (e.key === "Enter" && onEnter) {
             e.preventDefault();
             onEnter();
+          } else if (e.key === "Escape") {
+            // Bail out of the row without reaching for the mouse.
+            e.preventDefault();
+            if (bEl.search) bEl.search.focus();
+          } else if (e.altKey && (e.key === "Delete" || e.key === "Backspace")) {
+            // Drop the wrong line the moment it is spotted. Focus goes to the
+            // search box because the row under the cursor is about to vanish.
+            e.preventDefault();
+            removeLineItem(item._rowId);
+            if (bEl.search) bEl.search.focus();
           }
         });
       }
@@ -3127,6 +3137,8 @@
       }
     });
 
+    initKeyboardShortcuts();
+
     // Initial render
     setBillingStatus("Ready. Search for medicines to start a new bill.", "is-ok");
     applyBillMode();
@@ -3134,6 +3146,75 @@
     recalcTotals();
     loadBillHistory();
     refreshSavedCustomers();
+
+    // A bill always starts with a medicine, so start with the cursor there.
+    setTimeout(function () { if (bEl.search) bEl.search.focus(); }, 0);
+  }
+
+  // -------------------------------------------------------------------------
+  // Keyboard shortcuts
+  // -------------------------------------------------------------------------
+
+  /**
+   * Whole-bill keyboard control, so a counter sale never needs the trackpad.
+   *
+   * Alt+letter rather than plain letters, because every field on this page is
+   * a text box and a bare hotkey would be unusable. AltGr is explicitly not
+   * treated as Alt: on an Indian layout AltGr produces characters, and the
+   * browser reports it as Ctrl+Alt, so ctrlKey must be false for a match.
+   */
+  function initKeyboardShortcuts() {
+    function focusField(el) {
+      if (!el || el.disabled) return;
+      el.focus();
+      if (typeof el.select === "function") el.select();
+    }
+
+    function clickIfEnabled(btn) {
+      if (btn && !btn.disabled) btn.click();
+    }
+
+    document.addEventListener("keydown", function (e) {
+      // A modal owns the keyboard while it is open — it has its own Escape and
+      // Enter handling, and stealing focus out from under it would be worse
+      // than no shortcut at all.
+      if (document.querySelector(".manual-add-overlay")) return;
+      if (bEl.receiptModal && !bEl.receiptModal.classList.contains("hidden")) return;
+      // Only while the billing page is the one on screen.
+      if (bEl.billFormSection && bEl.billFormSection.offsetParent === null) return;
+
+      // Ctrl+Enter saves from anywhere, including mid-field.
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        e.preventDefault();
+        clickIfEnabled(bEl.saveBillButton);
+        return;
+      }
+
+      if (!e.altKey || e.ctrlKey || e.metaKey) {
+        // F2 is the one no-modifier shortcut: back to the medicine box, which
+        // is where the next line always starts.
+        if (e.key === "F2") {
+          e.preventDefault();
+          focusField(bEl.search);
+        }
+        return;
+      }
+
+      // e.code, not e.key: Alt+letter reports an accented or dead key on some
+      // layouts, but the physical key code stays KeyC either way.
+      switch (e.code) {
+        case "KeyM": e.preventDefault(); focusField(bEl.search); break;
+        case "KeyC": e.preventDefault(); focusField(bEl.customerName); break;
+        case "KeyH": e.preventDefault(); focusField(bEl.customerPhone); break;
+        case "KeyO": e.preventDefault(); focusField(bEl.notes); break;
+        case "KeyR": e.preventDefault(); focusField(bEl.receivedAmount); break;
+        case "KeyS": e.preventDefault(); clickIfEnabled(bEl.saveBillButton); break;
+        case "KeyI": e.preventDefault(); clickIfEnabled(bEl.printBillButton); break;
+        case "KeyN": e.preventDefault(); clickIfEnabled(bEl.newBillButton); break;
+        case "KeyF": e.preventDefault(); focusField(bEl.historySearch); break;
+        default: break;
+      }
+    });
   }
 
   // -------------------------------------------------------------------------

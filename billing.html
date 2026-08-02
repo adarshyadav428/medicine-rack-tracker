@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260605-rollback2" />
+    <link rel="stylesheet" href="styles.css?v=20260802-keyboard" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -148,6 +148,29 @@
             <p>Search by name and click to add to the bill.</p>
           </div>
         </div>
+
+        <!-- Keyboard map, so the shortcuts are discoverable without a manual. -->
+        <details class="bill-shortcuts">
+          <summary>⌨ Keyboard shortcuts — bill without the mouse</summary>
+          <div class="bill-shortcuts-grid">
+            <div><kbd>Alt</kbd>+<kbd>M</kbd> <span>Medicine search</span></div>
+            <div><kbd>F2</kbd> <span>Medicine search</span></div>
+            <div><kbd>↑</kbd> <kbd>↓</kbd> <span>Pick from the dropdown</span></div>
+            <div><kbd>Enter</kbd> <span>Add it / next field</span></div>
+            <div><kbd>↑</kbd> <kbd>↓</kbd> <span>Same column, row above/below</span></div>
+            <div><kbd>Esc</kbd> <span>Back to medicine search</span></div>
+            <div><kbd>Alt</kbd>+<kbd>Del</kbd> <span>Remove this line</span></div>
+            <div><kbd>Alt</kbd>+<kbd>C</kbd> <span>Customer name</span></div>
+            <div><kbd>Alt</kbd>+<kbd>H</kbd> <span>Phone number</span></div>
+            <div><kbd>Alt</kbd>+<kbd>O</kbd> <span>Order / notes</span></div>
+            <div><kbd>Alt</kbd>+<kbd>R</kbd> <span>Amount received</span></div>
+            <div><kbd>Alt</kbd>+<kbd>S</kbd> <span>Save bill</span></div>
+            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span>Save bill</span></div>
+            <div><kbd>Alt</kbd>+<kbd>I</kbd> <span>Print receipt</span></div>
+            <div><kbd>Alt</kbd>+<kbd>N</kbd> <span>New bill</span></div>
+            <div><kbd>Alt</kbd>+<kbd>F</kbd> <span>Search bill history</span></div>
+          </div>
+        </details>
 
         <div class="billing-search-wrap" style="margin-top:0.88rem;">
           <div class="billing-search-field-wrap">
@@ -446,6 +469,6 @@
     <script src="sync-config.js"></script>
     <script src="ledger.js?v=20260802-ledger"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260802-nobatchprint"></script>
+    <script src="billing.js?v=20260802-keyboard"></script>
   </body>
 </html>
