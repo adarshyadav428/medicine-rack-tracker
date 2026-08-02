@@ -3183,13 +3183,28 @@
       // Only while the billing page is the one on screen.
       if (bEl.billFormSection && bEl.billFormSection.offsetParent === null) return;
 
-      // Ctrl+Enter saves from anywhere, including mid-field.
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey) {
-        e.preventDefault();
-        clickIfEnabled(bEl.saveBillButton);
+      // Ctrl shortcuts. These take over three keys the browser already owns —
+      // Ctrl+F (find in page), Ctrl+S (save page) — on purpose: on this page
+      // "find" means find a medicine and "save" means save the bill, and the
+      // browser's versions are of no use at a shop counter. preventDefault is
+      // what stops the browser dialog appearing behind ours.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          clickIfEnabled(bEl.saveBillButton);
+        } else if (e.code === "KeyF") {
+          e.preventDefault();
+          focusField(bEl.search);
+        } else if (e.code === "KeyS") {
+          e.preventDefault();
+          clickIfEnabled(bEl.saveBillButton);
+        }
         return;
       }
 
+      // ctrlKey is still rejected here: anything reaching this line with both
+      // Ctrl and Alt is AltGr, which on an Indian layout is typing, not a
+      // shortcut.
       if (!e.altKey || e.ctrlKey || e.metaKey) {
         // F2 is the one no-modifier shortcut: back to the medicine box, which
         // is where the next line always starts.

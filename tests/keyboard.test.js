@@ -163,6 +163,37 @@ for (const [code_, field] of JUMPS) {
   eq("Cmd+Enter saves too", w.log, ["click:save"]);
 }
 
+// The two the browser normally owns. Both must be swallowed, or the browser's
+// find bar / save dialog opens on top of the bill.
+{
+  const w = makeWorld();
+  eq("Ctrl+S swallowed", w.press({ code: "KeyS", key: "s", ctrlKey: true }), true);
+  eq("Ctrl+S saves the bill, not the page", w.log, ["click:save"]);
+}
+{
+  const w = makeWorld();
+  eq("Ctrl+F swallowed", w.press({ code: "KeyF", key: "f", ctrlKey: true }), true);
+  eq("Ctrl+F finds a medicine, not text", w.log, ["focus:search", "select:search"]);
+}
+{
+  const w = makeWorld();
+  w.press({ code: "KeyF", key: "f", metaKey: true });
+  eq("Cmd+F does the same", w.log, ["focus:search", "select:search"]);
+}
+// Ctrl+F must not land in the history box — that is still Alt+F.
+{
+  const w = makeWorld();
+  w.press({ code: "KeyF", key: "f", altKey: true });
+  eq("Alt+F still goes to bill history", w.log, ["focus:historySearch", "select:historySearch"]);
+}
+// A Ctrl combination we do not claim is left to the browser.
+{
+  const w = makeWorld();
+  const prevented = w.press({ code: "KeyP", key: "p", ctrlKey: true });
+  eq("Ctrl+P still prints the page", w.log, []);
+  eq("Ctrl+P is not swallowed", prevented, false);
+}
+
 // A disabled button must not fire: Print is disabled until a bill is saved,
 // and clicking it anyway would print an empty receipt.
 {
@@ -220,6 +251,19 @@ for (const [code_, field] of JUMPS) {
   w.press({ key: "Enter", ctrlKey: true });
   eq("Ctrl+Enter does not save from behind the receipt modal", w.log, []);
 }
+// Ctrl+S is claimed globally, so it must also stand down behind a modal —
+// otherwise it saves a bill the operator cannot even see.
+{
+  const w = makeWorld({ overlayOpen: true });
+  const prevented = w.press({ code: "KeyS", key: "s", ctrlKey: true });
+  eq("Ctrl+S does nothing behind a modal", w.log, []);
+  eq("Ctrl+S is released back to the browser there", prevented, false);
+}
+{
+  const w = makeWorld({ pageHidden: true });
+  w.press({ code: "KeyF", key: "f", ctrlKey: true });
+  eq("Ctrl+F is the browser's again on other pages", w.log, []);
+}
 
 // Another page of the app is showing.
 {
@@ -251,8 +295,10 @@ for (const [code_, field] of JUMPS) {
       panel.includes(`<kbd>Alt</kbd>+<kbd>${letter}</kbd>`), true);
   }
   eq("panel documents F2", panel.includes("<kbd>F2</kbd>"), true);
-  eq("panel documents Ctrl+Enter",
-    panel.includes("<kbd>Ctrl</kbd>+<kbd>Enter</kbd>"), true);
+  for (const combo of ["Enter", "F", "S"]) {
+    eq(`panel documents Ctrl+${combo}`,
+      panel.includes(`<kbd>Ctrl</kbd>+<kbd>${combo}</kbd>`), true);
+  }
 }
 
 // The row-level bindings live in renderLineItems, not in the shortcut layer;
