@@ -16,6 +16,9 @@ const HISTORY_LIMIT = 100;
 const SEARCH_LIMIT = 500;
 const SHOP_TIME_ZONE = "Asia/Kolkata";
 const PAGE_SIZE = 1000;
+// Ranking hint only — see the soldcounts branch for why this one is capped
+// when the queries around it are not.
+const SOLD_COUNT_LIMIT = 20000;
 // Keep the bill_id=in.(...) filter inside sane URL length limits.
 const BILL_ID_CHUNK = 200;
 
@@ -344,6 +347,51 @@ module.exports = async (req, res) => {
         }
 
         sendJson(res, 200, { priceMap });
+        return;
+      }
+
+      // How often each medicine has actually been sold, and when it last was.
+      //
+      // Feeds the ranking of the billing search box: a medicine this shop
+      // sells every day should not be buried under a near-identical name it
+      // has never sold. Names only — no prices, no customers — so this stays
+      // cheap enough to fetch once when the billing page opens.
+      if (req.query?.soldcounts === "1") {
+        // Newest first and capped, unlike the exhaustive queries above. This
+        // one is a ranking hint, not a record: what sold last month is what
+        // predicts the next sale, and the tail adds weight without changing
+        // the order. `truncated` says plainly when the cap was reached.
+        const rows = [];
+        let offset = 0;
+        while (rows.length < SOLD_COUNT_LIMIT) {
+          const page = await callSupabaseRest(
+            config,
+            `${ITEMS_TABLE}?select=medicine_name,created_at` +
+              `&order=created_at.desc` +
+              `&limit=${Math.min(PAGE_SIZE, SOLD_COUNT_LIMIT - rows.length)}&offset=${offset}`,
+            { method: "GET" }
+          );
+          const batch = Array.isArray(page) ? page : [];
+          rows.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          offset += batch.length;
+        }
+
+        const counts = {};
+        for (const row of rows) {
+          const key = normalizeString(row.medicine_name).toLowerCase();
+          if (!key) continue;
+          if (!counts[key]) counts[key] = { count: 0, lastSoldAt: null };
+          counts[key].count += 1;
+          // Rows arrive newest-first, so the first sighting is the latest sale.
+          if (!counts[key].lastSoldAt) counts[key].lastSoldAt = row.created_at || null;
+        }
+
+        sendJson(res, 200, {
+          counts,
+          scanned: rows.length,
+          truncated: rows.length >= SOLD_COUNT_LIMIT,
+        });
         return;
       }
 

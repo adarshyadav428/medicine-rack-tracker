@@ -1243,6 +1243,19 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+/* "Sold before" — quieter than the last-price badge on purpose. That one is a
+   number to act on; this one only explains why the row is ranked where it is. */
+.medicine-sold-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #4a6b78;
+  background: #e8f1f4;
+  border: 1px solid #cfe0e6;
+  border-radius: 999px;
+  padding: 0.03rem 0.44rem;
+  white-space: nowrap;
+}
+
 .medicine-dropdown-meta {
   font-size: 0.78rem;
   color: var(--muted);

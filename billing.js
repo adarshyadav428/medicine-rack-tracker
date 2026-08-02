@@ -31,6 +31,7 @@
     currentCustomerBalance: 0,  // cached previous balance of selected customer
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
     customerLastPrices: {},        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
+    soldCounts: {},                // { medicineName.toLowerCase(): { count, lastSoldAt } }
     customerLastPricesFor: null,   // lowercase customer name these prices belong to
   };
 
@@ -718,6 +719,103 @@
     });
   }
 
+  /**
+   * How well a medicine name answers what was typed.
+   *
+   * The search used to be a plain substring test, so results came back in
+   * whatever order the inventory happened to be stored in — typing "cro" could
+   * put an obscure item above Crocin. Higher score wins; null means no match
+   * at all.
+   *
+   * The tiers, strongest first:
+   *   exact name              1000
+   *   name starts with query   800
+   *   a word starts with query 600   "cro" -> "Tab Crocin"
+   *   every typed word appears 400   "cro 650" -> "Crocin 650mg", any order
+   *   appears anywhere         200
+   */
+  function nameMatchScore(name, query, queryWords) {
+    var n = String(name || "").toLowerCase().trim();
+    var q = String(query || "").toLowerCase().trim();
+    if (!n || !q) return null;
+
+    if (n === q) return 1000;
+    if (n.indexOf(q) === 0) return 800;
+
+    // Word-start: the typed text begins a word somewhere in the name.
+    var words = n.split(/[^a-z0-9]+/).filter(Boolean);
+    for (var i = 0; i < words.length; i += 1) {
+      if (words[i].indexOf(q) === 0) return 600;
+    }
+
+    // Multi-word: every typed word has to appear, in any order. This is what
+    // makes "650 crocin" find Crocin 650mg.
+    if (queryWords.length > 1) {
+      var all = queryWords.every(function (w) { return n.indexOf(w) !== -1; });
+      if (all) return 400;
+    }
+
+    if (n.indexOf(q) !== -1) return 200;
+    return null;
+  }
+
+  /**
+   * Sales history weight for a medicine, added on top of the name score.
+   *
+   * The tiers above are 200 apart and this tops out at 190, so history breaks
+   * ties between comparable matches but can never float a poor name match
+   * above a better one — a medicine sold a thousand times still must not
+   * outrank the item whose name was actually typed.
+   */
+  function soldWeight(nameLower) {
+    var weight = 0;
+
+    // Sold to the customer on this bill: the strongest signal there is, since
+    // repeat customers reorder the same things. Worth more on its own than
+    // any amount of shop-wide volume.
+    if (bState.customerLastPrices[nameLower]) weight += 110;
+
+    var stats = bState.soldCounts[nameLower];
+    if (stats) {
+      // Sold at all, ever. Flat bonus first, then a gentle bump by volume:
+      // logarithmic rather than linear, so a fast mover leads without a single
+      // runaway item swamping everything else.
+      weight += 40;
+      weight += Math.min(40, Math.round(Math.log(stats.count + 1) * 12));
+    }
+
+    return weight;
+  }
+
+  function rankSearchResults(items, query) {
+    var queryWords = query.split(/\s+/).filter(Boolean);
+
+    return (items || [])
+      .map(function (item) {
+        var score = nameMatchScore(item.medicineName, query, queryWords);
+        if (score === null) return null;
+
+        var nameLower = String(item.medicineName || "").toLowerCase().trim();
+        score += soldWeight(nameLower);
+
+        // In stock beats out of stock among otherwise equal matches — an item
+        // that cannot be handed over is rarely the one being looked for.
+        var qty = parseFloat(item.quantity);
+        if (!isNaN(qty) && qty > 0) score += 15;
+
+        return { item: item, score: score, len: nameLower.length };
+      })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        // Shorter name wins: "Crocin" is a better answer to "crocin" than
+        // "Crocin Advance Cold & Flu" is.
+        if (a.len !== b.len) return a.len - b.len;
+        return String(a.item.medicineName).localeCompare(String(b.item.medicineName));
+      })
+      .map(function (r) { return r.item; });
+  }
+
   function handleSearchInput() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(function () {
@@ -726,13 +824,23 @@
         hideDropdown();
         return;
       }
-      var results = (state.items || [])
-        .filter(function (item) {
-          return item.medicineName.toLowerCase().includes(query);
-        })
-        .slice(0, 12);
+      var results = rankSearchResults(state.items, query).slice(0, 12);
       renderDropdown(results, query);
     }, 150);
+  }
+
+  /**
+   * Sold-counts are a ranking hint, so a failure here is silent — the search
+   * still works, it just loses the history weighting.
+   */
+  function loadSoldCounts() {
+    requestApi("/api/bills?soldcounts=1", { method: "GET" })
+      .then(function (result) {
+        bState.soldCounts = (result && result.counts) || {};
+      })
+      .catch(function () {
+        bState.soldCounts = {};
+      });
   }
 
   function renderDropdown(results, query) {
@@ -782,6 +890,7 @@
 
       var medicineLower = (item.medicineName || "").toLowerCase().trim();
       var lastPriceInfo = bState.customerLastPrices[medicineLower];
+      var soldStats     = bState.soldCounts[medicineLower];
 
       var metaParts = [];
       if (item.seller) metaParts.push("🏢 " + escHtml(item.seller));
@@ -797,7 +906,13 @@
             '<span class="medicine-dropdown-name">' + escHtml(item.medicineName) + "</span>" +
             (lastPriceInfo
               ? '<span class="medicine-last-price-badge">Last sold: ₹' + parseFloat(lastPriceInfo.sellPrice).toFixed(2) + '</span>'
-              : "") +
+              // Says why this one is near the top when it is not this
+              // customer's own history doing the lifting.
+              : (soldStats
+                  ? '<span class="medicine-sold-badge" title="Sold ' + soldStats.count +
+                    ' time' + (soldStats.count === 1 ? "" : "s") + ' before">Sold ' +
+                    soldStats.count + '&times;</span>'
+                  : "")) +
           '</div>' +
           '<span class="medicine-dropdown-meta">' + metaParts.join(" · ") + "</span>" +
         '</div>' +
@@ -3183,6 +3298,7 @@
     recalcTotals();
     loadBillHistory();
     refreshSavedCustomers();
+    loadSoldCounts();
 
     // A bill always starts with a medicine, so start with the cursor there.
     setTimeout(function () { if (bEl.search) bEl.search.focus(); }, 0);
