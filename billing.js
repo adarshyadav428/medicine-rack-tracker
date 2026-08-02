@@ -1894,23 +1894,16 @@
       var total = round2(price * qty);
       var bg    = idx % 2 === 0 ? "#ffffff" : "#f5faf9";
 
-      // Batch and expiry print beneath the name, the way a pharmacy bill reads,
-      // rather than as two more columns on an already full-width table. Older
-      // bills predate these fields and simply have nothing to show.
-      var batchNo = escHtml(it.batch_no !== undefined ? it.batch_no : it.batchNo);
-      var expiry  = escHtml(it.expiry);
-      var packBits = [];
-      if (batchNo) packBits.push("B.No: " + batchNo);
-      if (expiry)  packBits.push("Exp: " + expiry);
-      var packLine = packBits.length
-        ? "<div style='font-size:10px;color:#7a9a96;font-weight:400;margin-top:1px;'>" +
-            packBits.join(" &nbsp;·&nbsp; ") + "</div>"
-        : "";
+      // Batch and expiry are captured and stored against the line, but they are
+      // deliberately not printed: the stock data behind them has not been
+      // uploaded yet, so most lines would print blank and the few that did not
+      // would look inconsistent. Put the packLine back under the name here once
+      // the batch data is in.
 
       return (
         "<tr style='background:" + bg + ";'>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;color:#7a9a96;font-size:11px;font-family:monospace;'>" + (idx + 1) + "</td>" +
-          "<td style='padding:6px 10px;border:1px solid #d4e8e5;font-size:12.5px;font-weight:600;color:#0d2a28;'>" + name + packLine + "</td>" +
+          "<td style='padding:6px 10px;border:1px solid #d4e8e5;font-size:12.5px;font-weight:600;color:#0d2a28;'>" + name + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:11px;color:#7a9a96;font-family:monospace;'>" + mrp + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;font-size:13px;font-weight:700;color:#0d2a28;'>" + qty + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:12px;font-family:monospace;color:#2c5f5b;'>&#8377;" + Number(price).toFixed(2) + "</td>" +
