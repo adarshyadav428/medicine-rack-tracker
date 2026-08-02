@@ -184,7 +184,7 @@
                   <tr>
                     <th style="min-width:160px;">Medicine</th>
                     <th class="num-col">MRP (₹)</th>
-                    <th class="num-col" id="purchase-price-th">Purchase (₹)</th>
+                    <th class="num-col">Purchase (₹)</th>
                     <th class="num-col" style="min-width:88px;">Markup %</th>
                     <th class="num-col" style="min-width:96px;">Sell Price (₹)</th>
                     <th class="num-col" style="min-width:68px;">Qty</th>
@@ -240,10 +240,6 @@
               </div>
             </div>
 
-            <label class="bill-roundoff-label" style="display:none;" aria-hidden="true">
-              <input type="checkbox" id="bill-roundoff-toggle" />
-              <span>Round off to nearest ₹1</span>
-            </label>
           </div>
 
           <!-- Right: grand total -->
@@ -319,6 +315,30 @@
             Import Bills
           </button>
         </div>
+        <!-- Search & date filter -->
+        <div class="bill-history-filters">
+          <div class="bill-history-search-wrap">
+            <input
+              id="bill-history-search"
+              type="search"
+              placeholder="Search bill no., customer or phone…"
+              autocomplete="off"
+              aria-label="Search bill history"
+            />
+            <span class="bill-history-search-icon" aria-hidden="true">🔍</span>
+          </div>
+          <div class="bill-history-date-range">
+            <label for="bill-history-from">From</label>
+            <input id="bill-history-from" type="date" aria-label="Bills from date" />
+            <label for="bill-history-to">To</label>
+            <input id="bill-history-to" type="date" aria-label="Bills to date" />
+          </div>
+          <button id="bill-history-clear" class="btn btn-ghost btn-xs" type="button">
+            Clear
+          </button>
+        </div>
+        <p id="bill-history-summary" class="bill-history-summary"></p>
+
         <div id="bill-history-container">
           <p class="empty-state">Loading bill history…</p>
         </div>
@@ -414,7 +434,8 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
+    <script src="ledger.js?v=20260802-ledger"></script>
     <script src="app.js?v=20260603-billing"></script>
-    <script src="billing.js?v=20260619-noredouble"></script>
+    <script src="billing.js?v=20260802-ledgerfix"></script>
   </body>
 </html>

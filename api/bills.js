@@ -11,6 +11,9 @@ const {
 const BILLS_TABLE = "bills";
 const ITEMS_TABLE = "bill_items";
 const HISTORY_LIMIT = 100;
+// A search looks back over the whole history, so it draws from a wider window
+// than the default most-recent list.
+const SEARCH_LIMIT = 500;
 const PAGE_SIZE = 1000;
 // Keep the bill_id=in.(...) filter inside sane URL length limits.
 const BILL_ID_CHUNK = 200;
@@ -103,6 +106,10 @@ function buildItemRows(billId, items) {
       medicine_id: normalizeString(item.medicineId) || null,
       medicine_name: normalizeString(item.medicineName),
       location: normalizeString(item.location),
+      // Blank rather than "" so an unrecorded batch reads as unknown, not as a
+      // batch whose number is empty.
+      batch_no: normalizeString(item.batchNo) || null,
+      expiry: normalizeString(item.expiry) || null,
       quantity: qty,
       mrp: toDecimalOrNull(item.mrp),
       purchase_price: toDecimalOrNull(item.purchasePrice),
@@ -310,11 +317,42 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Bill history list (most recent first).
+      // Every bill for one customer, oldest first.
       //
-      // Balance chaining and a customer's full history need every bill, not
-      // just a recent window — a truncated list silently produces wrong
-      // running balances. `?all=1` pages through the lot.
+      // Balance chaining must see a customer's whole history or it produces
+      // wrong running balances — but it never needs anybody else's bills.
+      // Fetching the entire table for this (which is what `?all=1` did on
+      // every single save) grows without bound as the shop trades.
+      const customerFilter = normalizeString(req.query?.customer);
+      if (customerFilter) {
+        const wanted = customerFilter.toLowerCase();
+        const rows = [];
+        let custBillOffset = 0;
+        for (;;) {
+          const page = await callSupabaseRest(
+            config,
+            `${BILLS_TABLE}?customer_name=ilike.${encodeURIComponent(customerFilter)}` +
+              `&select=*&order=created_at.asc&limit=${PAGE_SIZE}&offset=${custBillOffset}`,
+            { method: "GET" }
+          );
+          const batch = Array.isArray(page) ? page : [];
+          rows.push(...batch);
+          if (batch.length < PAGE_SIZE) break;
+          custBillOffset += PAGE_SIZE;
+        }
+        // ilike can only over-match (its wildcards are literal here); narrow
+        // back to an exact case-insensitive name so the chain matches the way
+        // balances are derived.
+        sendJson(res, 200, {
+          bills: rows.filter(
+            (b) => normalizeString(b.customer_name).toLowerCase() === wanted
+          ),
+        });
+        return;
+      }
+
+      // Whole-table history. Retained for one-off repairs; the billing page no
+      // longer calls this on every save.
       if (req.query?.all === "1") {
         const all = [];
         let offset = 0;
@@ -333,12 +371,59 @@ module.exports = async (req, res) => {
         return;
       }
 
+      // Bill history window, optionally searched and/or date-bounded.
+      //
+      // Searching has to happen here rather than over the rows the page already
+      // holds: the page holds only the newest window, so filtering client-side
+      // would confidently fail to find exactly the old bill being looked for.
+      const search = normalizeString(req.query?.search);
+      const from = normalizeString(req.query?.from);
+      const to = normalizeString(req.query?.to);
+      const filters = [];
+
+      if (search) {
+        // `,` `(` `)` and `*` are PostgREST's own separators inside or=(...).
+        // Left in place they would corrupt the filter, so they are dropped and
+        // the remainder matched as a substring.
+        const term = search.replace(/[(),*\\]/g, " ").trim();
+        if (term) {
+          const pattern = encodeURIComponent(`*${term}*`);
+          filters.push(
+            `or=(bill_number.ilike.${pattern},` +
+              `customer_name.ilike.${pattern},` +
+              `customer_phone.ilike.${pattern})`
+          );
+        }
+      }
+
+      // Dates arrive as YYYY-MM-DD. `to` is pushed to the end of that day so a
+      // single-day range includes the bills raised on it.
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+        filters.push(`created_at=gte.${encodeURIComponent(`${from}T00:00:00`)}`);
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        filters.push(`created_at=lte.${encodeURIComponent(`${to}T23:59:59.999`)}`);
+      }
+
+      const searching = filters.length > 0;
+      // A search reaches back through the whole history, so it needs a wider
+      // window than the plain most-recent list.
+      const limit = searching ? SEARCH_LIMIT : HISTORY_LIMIT;
+
       const bills = await callSupabaseRest(
         config,
-        `${BILLS_TABLE}?select=*&order=created_at.desc&limit=${HISTORY_LIMIT}`,
+        `${BILLS_TABLE}?select=*&${filters.join("&")}` +
+          `${filters.length ? "&" : ""}order=created_at.desc&limit=${limit}`,
         { method: "GET" }
       );
-      sendJson(res, 200, { bills: Array.isArray(bills) ? bills : [] });
+
+      const rows = Array.isArray(bills) ? bills : [];
+      sendJson(res, 200, {
+        bills: rows,
+        searched: searching,
+        // Lets the page say so instead of quietly showing a truncated result.
+        truncated: rows.length >= limit,
+      });
       return;
     }
 

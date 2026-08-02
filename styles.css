@@ -1272,6 +1272,44 @@ button:focus-visible {
   font-family: var(--font-mono);
 }
 
+/* Batch / expiry, tucked under the medicine name so the line-item table does
+   not need two more columns. */
+.bill-item-batch-row {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  max-width: 200px;
+}
+
+.bill-batch-input {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 0.22rem 0.4rem;
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  border: 1px solid var(--line);
+  border-radius: 0.3rem;
+  background: #fbfdfd;
+  color: #3a5560;
+}
+
+.bill-batch-input:focus {
+  background: #fff;
+  border-color: var(--brand);
+  outline: none;
+}
+
+.bill-batch-input::placeholder {
+  color: #a8bfbc;
+  font-family: var(--font-sans, inherit);
+}
+
+.bill-batch-input--exp {
+  flex: 0 0 4.4rem;
+  text-align: center;
+}
+
 .bill-item-mrp {
   font-family: var(--font-mono);
   font-size: 0.86rem;
@@ -1458,24 +1496,6 @@ button:focus-visible {
   font-size: 0.88em;
 }
 
-.bill-roundoff-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.7rem;
-  font-size: 0.84rem;
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.bill-roundoff-label input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--brand);
-  cursor: pointer;
-}
-
 .bill-roundoff-row {
   opacity: 0.75;
   font-size: 0.88rem;
@@ -1552,6 +1572,95 @@ button:focus-visible {
 .bill-btn-main {
   padding: 0.72rem 1.2rem;
   font-size: 0.95rem;
+}
+
+/* ── Bill history search & filters ─────────────────────────── */
+.bill-history-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+}
+
+.bill-history-search-wrap {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
+.bill-history-search-wrap input {
+  width: 100%;
+  padding-left: 2.1rem;
+  box-sizing: border-box;
+}
+
+.bill-history-search-icon {
+  position: absolute;
+  left: 0.72rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.82rem;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.bill-history-date-range {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.bill-history-date-range label {
+  /* Global label styling is block-level and full width; these sit inline
+     beside their input. */
+  display: inline-block;
+  width: auto;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.bill-history-date-range input[type="date"] {
+  /* Likewise: inputs default to width:100%, which stretches a date field
+     across the row and pushes the search box out of line. */
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0.42rem 0.55rem;
+  font-size: 0.84rem;
+}
+
+.bill-history-summary {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0 0 0.6rem;
+  min-height: 1.1rem;
+}
+
+.bill-history-summary.is-warn {
+  color: #8a5500;
+}
+
+/* On a phone the three controls will not sit on one line legibly, so the
+   search box takes the full width and the dates wrap beneath it. */
+@media (max-width: 640px) {
+  .bill-history-search-wrap {
+    flex: 1 1 100%;
+  }
+
+  .bill-history-date-range {
+    flex: 1 1 auto;
+  }
+
+  .bill-history-date-range input[type="date"] {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 /* ── Bill history table ────────────────────────────────────── */

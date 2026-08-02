@@ -29,18 +29,38 @@ function parseDate(str) {
   return new Date().toISOString();
 }
 
-async function generateBillNumberForDate(config, isoDate) {
+/**
+ * Next free bill number for a date: AM-YYYYMMDD-NNN
+ *
+ * Keyed off the highest sequence already issued that day, not the number of
+ * bills. Counting rows handed out a number that was already taken whenever an
+ * earlier bill had been deleted, and the insert then failed on the unique
+ * constraint. `attempt` skips further ahead when a concurrent insert wins.
+ */
+async function generateBillNumberForDate(config, isoDate, attempt = 0) {
   const d = new Date(isoDate);
   const pad = (n) => String(n).padStart(2, "0");
   const dateStr = String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
   const prefix = `AM-${dateStr}-`;
   const rows = await callSupabaseRest(
     config,
-    `${BILLS_TABLE}?bill_number=like.${encodeURIComponent(prefix)}*&select=id`,
+    `${BILLS_TABLE}?bill_number=like.${encodeURIComponent(prefix)}*&select=bill_number`,
     { method: "GET" }
   );
-  const count = Array.isArray(rows) ? rows.length : 0;
-  return `${prefix}${String(count + 1).padStart(3, "0")}`;
+
+  let maxSeq = 0;
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      const match = /-(\d+)$/.exec(String(row.bill_number || ""));
+      if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10) || 0);
+    }
+  }
+
+  return `${prefix}${String(maxSeq + 1 + attempt).padStart(3, "0")}`;
+}
+
+function isDuplicateError(error) {
+  return /duplicate|unique|conflict|23505/i.test(String(error?.message || ""));
 }
 
 module.exports = async (req, res) => {
@@ -105,18 +125,22 @@ module.exports = async (req, res) => {
       // Build line items
       const items = group.rows
         .filter((r) => normalizeString(r.medicine_name))
-        .map((r) => {
+        .map((r, index) => {
           const qty = Math.max(0.001, parseFloat(r.quantity) || 1);
           const sp = toNum(r.sell_price) ?? 0;
           return {
             medicine_name:  normalizeString(r.medicine_name),
             location:       normalizeString(r.location) || "",
+            batch_no:       normalizeString(r.batch_no) || null,
+            expiry:         normalizeString(r.expiry) || null,
             quantity:       qty,
             mrp:            toNum(r.mrp),
             purchase_price: toNum(r.purchase_price),
             sell_price:     sp,
             markup_percent: null,
             line_total:     round2(sp * qty),
+            // Keeps the imported bill's lines in CSV order when it is reopened.
+            sort_order:     index,
           };
         });
 
@@ -130,27 +154,54 @@ module.exports = async (req, res) => {
       const gstAmount = round2(subtotal * gstPct / 100);
       const grandTotal = Math.ceil(round2(subtotal + gstAmount));
 
-      try {
-        const billRows = await callSupabaseRest(config, BILLS_TABLE, {
-          method: "POST",
-          body: {
-            bill_number:    billNumber,
-            customer_name:  normalizeString(firstRow.customer_name) || "",
-            customer_phone: normalizeString(firstRow.customer_phone) || "",
-            notes:          normalizeString(firstRow.notes) || "",
-            subtotal,
-            gst_percent:    gstPct,
-            gst_amount:     gstAmount,
-            grand_total:    grandTotal,
-            created_by:     authContext.user.email,
-            created_at:     createdAt,
-            updated_at:     createdAt,
-          },
-          prefer: "return=representation",
-        });
+      // Without these the imported bill has no ledger snapshot at all, so every
+      // imported sale read as fully unpaid and inflated the customer's balance.
+      const previousBalance = round2(Math.max(0, toNum(firstRow.previous_balance) ?? 0));
+      const amountReceived  = round2(Math.max(0, toNum(firstRow.amount_received) ?? 0));
 
-        const savedBill = Array.isArray(billRows) ? billRows[0] : null;
-        if (!savedBill) throw new Error("Bill insert returned no data.");
+      const header = {
+        customer_name:    normalizeString(firstRow.customer_name) || "",
+        customer_phone:   normalizeString(firstRow.customer_phone) || "",
+        notes:            normalizeString(firstRow.notes) || "",
+        subtotal,
+        gst_percent:      gstPct,
+        gst_amount:       gstAmount,
+        grand_total:      grandTotal,
+        previous_balance: previousBalance,
+        amount_received:  amountReceived,
+        balance_due:      round2(previousBalance + grandTotal - amountReceived),
+        created_by:       authContext.user.email,
+        created_at:       createdAt,
+        updated_at:       createdAt,
+      };
+
+      try {
+        // Only an auto-generated number may be retried: a number given in the
+        // CSV was already checked for duplicates and must be honoured as-is.
+        let savedBill = null;
+        let lastError = null;
+        const maxAttempts = group.billNumber ? 1 : 5;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (attempt > 0) {
+            billNumber = await generateBillNumberForDate(config, createdAt, attempt);
+          }
+          try {
+            const billRows = await callSupabaseRest(config, BILLS_TABLE, {
+              method: "POST",
+              body: { ...header, bill_number: billNumber },
+              prefer: "return=representation",
+            });
+            savedBill = Array.isArray(billRows) ? billRows[0] : null;
+            if (savedBill) break;
+            lastError = new Error("Bill insert returned no data.");
+          } catch (insertErr) {
+            lastError = insertErr;
+            if (!isDuplicateError(insertErr)) throw insertErr;
+          }
+        }
+
+        if (!savedBill) throw lastError || new Error("Bill insert returned no data.");
 
         await callSupabaseRest(config, ITEMS_TABLE, {
           method: "POST",

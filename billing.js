@@ -13,8 +13,8 @@
     return;
   }
 
-  // How many bills the history table draws. The full list is still held in
-  // state, because balance chaining has to see every bill.
+  // How many bills the history table draws. This is now also all the page
+  // fetches — balance chaining pulls the one customer it needs on demand.
   var HISTORY_RENDER_LIMIT = 100;
 
   // -------------------------------------------------------------------------
@@ -25,14 +25,11 @@
     nextRowId: 1,         // internal DOM key counter
     currentBillId: null,  // null = new bill, uuid string = editing existing
     currentBillNumber: null,
-    billHistory: [],
+    billHistory: [],       // the rendered window only, not the whole ledger
     initialized: false,
     currentCustomerIdx: null,   // index into saved-customers array, or null
     currentCustomerBalance: 0,  // cached previous balance of selected customer
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
-    editOriginalGrandTotal: null,  // grand_total of the bill when loaded for editing
-    editOriginalReceived: null,    // received amount stored when that bill was first saved
-    editOriginalPrevBalance: null, // opening balance (prev balance snapshot) when loaded for editing
     customerLastPrices: {},        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
     customerLastPricesFor: null,   // lowercase customer name these prices belong to
   };
@@ -53,7 +50,6 @@
     itemsEmpty:       document.getElementById("bill-items-empty"),
     itemsTableWrap:   document.getElementById("bill-items-table-wrap"),
     itemsTbody:       document.getElementById("bill-items-tbody"),
-    purchasePriceTh:  document.getElementById("purchase-price-th"),
     gstPercent:       document.getElementById("bill-gst-percent"),
     subtotal:         document.getElementById("summary-subtotal"),
     gstAmount:        document.getElementById("summary-gst"),
@@ -65,6 +61,11 @@
     newBillButton:    document.getElementById("new-bill-button"),
     saveStatus:       document.getElementById("bill-save-status"),
     historyContainer:      document.getElementById("bill-history-container"),
+    historySearch:         document.getElementById("bill-history-search"),
+    historyFrom:           document.getElementById("bill-history-from"),
+    historyTo:             document.getElementById("bill-history-to"),
+    historyClear:          document.getElementById("bill-history-clear"),
+    historySummary:        document.getElementById("bill-history-summary"),
     printArea:             document.getElementById("print-receipt-area"),
     savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
     saveCustomerBtn:       document.getElementById("bill-save-customer-btn"),
@@ -77,7 +78,6 @@
     prevBalance:           document.getElementById("summary-prev-balance"),
     totalDue:              document.getElementById("summary-total-due"),
     balanceDue:            document.getElementById("summary-balance-due"),
-    roundOffToggle:        document.getElementById("bill-roundoff-toggle"),
     roundOffRow:           document.getElementById("roundoff-summary-row"),
     roundOffAmount:        document.getElementById("summary-roundoff"),
     receiptModal:          document.getElementById("receipt-modal"),
@@ -118,6 +118,32 @@
 
   function round2(n) {
     return Math.round(n * 100) / 100;
+  }
+
+  /**
+   * Escape text bound for innerHTML or a double-quoted attribute.
+   * Medicine and customer names are free text: a name containing " or & used
+   * to break the row, the edit dialog or the printed receipt it landed in.
+   */
+  /**
+   * A strip is printed "11/27", so expiry is carried as MM/YYYY throughout.
+   * The inventory holds a full date; this reduces it to the part that is
+   * actually knowable from the pack.
+   */
+  function toMonthYear(dateish) {
+    var raw = normalizeString(dateish);
+    if (!raw) return "";
+    var iso = /^(\d{4})-(\d{2})/.exec(raw);
+    if (iso) return iso[2] + "/" + iso[1];
+    return raw;
+  }
+
+  function escHtml(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function setBillingStatus(msg, tone) {
@@ -306,7 +332,7 @@
     bEl.saveCustomerStatus.className = "bill-save-customer-hint" + (tone ? " " + tone : "");
   }
 
-  function saveCurrentCustomer() {
+  async function saveCurrentCustomer() {
     var name    = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
     var phone   = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
     var balRaw  = bEl.openingBalance ? bEl.openingBalance.value : "";
@@ -323,11 +349,16 @@
       list[idx].name  = name;
       list[idx].phone = phone;
       list[idx]._dirty = true;
-      // The Opening Balance box is the anchor the running balance chains from,
-      // so it has to be sent as openingBalance, not just cached as `balance`.
+      // The balance on screen is DERIVED: opening + everything billed, less
+      // everything received and paid. Writing it back as the opening anchor
+      // would count all of that activity a second time and roughly double the
+      // customer's outstanding amount. Back the activity out first, so the
+      // figure typed here reads as the balance and nothing is double-counted.
       if (balRaw !== "") {
+        list[idx].openingBalance = Ledger.openingBalanceFor(
+          balance, list[idx].balance, list[idx].openingBalance
+        );
         list[idx].balance = balance;
-        list[idx].openingBalance = balance;
       }
       bState.currentCustomerIdx     = idx;
       bState.currentCustomerBalance = list[idx].balance || 0;
@@ -350,13 +381,14 @@
     // bills so that viewing an old bill from history always shows the correct
     // Previous Balance without relying on live inference every time.
     var finalBalance = (idx >= 0 ? list[idx].balance : list[list.length - 1].balance) || 0;
-    if (finalBalance > 0) {
-      reconstructBillSnapshots(name, finalBalance);
-      flushLedgerWrites();
-    }
 
     renderCustomerSelect();
     recalcPayment();
+
+    if (finalBalance > 0) {
+      reconstructBillSnapshots(await fetchCustomerLedger(name), finalBalance);
+      await flushLedgerWrites();
+    }
   }
 
   // Snapshots rebuilt below are queued here and written to the server, so the
@@ -377,33 +409,79 @@
       });
   }
 
-  // Walk backwards through bill history for a customer and fill in any missing
+  // -------------------------------------------------------------------------
+  // Customer ledger timeline
+  //
+  // A customer's balance moves for two reasons: a bill is raised (and part of
+  // it possibly settled at the counter), and a standalone payment is recorded
+  // against the account. Every previous-balance figure below is chained over
+  // BOTH, merged in date order. Chaining over bills alone — which is what this
+  // file used to do — silently overstated the balance of anyone who had ever
+  // paid outside a bill, and printed that inflated figure on their receipts.
+  // -------------------------------------------------------------------------
+
+  /** Standalone payments for a customer, newest-first. Never throws. */
+  async function fetchCustomerPayments(custName) {
+    var name = normalizeString(custName);
+    if (!name) return [];
+    try {
+      var result = await requestApi(
+        "/api/payments?customer=" + encodeURIComponent(name),
+        { method: "GET" }
+      );
+      return Array.isArray(result.payments) ? result.payments : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * Every bill for one customer, oldest first. Scoped server-side: the page no
+   * longer holds the whole shop's history just to chain one account.
+   * Their ledger snapshots are cached on the way through.
+   */
+  async function fetchCustomerBills(custName) {
+    var name = normalizeString(custName);
+    if (!name) return [];
+    try {
+      var result = await requestApi(
+        "/api/bills?customer=" + encodeURIComponent(name),
+        { method: "GET" }
+      );
+      var bills = Array.isArray(result.bills) ? result.bills : [];
+      noteBillLedgerRows(bills);
+      return bills;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /** Both sides of a customer's ledger, fetched together. */
+  async function fetchCustomerLedger(custName) {
+    var pair = await Promise.all([
+      fetchCustomerBills(custName),
+      fetchCustomerPayments(custName),
+    ]);
+    return { bills: pair[0], payments: pair[1] };
+  }
+
+  /** billRecv as the (billId, bill) callback ledger.js expects. */
+  function recvFor(billId) {
+    return billRecv(billId);
+  }
+
+  // Walk backwards through a customer's ledger and fill in any missing
   // previous-balance snapshots, using currentBalance as the anchor.
   // Existing snapshots are never overwritten.
-  function reconstructBillSnapshots(custName, currentBalance) {
-    var cname = custName.toLowerCase();
-    var balance = parseFloat(currentBalance) || 0;
-    if (!bState.billHistory.length) return;
-    var customerBills = bState.billHistory
-      .filter(function (b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
-      .sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
-    if (!customerBills.length) return;
-    var runningBal = balance;
-    for (var i = 0; i < customerBills.length; i++) {
-      var b = customerBills[i];
-      var recvForBill = billRecv(b.id);
-      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + recvForBill);
-      if (billPrev(b.id) === null) {
-        setBillLedger(b.id, Math.max(0, prevBal), recvForBill);
-        pendingLedgerWrites.push({
-          id: b.id,
-          previousBalance: Math.max(0, prevBal),
-          amountReceived: recvForBill,
-          grandTotal: Math.ceil(b.grand_total),
-        });
-      }
-      runningBal = prevBal;
-    }
+  function reconstructBillSnapshots(ledger, currentBalance) {
+    var events = Ledger.buildTimeline(ledger.bills, ledger.payments, "desc");
+    if (!events.length) return;
+
+    Ledger.chainBackward(events, currentBalance, recvFor).forEach(function (snap) {
+      if (billPrev(snap.id) !== null) return; // never overwrite a real snapshot
+      setBillLedger(snap.id, snap.previousBalance, snap.amountReceived);
+      pendingLedgerWrites.push(snap);
+    });
   }
 
   async function restoreCustomersFromHistory() {
@@ -450,93 +528,86 @@
   // forward, then set the customer's stored running balance to the computed total.
   // The first bill's existing snapshot is used as the starting anchor (ground truth).
   // All subsequent bills have their snapshots overwritten with the correct value.
-  function reconcileCustomerBalance() {
+  async function reconcileCustomerBalance() {
     var custName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
     if (!custName) {
       setSaveCustomerStatus("Select or enter a customer name first.", "is-warn");
       return;
     }
-    if (!bState.billHistory.length) {
-      setSaveCustomerStatus("Bill history not loaded. Try again shortly.", "is-warn");
-      return;
-    }
-
     var cname = custName.toLowerCase();
-    var customerBills = bState.billHistory
-      .filter(function (b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
-      .sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); }); // oldest first
+    var btn = bEl.repairBalanceBtn;
+    if (btn) { btn.disabled = true; btn.textContent = "Repairing…"; }
+    setSaveCustomerStatus("Re-chaining balances…", "is-info");
 
-    if (!customerBills.length) {
-      setSaveCustomerStatus("No bills found for \"" + custName + "\".", "is-warn");
-      return;
-    }
+    try {
+      // Bills and standalone payments both move the balance, so the chain walks
+      // the two merged in date order.
+      var ledger = await fetchCustomerLedger(custName);
+      if (!ledger.bills.length) {
+        setSaveCustomerStatus("No bills found for \"" + custName + "\".", "is-warn");
+        return;
+      }
+      var events = Ledger.buildTimeline(ledger.bills, ledger.payments, "asc");
 
-    // Anchor: whatever is stored for the FIRST (oldest) bill — user should have
-    // already corrected this if it was wrong (e.g. via Edit bill + change Opening Balance).
-    var firstBill = customerBills[0];
-    var startingBalance = (billPrev(firstBill.id) || 0);
+      // Anchor: whatever is stored for the FIRST (oldest) bill — user should have
+      // already corrected this if it was wrong (e.g. via Edit bill + change Opening Balance).
+      var firstBillEvent = events.find(function (ev) { return ev.type === "bill"; });
+      var anchor = firstBillEvent ? (billPrev(firstBillEvent.bill.id) || 0) : 0;
 
-    // Walk forward: set each bill's snapshot, then advance by (grandTotal - received)
-    var runningBalance = startingBalance;
-    var ledgerUpdates = [];
-    for (var i = 0; i < customerBills.length; i++) {
-      var bill = customerBills[i];
-      var grandTotal = Math.ceil(bill.grand_total);
-      var received   = billRecv(bill.id);
+      var chain = Ledger.chainForward(events, anchor, recvFor);
+      var ledgerUpdates  = chain.updates;
+      var paymentCount   = chain.paymentCount;
+      var runningBalance = chain.finalBalance;
 
-      setBillLedger(bill.id, runningBalance, received);
-      ledgerUpdates.push({
-        id: bill.id,
-        previousBalance: runningBalance,
-        amountReceived: received,
-        grandTotal: grandTotal,
+      ledgerUpdates.forEach(function (u) {
+        setBillLedger(u.id, u.previousBalance, u.amountReceived);
       });
 
-      runningBalance = round2(runningBalance + grandTotal - received);
-    }
-
-    // Write the re-chained snapshots back so every device sees the repair.
-    requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: ledgerUpdates } })
-      .then(function () { refreshSavedCustomers(); })
-      .catch(function (err) {
+      // Write the re-chained snapshots back so every device sees the repair.
+      try {
+        await requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: ledgerUpdates } });
+        await refreshSavedCustomers();
+      } catch (err) {
         setSaveCustomerStatus(
           "Re-chained on screen, but saving to the server failed: " +
             (err.message || "unknown error"),
           "is-warn"
         );
-      });
+      }
 
-    // Persist the corrected customer balance
-    var custList = loadSavedCustomers();
-    var cidx = bState.currentCustomerIdx;
-    if (cidx === null || cidx === undefined) {
-      cidx = custList.findIndex(function (c) { return c.name.toLowerCase() === cname; });
-    }
-    if (cidx >= 0) {
-      custList[cidx].balance = runningBalance;
-      persistSavedCustomers(custList);
-      bState.currentCustomerIdx     = cidx;
-      bState.currentCustomerBalance = runningBalance;
-      renderCustomerSelect();
-    }
+      // Point the local cache at the recomputed figure. The refresh above
+      // already replaced it with the server's derived balance where that
+      // succeeded; this keeps the two consistent when it did not.
+      var custList = loadSavedCustomers();
+      var cidx = custList.findIndex(function (c) { return c.name.toLowerCase() === cname; });
+      if (cidx >= 0) {
+        custList[cidx].balance = runningBalance;
+        bState.currentCustomerIdx     = cidx;
+        bState.currentCustomerBalance = runningBalance;
+        renderCustomerSelect();
+      }
 
-    // Update the opening balance field:
-    // — in edit mode: show the corrected snapshot for the bill being edited
-    // — in new-bill mode: show the customer's running total (= prev balance for next bill)
-    if (bState.currentBillId) {
-      var thisBillPrev = (billPrev(bState.currentBillId) || 0);
-      bState.editOriginalPrevBalance = thisBillPrev;
-      bState.currentCustomerBalance  = thisBillPrev;
-      if (bEl.openingBalance) bEl.openingBalance.value = thisBillPrev > 0 ? String(thisBillPrev) : "";
-    } else {
-      if (bEl.openingBalance) bEl.openingBalance.value = runningBalance > 0 ? String(runningBalance) : "";
-    }
+      // Update the opening balance field:
+      // — in edit mode: show the corrected snapshot for the bill being edited
+      // — in new-bill mode: show the customer's running total (= prev balance for next bill)
+      if (bState.currentBillId) {
+        var thisBillPrev = (billPrev(bState.currentBillId) || 0);
+        bState.currentCustomerBalance  = thisBillPrev;
+        if (bEl.openingBalance) bEl.openingBalance.value = thisBillPrev > 0 ? String(thisBillPrev) : "";
+      } else {
+        if (bEl.openingBalance) bEl.openingBalance.value = runningBalance > 0 ? String(runningBalance) : "";
+      }
 
-    recalcPayment();
-    setSaveCustomerStatus(
-      "✅ " + customerBills.length + " bill(s) re-chained. Balance: ₹" + runningBalance,
-      "is-ok"
-    );
+      recalcPayment();
+      setSaveCustomerStatus(
+        "✅ " + ledgerUpdates.length + " bill(s) re-chained" +
+          (paymentCount ? " across " + paymentCount + " payment(s)" : "") +
+          ". Balance: ₹" + runningBalance,
+        "is-ok"
+      );
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Repair Balance"; }
+    }
   }
 
   // Fetch and cache the last sell price for each medicine sold to a customer.
@@ -651,8 +722,8 @@
       var lastPriceInfo = bState.customerLastPrices[medicineLower];
 
       var metaParts = [];
-      if (item.seller) metaParts.push("🏢 " + item.seller);
-      if (item.location) metaParts.push("📍 " + item.location);
+      if (item.seller) metaParts.push("🏢 " + escHtml(item.seller));
+      if (item.location) metaParts.push("📍 " + escHtml(item.location));
       if (item.mrp !== null && item.mrp !== undefined) metaParts.push("MRP: ₹" + item.mrp);
       if (purchase !== null) metaParts.push("Buy: ₹" + purchase);
       if (sell !== null) metaParts.push("Sell: ₹" + sell);
@@ -661,7 +732,7 @@
       el.innerHTML =
         '<div class="medicine-dropdown-item-content">' +
           '<div class="medicine-dropdown-name-row">' +
-            '<span class="medicine-dropdown-name">' + item.medicineName + "</span>" +
+            '<span class="medicine-dropdown-name">' + escHtml(item.medicineName) + "</span>" +
             (lastPriceInfo
               ? '<span class="medicine-last-price-badge">Last sold: ₹' + parseFloat(lastPriceInfo.sellPrice).toFixed(2) + '</span>'
               : "") +
@@ -859,6 +930,8 @@
         sellPrice:     sellRaw,
         markupPercent: isNaN(markupRaw) ? null : markupRaw,
         quantity:      qty,
+        batchNo:       "",
+        expiry:        "",
       });
 
       renderLineItems();
@@ -918,7 +991,7 @@
           '<div class="manual-add-fields">',
             '<div class="manual-add-field manual-add-field--wide">',
               '<label for="manual-name">Medicine Name *</label>',
-              '<input type="text" id="manual-name" autocomplete="off" maxlength="200" value="' + (invItem.medicineName || "") + '" />',
+              '<input type="text" id="manual-name" autocomplete="off" maxlength="200" value="' + escHtml(invItem.medicineName) + '" />',
             '</div>',
             '<div class="manual-add-field">',
               '<label for="manual-mrp">MRP (&#8377;) *</label>',
@@ -938,7 +1011,7 @@
             '</div>',
             '<div class="manual-add-field">',
               '<label for="manual-location">Rack / Location <span class="manual-optional">(optional)</span></label>',
-              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" value="' + (invItem.location || "") + '" />',
+              '<input type="text" id="manual-location" autocomplete="off" maxlength="100" value="' + escHtml(invItem.location) + '" />',
             '</div>',
             '<div class="manual-add-field">',
               '<label for="manual-stock-qty">Stock Qty <span class="manual-optional">(optional)</span></label>',
@@ -1091,6 +1164,11 @@
       sellPrice:     Number(sell) || 0,
       markupPercent: markupPct,
       quantity:      1,
+      // Batch is only on the pack, so it is always typed. Expiry is prefilled
+      // from the inventory when it knows one, and stays editable — the strip
+      // in hand may be a different lot from the one last recorded.
+      batchNo:       "",
+      expiry:        toMonthYear(medicine.expiryDate),
     });
 
     var newRowId = rowId;
@@ -1125,7 +1203,15 @@
     var item = bState.lineItems.find(function (r) { return r._rowId === rowId; });
     if (!item) return;
 
-    if (field === "mrp") {
+    if (field === "batchNo") {
+      item.batchNo = String(rawValue || "");
+      return; // text only — no totals to redraw
+
+    } else if (field === "expiry") {
+      item.expiry = String(rawValue || "");
+      return;
+
+    } else if (field === "mrp") {
       var mrp = parseFloat(rawValue);
       item.mrp = isNaN(mrp) ? null : mrp;
       return; // MRP doesn't affect totals
@@ -1189,8 +1275,21 @@
 
       tr.innerHTML =
         "<td>" +
-          '<div class="bill-item-name" title="' + item.medicineName + '">' + item.medicineName + "</div>" +
-          '<div class="bill-item-location">' + (item.location || "—") + "</div>" +
+          '<div class="bill-item-name" title="' + escHtml(item.medicineName) + '">' + escHtml(item.medicineName) + "</div>" +
+          '<div class="bill-item-location">' + escHtml(item.location || "—") + "</div>" +
+          // Batch and expiry belong to the product, so they sit under its name
+          // rather than adding two more columns to an already wide table.
+          '<div class="bill-item-batch-row">' +
+            '<input id="batch-' + item._rowId + '" class="bill-batch-input" type="text"' +
+            ' data-col="batch" maxlength="40" placeholder="Batch"' +
+            ' aria-label="Batch number for ' + escHtml(item.medicineName) + '"' +
+            ' value="' + escHtml(item.batchNo) + '" />' +
+            '<input id="expiry-' + item._rowId + '" class="bill-batch-input bill-batch-input--exp" type="text"' +
+            ' data-col="expiry" maxlength="7" placeholder="MM/YY"' +
+            ' inputmode="numeric"' +
+            ' aria-label="Expiry for ' + escHtml(item.medicineName) + '"' +
+            ' value="' + escHtml(item.expiry) + '" />' +
+          "</div>" +
         "</td>" +
         '<td class="num-col">' +
           '<input id="mrp-' + item._rowId + '" class="bill-table-input" type="number"' +
@@ -1263,6 +1362,8 @@
       var qtyInput    = document.getElementById("qty-"    + item._rowId);
       var sellInput   = document.getElementById("sell-"   + item._rowId);
       var markupInput = document.getElementById("markup-" + item._rowId);
+      var batchInput  = document.getElementById("batch-"  + item._rowId);
+      var expiryInput = document.getElementById("expiry-" + item._rowId);
 
       function bindInput(el, field, onEnter) {
         if (!el) return;
@@ -1291,10 +1392,50 @@
         var qty = document.getElementById("qty-" + item._rowId);
         if (qty) { qty.focus(); qty.select(); }
       });
+      // Enter runs money first, then the pack details, then back to search —
+      // so the fast path (price, qty, next medicine) is unchanged for anyone
+      // who tabs past batch and expiry.
       bindInput(qtyInput, "quantity", function () {
+        if (batchInput) { batchInput.focus(); batchInput.select(); }
+        else if (bEl.search) bEl.search.focus();
+      });
+      bindInput(batchInput, "batchNo", function () {
+        if (expiryInput) { expiryInput.focus(); expiryInput.select(); }
+      });
+      bindInput(expiryInput, "expiry", function () {
         if (bEl.search) bEl.search.focus();
       });
+
+      // "1127" / "11-27" / "11/2027" all normalise to 11/27 on the way out.
+      if (expiryInput) {
+        expiryInput.addEventListener("blur", function () {
+          var tidy = normalizeExpiry(expiryInput.value);
+          if (tidy !== expiryInput.value) {
+            expiryInput.value = tidy;
+            updateLineItemField(item._rowId, "expiry", tidy);
+          }
+        });
+      }
     });
+  }
+
+  /**
+   * Tidy a typed expiry into MM/YY. Anything that is not recognisably a
+   * month/year is left exactly as typed rather than mangled — a pack that
+   * genuinely reads something else should still be recordable.
+   */
+  function normalizeExpiry(raw) {
+    var s = normalizeString(raw);
+    if (!s) return "";
+
+    var m = /^(\d{1,2})\s*[\/\-.]?\s*(\d{2}|\d{4})$/.exec(s);
+    if (!m) return s;
+
+    var month = parseInt(m[1], 10);
+    if (month < 1 || month > 12) return s;
+
+    var year = m[2].length === 4 ? m[2].slice(2) : m[2];
+    return String(month).padStart(2, "0") + "/" + year;
   }
 
   function navigateTableInput(input, direction) {
@@ -1385,6 +1526,8 @@
           sellPrice:     item.sellPrice,
           markupPercent: item.markupPercent,
           quantity:      item.quantity,
+          batchNo:       item.batchNo || "",
+          expiry:        normalizeExpiry(item.expiry),
         };
       }),
     };
@@ -1416,8 +1559,6 @@
         var _newRecv    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
         var _newPrevBal = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
         setBillLedger(bState.currentBillId, _newPrevBal, _newRecv);
-        bState.editOriginalPrevBalance = _newPrevBal;
-        bState.editOriginalReceived    = _newRecv;
       } else {
         // Create new bill
         var result = await requestApi("/api/bills", { method: "POST", body: payload });
@@ -1442,12 +1583,17 @@
         if (custName) {
           var custList = loadSavedCustomers();
 
-          // Resolve customer index: prefer current state, fallback to name/phone lookup
+          // Resolve the customer by the name actually on the bill. The cached
+          // index is only honoured when it still points at that same person —
+          // a stale index (customer picked, then the name edited) would
+          // otherwise carry someone else's balance onto this bill and skip
+          // creating the real customer.
+          var _lowerName = custName.toLowerCase();
           var idx = bState.currentCustomerIdx;
-          if (idx === null) {
+          if (idx === null || !custList[idx] ||
+              custList[idx].name.toLowerCase() !== _lowerName) {
             idx = custList.findIndex(function (c) {
-              return c.name.toLowerCase() === custName.toLowerCase() ||
-                (custPhone && c.phone && c.phone === custPhone);
+              return c.name.toLowerCase() === _lowerName;
             });
           }
 
@@ -1492,9 +1638,6 @@
           // stays what it was before the bill. Advancing it here (and blanking
           // Received) made the bill's own amount show up twice in Total Due,
           // and a re-save then wrote that doubled figure onto the bill.
-          bState.editOriginalGrandTotal  = grandTot;
-          bState.editOriginalReceived    = received;
-          bState.editOriginalPrevBalance = prevBal;
           renderCustomerSelect();
           recalcPayment();
         }
@@ -1557,26 +1700,50 @@
       return s + round2((it.sell_price !== undefined ? it.sell_price : it.sellPrice) * it.quantity);
     }, 0));
     var gstAmt     = round2(subtotal * gstPct / 100);
-    var grandTotal = Math.ceil(round2(subtotal + gstAmt));
+    var preRound   = round2(subtotal + gstAmt);
+    var grandTotal = Math.ceil(preRound);
+    // Shown on the receipt whenever it is non-zero. Without it the customer
+    // reads "Subtotal + GST" that does not add up to the Bill Amount.
+    var roundOff   = round2(grandTotal - preRound);
 
     var totalDue    = round2(grandTotal + prevBal);
     var balanceDue  = round2(totalDue - received);
 
-    var intPart  = Math.floor(totalDue);
-    var decPart  = Math.round((totalDue - intPart) * 100);
-    var amtWords = "Rupees " + numToWords(intPart) + (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only";
+    // A customer in credit makes totalDue negative. numToWords only handles
+    // non-negative amounts — feeding it a negative one indexed past the start
+    // of its word tables and printed "undefined" on the receipt.
+    var absDue   = Math.abs(totalDue);
+    var intPart  = Math.floor(absDue);
+    var decPart  = Math.round((absDue - intPart) * 100);
+    var amtWords = "Rupees " + numToWords(intPart) +
+      (decPart ? " and " + numToWords(decPart) + " Paise" : "") + " Only" +
+      (totalDue < 0 ? " (in credit)" : "");
 
     var rowsHtml = items.map(function (it, idx) {
-      var name  = it.medicine_name || it.medicineName || "—";
+      var name  = escHtml(it.medicine_name || it.medicineName || "—");
       var mrp   = (it.mrp !== null && it.mrp !== undefined) ? "&#8377;" + Number(it.mrp).toFixed(2) : "—";
       var qty   = it.quantity;
       var price = it.sell_price !== undefined ? it.sell_price : it.sellPrice;
       var total = round2(price * qty);
       var bg    = idx % 2 === 0 ? "#ffffff" : "#f5faf9";
+
+      // Batch and expiry print beneath the name, the way a pharmacy bill reads,
+      // rather than as two more columns on an already full-width table. Older
+      // bills predate these fields and simply have nothing to show.
+      var batchNo = escHtml(it.batch_no !== undefined ? it.batch_no : it.batchNo);
+      var expiry  = escHtml(it.expiry);
+      var packBits = [];
+      if (batchNo) packBits.push("B.No: " + batchNo);
+      if (expiry)  packBits.push("Exp: " + expiry);
+      var packLine = packBits.length
+        ? "<div style='font-size:10px;color:#7a9a96;font-weight:400;margin-top:1px;'>" +
+            packBits.join(" &nbsp;·&nbsp; ") + "</div>"
+        : "";
+
       return (
         "<tr style='background:" + bg + ";'>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;color:#7a9a96;font-size:11px;font-family:monospace;'>" + (idx + 1) + "</td>" +
-          "<td style='padding:6px 10px;border:1px solid #d4e8e5;font-size:12.5px;font-weight:600;color:#0d2a28;'>" + name + "</td>" +
+          "<td style='padding:6px 10px;border:1px solid #d4e8e5;font-size:12.5px;font-weight:600;color:#0d2a28;'>" + name + packLine + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:11px;color:#7a9a96;font-family:monospace;'>" + mrp + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:center;font-size:13px;font-weight:700;color:#0d2a28;'>" + qty + "</td>" +
           "<td style='padding:6px 8px;border:1px solid #d4e8e5;text-align:right;font-size:12px;font-family:monospace;color:#2c5f5b;'>&#8377;" + Number(price).toFixed(2) + "</td>" +
@@ -1597,7 +1764,10 @@
               "<div style='font-size:11px;color:rgba(255,255,255,0.75);'>Mob: 8470900910</div>" +
             "</div>" +
             "<div style='text-align:right;'>" +
-              "<div style='font-size:9.5px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.55);'>TAX INVOICE</div>" +
+              // Not "TAX INVOICE": that is a document only a GST-registered
+              // dealer may issue, and it has to carry a GSTIN. This shop is
+              // not registered, so the receipt is a plain invoice.
+              "<div style='font-size:9.5px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.55);'>INVOICE</div>" +
               "<div style='font-size:15px;font-weight:800;font-family:monospace;color:#8febe4;margin-top:2px;letter-spacing:0.5px;'>" + billNo + "</div>" +
               "<div style='font-size:11px;color:rgba(255,255,255,0.68);margin-top:3px;'>" + dateStr + " &nbsp;·  " + timeStr + "</div>" +
             "</div>" +
@@ -1613,9 +1783,9 @@
         "<div style='border:1px solid #c4e2de;border-top:none;padding:10px 18px;background:#f0faf8;'>" +
           "<div style='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#5a9490;margin-bottom:4px;'>Bill To</div>" +
           (customer
-            ? "<div style='font-size:14px;font-weight:700;color:#0d2a28;'>" + customer + "</div>"
+            ? "<div style='font-size:14px;font-weight:700;color:#0d2a28;'>" + escHtml(customer) + "</div>"
             : "<div style='font-size:13px;color:#7a9a96;font-style:italic;'>—</div>") +
-          (phone ? "<div style='font-size:11.5px;color:#3d6560;margin-top:2px;'>Mob: " + phone + "</div>" : "") +
+          (phone ? "<div style='font-size:11.5px;color:#3d6560;margin-top:2px;'>Mob: " + escHtml(phone) + "</div>" : "") +
         "</div>" +
 
         /* ── Items table ── */
@@ -1642,6 +1812,13 @@
             (gstPct > 0
               ? "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;'>" +
                   "<span>GST (" + gstPct + "%)</span><span style='font-family:monospace;'>&#8377;" + gstAmt.toFixed(2) + "</span>" +
+                "</div>"
+              : "") +
+            (roundOff !== 0
+              ? "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#7a9a96;'>" +
+                  "<span>Round Off</span><span style='font-family:monospace;'>" +
+                    (roundOff > 0 ? "+" : "−") + "&#8377;" + Math.abs(roundOff).toFixed(2) +
+                  "</span>" +
                 "</div>"
               : "") +
             "<div style='display:flex;justify-content:space-between;padding:6px 12px;border-bottom:1px solid #dff0ed;font-size:13.5px;font-weight:700;color:#0d2a28;'>" +
@@ -1673,7 +1850,7 @@
         /* ── Notes ── */
         (notes
           ? "<div style='margin-top:5px;font-size:11px;border:1px dashed #a8d4cf;padding:5px 10px;border-radius:4px;color:#3d6560;background:#f8fcfb;'>" +
-              "<strong>Note:</strong> " + notes +
+              "<strong>Note:</strong> " + escHtml(notes) +
             "</div>"
           : "") +
 
@@ -1692,7 +1869,7 @@
         "</div>" +
 
         /* ── Computer-generated tag ── */
-        "<div style='text-align:center;margin-top:10px;padding-top:7px;border-top:1px dashed #c4e2de;font-size:10px;color:#9abfbb;letter-spacing:0.3px;'>This is a computer generated tax invoice.</div>" +
+        "<div style='text-align:center;margin-top:10px;padding-top:7px;border-top:1px dashed #c4e2de;font-size:10px;color:#9abfbb;letter-spacing:0.3px;'>This is a computer generated invoice.</div>" +
 
       "</div>"
     );
@@ -1722,7 +1899,6 @@
     if (bEl.customerPhone)  bEl.customerPhone.value  = "";
     if (bEl.notes)          bEl.notes.value          = "";
     if (bEl.gstPercent)     bEl.gstPercent.value     = "0";
-    if (bEl.roundOffToggle) bEl.roundOffToggle.checked = false;
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
     if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
@@ -1730,9 +1906,6 @@
     if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
     bState.currentCustomerIdx     = null;
     bState.currentCustomerBalance = 0;
-    bState.editOriginalGrandTotal  = null;
-    bState.editOriginalReceived    = null;
-    bState.editOriginalPrevBalance = null;
     bState.balanceCarriedForward   = false;
     bState.customerLastPrices      = {};
     bState.customerLastPricesFor   = null;
@@ -1747,11 +1920,13 @@
   // -------------------------------------------------------------------------
   // Import Bills
   // -------------------------------------------------------------------------
-  var CSV_HEADERS = ["date","bill_number","customer_name","customer_phone","notes","gst_percent","medicine_name","location","quantity","mrp","purchase_price","sell_price"];
+  // amount_received is read from the first row of each bill. Leaving it blank
+  // imports the bill as fully unpaid, which is what an old credit ledger means.
+  var CSV_HEADERS = ["date","bill_number","customer_name","customer_phone","notes","gst_percent","medicine_name","location","batch_no","expiry","quantity","mrp","purchase_price","sell_price","amount_received"];
   var CSV_TEMPLATE = CSV_HEADERS.join(",") + "\r\n" +
-    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Calpol 500 Tab,A1,3,14.26,8.00,10.55\r\n" +
-    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Cefitaxe O Tab,A2,2,140.60,50.00,63.00\r\n" +
-    "2026-06-01,,Dr. Sanjay,,,,Amul 500g New,,1,263.00,200.00,247.00\r\n";
+    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Calpol 500 Tab,A1,B2231,11/27,3,14.26,8.00,10.55,100\r\n" +
+    "2026-06-01,AM-20260601-001,Dr. Yaswant,9616095373,,0,Cefitaxe O Tab,A2,,,2,140.60,50.00,63.00,\r\n" +
+    "2026-06-01,,Dr. Sanjay,,,,Amul 500g New,,,,1,263.00,200.00,247.00,247\r\n";
 
   var importParsedRows = [];
 
@@ -2021,10 +2196,6 @@
     reader.readAsText(file);
   }
 
-  function escHtml(s) {
-    return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  }
-
   function renderImportPreview(rows) {
     var preview = document.getElementById("import-preview");
     var info    = document.getElementById("import-preview-info");
@@ -2134,18 +2305,109 @@
   // -------------------------------------------------------------------------
   // Bill History
   // -------------------------------------------------------------------------
+  /** Current search box / date range, as query parameters. */
+  function historyQuery() {
+    var params = [];
+    var term = normalizeString(bEl.historySearch ? bEl.historySearch.value : "");
+    var from = bEl.historyFrom ? bEl.historyFrom.value : "";
+    var to   = bEl.historyTo   ? bEl.historyTo.value   : "";
+    if (term) params.push("search=" + encodeURIComponent(term));
+    if (from) params.push("from=" + encodeURIComponent(from));
+    if (to)   params.push("to="   + encodeURIComponent(to));
+    return { qs: params.length ? "?" + params.join("&") : "", active: params.length > 0, term: term };
+  }
+
+  function setHistorySummary(msg, tone) {
+    if (!bEl.historySummary) return;
+    bEl.historySummary.textContent = msg || "";
+    bEl.historySummary.className = "bill-history-summary" + (tone ? " " + tone : "");
+  }
+
+  // A search is a round trip, so a stale reply must not overwrite a newer one.
+  var historyRequestSeq = 0;
+
   async function loadBillHistory() {
+    var query = historyQuery();
+    var mySeq = ++historyRequestSeq;
+
+    if (query.active) setHistorySummary("Searching…");
+
     try {
-      var result = await requestApi("/api/bills?all=1", { method: "GET" });
+      // Only the matching window. Balance chaining used to force the whole
+      // table down the wire here on every save; it now fetches just the one
+      // customer it is chaining, via fetchCustomerLedger().
+      var result = await requestApi("/api/bills" + query.qs, { method: "GET" });
+      if (mySeq !== historyRequestSeq) return; // a later search already answered
+
       bState.billHistory = result.bills || [];
       noteBillLedgerRows(bState.billHistory);
       renderBillHistory();
+
+      if (!query.active) {
+        setHistorySummary(
+          bState.billHistory.length >= HISTORY_RENDER_LIMIT
+            ? "Showing the " + HISTORY_RENDER_LIMIT + " most recent bills. Search to reach older ones."
+            : bState.billHistory.length + " bill(s)."
+        );
+      } else if (!bState.billHistory.length) {
+        setHistorySummary(
+          "No bills match" + (query.term ? ' "' + query.term + '"' : " that date range") + ".",
+          "is-warn"
+        );
+      } else {
+        var total = bState.billHistory.reduce(function (sum, b) {
+          return sum + Math.ceil(parseFloat(b.grand_total) || 0);
+        }, 0);
+        setHistorySummary(
+          bState.billHistory.length + " bill(s) found · total " + fmtMoney(total) +
+            (result.truncated ? " — showing the most recent matches only; narrow the search to see the rest." : ""),
+          result.truncated ? "is-warn" : ""
+        );
+      }
     } catch (error) {
+      if (mySeq !== historyRequestSeq) return;
+      setHistorySummary("");
       if (bEl.historyContainer) {
         bEl.historyContainer.innerHTML =
           '<p class="status-message is-error">Could not load bill history: ' +
-          (error.message || "Unknown error") + "</p>";
+          escHtml(error.message || "Unknown error") + "</p>";
       }
+    }
+  }
+
+  function initHistorySearch() {
+    var timer = null;
+    function debounced() {
+      clearTimeout(timer);
+      timer = setTimeout(loadBillHistory, 300);
+    }
+
+    if (bEl.historySearch) {
+      bEl.historySearch.addEventListener("input", debounced);
+      bEl.historySearch.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); loadBillHistory(); }
+        // A search box's native clear button fires "search", but Escape does
+        // not always, so reset explicitly.
+        if (e.key === "Escape") { bEl.historySearch.value = ""; clearTimeout(timer); loadBillHistory(); }
+      });
+      bEl.historySearch.addEventListener("search", function () {
+        clearTimeout(timer);
+        loadBillHistory();
+      });
+    }
+
+    // Dates change one whole step at a time, so they reload immediately.
+    if (bEl.historyFrom) bEl.historyFrom.addEventListener("change", loadBillHistory);
+    if (bEl.historyTo)   bEl.historyTo.addEventListener("change", loadBillHistory);
+
+    if (bEl.historyClear) {
+      bEl.historyClear.addEventListener("click", function () {
+        if (bEl.historySearch) bEl.historySearch.value = "";
+        if (bEl.historyFrom)   bEl.historyFrom.value   = "";
+        if (bEl.historyTo)     bEl.historyTo.value     = "";
+        clearTimeout(timer);
+        loadBillHistory();
+      });
     }
   }
 
@@ -2244,27 +2506,32 @@
   // at the time a specific bill was created. Uses the customer's current stored
   // balance as the starting point and subtracts grand_totals going backwards.
   // Only used for old bills that predate the per-bill ledger snapshot.
-  function inferPrevBalanceFromHistory(bill) {
+  async function inferPrevBalanceFromHistory(bill) {
     if (!bill || !bill.customer_name) return 0;
     var cname = bill.customer_name.toLowerCase();
     var custList = loadSavedCustomers();
     var custIdx = custList.findIndex(function(c) { return c.name.toLowerCase() === cname; });
     if (custIdx < 0) return 0;
-    var currentBalance = parseFloat(custList[custIdx].balance) || 0;
-    // Sort this customer's bills most-recent first
-    var customerBills = (bState.billHistory || [])
-      .filter(function(b) { return b.customer_name && b.customer_name.toLowerCase() === cname; })
-      .sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
-    // Walk backwards: prevBal_for_bill = runningBalance - ceil(grandTotal) + received
-    var runningBal = currentBalance;
-    for (var i = 0; i < customerBills.length; i++) {
-      var b = customerBills[i];
-      var recvForBill = billRecv(b.id);
-      var prevBal  = round2(runningBal - Math.ceil(b.grand_total) + recvForBill);
-      if (b.id === bill.id) return Math.max(0, prevBal);
-      runningBal = prevBal;
+
+    // Walk the merged bill+payment timeline backwards from today's balance.
+    var ledger = await fetchCustomerLedger(bill.customer_name);
+    var events = Ledger.buildTimeline(ledger.bills, ledger.payments, "desc");
+    var snaps  = Ledger.chainBackward(events, custList[custIdx].balance, recvFor);
+
+    var match = snaps.find(function (s) { return s.id === bill.id; });
+    return match ? match.previousBalance : 0;
+  }
+
+  /**
+   * The previous balance and amount received to print on a stored bill.
+   * Uses the bill's own snapshot where it has one; only bills that predate the
+   * snapshot columns fall back to inferring it from the ledger.
+   */
+  async function resolveBillLedger(billId, bill) {
+    if (billPrev(billId) !== null) {
+      return { prev: billPrev(billId) || 0, recv: billRecv(billId) };
     }
-    return 0;
+    return { prev: await inferPrevBalanceFromHistory(bill), recv: 0 };
   }
 
   async function viewBillInModal(billId) {
@@ -2273,14 +2540,8 @@
       var bill   = result.bill;
       noteBillLedger(bill);
       var items  = result.items || [];
-      var prevBal, received;
-      if (billPrev(billId) !== null) {
-        prevBal  = (billPrev(billId) || 0);
-        received = billRecv(billId);
-      } else {
-        prevBal  = inferPrevBalanceFromHistory(bill);
-        received = 0;
-      }
+      var ledger = await resolveBillLedger(billId, bill);
+      var prevBal = ledger.prev, received = ledger.recv;
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         createdAt:     bill.created_at,
@@ -2304,14 +2565,8 @@
       var bill   = result.bill;
       noteBillLedger(bill);
       var items  = result.items || [];
-      var prevBal, received;
-      if (billPrev(billId) !== null) {
-        prevBal  = (billPrev(billId) || 0);
-        received = billRecv(billId);
-      } else {
-        prevBal  = inferPrevBalanceFromHistory(bill);
-        received = 0;
-      }
+      var ledger = await resolveBillLedger(billId, bill);
+      var prevBal = ledger.prev, received = ledger.recv;
       var html   = buildReceiptHtml({
         billNumber:    bill.bill_number,
         createdAt:     bill.created_at,
@@ -2334,15 +2589,17 @@
     if (!bEl.historyContainer) return;
 
     if (!bState.billHistory.length) {
-      bEl.historyContainer.innerHTML = '<p class="empty-state">No bills created yet.</p>';
+      // A filtered-to-nothing list is not an empty shop; the summary line
+      // above says which it is.
+      bEl.historyContainer.innerHTML = historyQuery().active
+        ? '<p class="empty-state">No bills match this search.</p>'
+        : '<p class="empty-state">No bills created yet.</p>';
       return;
     }
 
-    // The full list is kept in state for balance chaining, but rendering every
-    // bill ever would build an unusable table once the shop has a few thousand.
-    var visible = bState.billHistory.slice(0, HISTORY_RENDER_LIMIT);
-
-    var rowsHtml = visible.map(function (bill) {
+    // The server already bounds this — the plain list to the most recent
+    // window, a search to a wider one — so everything returned is drawn.
+    var rowsHtml = bState.billHistory.map(function (bill) {
       return (
         "<tr>" +
           '<td><span class="bill-history-number">' + escHtml(bill.bill_number) + "</span></td>" +
@@ -2433,8 +2690,6 @@
       bState.currentBillId     = bill.id;
       bState.currentBillNumber = bill.bill_number;
       bState.balanceCarriedForward  = true; // prevent new-bill balance logic on re-save
-      bState.editOriginalGrandTotal = Math.ceil(bill.grand_total);
-      bState.editOriginalReceived   = billRecv(bill.id);
 
       bState.lineItems = items.map(function (it) {
         return {
@@ -2447,6 +2702,8 @@
           sellPrice:     Number(it.sell_price) || 0,
           markupPercent: it.markup_percent !== null ? Number(it.markup_percent) : null,
           quantity:      Number(it.quantity) || 1,
+          batchNo:       it.batch_no || "",
+          expiry:        it.expiry   || "",
         };
       });
 
@@ -2462,7 +2719,6 @@
       // it in the Opening Balance field and re-save to fix historical receipts.
       var _storedPrev = (billPrev(bill.id) || 0);
       bState.currentCustomerBalance  = _storedPrev;
-      bState.editOriginalPrevBalance = _storedPrev;
       if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
 
       // Mark the customer as already resolved so tryAutoFillCustomer doesn't
@@ -2503,14 +2759,8 @@
       var items = result.items || [];
 
       if (!bEl.printArea) return;
-      var prevBal, received;
-      if (billPrev(billId) !== null) {
-        prevBal  = (billPrev(billId) || 0);
-        received = billRecv(billId);
-      } else {
-        prevBal  = inferPrevBalanceFromHistory(bill);
-        received = 0;
-      }
+      var ledger = await resolveBillLedger(billId, bill);
+      var prevBal = ledger.prev, received = ledger.recv;
       bEl.printArea.innerHTML = buildReceiptHtml({
         billNumber:    bill.bill_number,
         createdAt:     bill.created_at,
@@ -2553,6 +2803,7 @@
     if (bEl.repairBalanceBtn)    bEl.repairBalanceBtn.addEventListener("click", reconcileCustomerBalance);
     if (bEl.restoreCustomersBtn) bEl.restoreCustomersBtn.addEventListener("click", restoreCustomersFromHistory);
     initImportModal();
+    initHistorySearch();
 
     // Opening balance field directly drives recalcPayment
     if (bEl.openingBalance) {
@@ -2562,39 +2813,69 @@
       });
     }
 
-    // Auto-fill balance when customer name or phone matches a saved customer on blur
+    // Auto-fill the balance when the finished customer name (or, for an unnamed
+    // bill, the phone) exactly matches a saved customer.
+    //
+    // This deliberately runs on blur only. A debounced version used to run
+    // while typing: "Ram Kumar" matched saved customer "Ram" after 400ms,
+    // replaced the phone with Ram's, and pinned currentCustomerIdx to Ram — so
+    // the finished bill printed Ram's previous balance and Ram Kumar was never
+    // created. It also never overwrites the name that was typed; only a field
+    // the user left blank is filled in.
     function tryAutoFillCustomer() {
-      var name  = (bEl.customerName  ? bEl.customerName.value  : "").trim().toLowerCase();
+      var name  = (bEl.customerName  ? bEl.customerName.value  : "").trim();
       var phone = (bEl.customerPhone ? bEl.customerPhone.value : "").trim();
       if (!name && !phone) return;
+
       var list = loadSavedCustomers();
-      var idx  = list.findIndex(function (c) {
-        return (name  && c.name.toLowerCase()  === name)  ||
-               (phone && c.phone               === phone);
-      });
-      if (idx >= 0 && bState.currentCustomerIdx !== idx) {
-        var c = list[idx];
-        bState.currentCustomerIdx     = idx;
+      var lower = name.toLowerCase();
+      // Name is the identity. Phone only resolves a customer when no name has
+      // been typed, because a household commonly shares one number.
+      var idx = name
+        ? list.findIndex(function (c) { return c.name.toLowerCase() === lower; })
+        : list.findIndex(function (c) { return c.phone && c.phone === phone; });
+
+      if (idx < 0) {
+        // Typing a name that is not on file means this is a new customer, so
+        // any customer resolved earlier must be released — otherwise their
+        // balance would be carried onto this bill.
+        //
+        // Not while editing a saved bill: there the Opening Balance box holds
+        // that bill's own previous-balance snapshot, which is not derived from
+        // the customer list and must not be cleared out from under the user.
+        if (name && !bState.currentBillId && bState.currentCustomerIdx !== null) {
+          bState.currentCustomerIdx     = null;
+          bState.currentCustomerBalance = 0;
+          if (bEl.openingBalance)      bEl.openingBalance.value      = "";
+          if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
+          bState.customerLastPrices    = {};
+          bState.customerLastPricesFor = null;
+          recalcPayment();
+        }
+        return;
+      }
+      if (bState.currentCustomerIdx === idx) return;
+
+      var c = list[idx];
+      bState.currentCustomerIdx = idx;
+      if (bEl.customerName  && !name)  bEl.customerName.value  = c.name  || "";
+      if (bEl.customerPhone && !phone) bEl.customerPhone.value = c.phone || "";
+      if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = String(idx);
+      loadCustomerLastPrices(c.name);
+
+      // On a saved bill the Previous Balance is the snapshot that bill was
+      // raised against — a historical fact. Only a new bill picks up the
+      // customer's balance as it stands today.
+      if (!bState.currentBillId) {
         bState.currentCustomerBalance = parseFloat(c.balance) || 0;
-        if (bEl.customerName)        bEl.customerName.value        = c.name  || "";
-        if (bEl.customerPhone)       bEl.customerPhone.value       = c.phone || "";
-        if (bEl.openingBalance)      bEl.openingBalance.value      = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
-        if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = String(idx);
-        loadCustomerLastPrices(c.name);
+        if (bEl.openingBalance) {
+          bEl.openingBalance.value = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
+        }
         recalcPayment();
       }
     }
     if (bEl.customerName)  bEl.customerName.addEventListener("blur",  tryAutoFillCustomer);
     if (bEl.customerPhone) bEl.customerPhone.addEventListener("blur", tryAutoFillCustomer);
-
-    // Also trigger on input with debounce so the balance row updates as the user types
-    var _autoFillTimer = null;
-    function debouncedAutoFill() {
-      clearTimeout(_autoFillTimer);
-      _autoFillTimer = setTimeout(tryAutoFillCustomer, 400);
-    }
-    if (bEl.customerName)  bEl.customerName.addEventListener("input",  debouncedAutoFill);
-    if (bEl.customerPhone) bEl.customerPhone.addEventListener("input", debouncedAutoFill);
 
     // Search events
     if (bEl.search) {
@@ -2636,7 +2917,6 @@
 
     // GST / round-off / received amount recalculation
     if (bEl.gstPercent)     bEl.gstPercent.addEventListener("input",    recalcTotals);
-    if (bEl.roundOffToggle) bEl.roundOffToggle.addEventListener("change", recalcTotals);
     if (bEl.receivedAmount) bEl.receivedAmount.addEventListener("input", recalcPayment);
 
     // Action buttons
