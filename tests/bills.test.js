@@ -184,6 +184,23 @@ const stock = (id) => db.medicines.find((m) => m.id === id).quantity;
   hist = await pay("GET", { query: { customer: "Dr.Someone" } });
   eq("a different customer finds nothing", hist.json.payments.length, 0);
 
+  console.log("\n--- bill numbers are stamped in shop time, not server time ---");
+  // The server runs in UTC; the shop is IST. A UTC date here dated every bill
+  // issued before 05:30 IST to the previous day.
+  db.bills.length = 0; db.bill_items.length = 0;
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date()).replace(/-/g, "");
+  const tz = await bills("POST", { body: { customerName: "TZ",
+    items: [{ medicineName: "Crocin", sellPrice: 10, quantity: 1 }] } });
+  eq("bill number carries the IST date", tz.json.billNumber, `AM-${istDate}-001`);
+  // Between 18:30 and 24:00 UTC the two calendars differ; assert the number
+  // follows IST rather than the process clock whenever that is the case.
+  const utcDate = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  if (utcDate !== istDate) {
+    eq("and not the UTC date", tz.json.billNumber.includes(utcDate), false);
+  }
+
   console.log("\n--- profit pages instead of truncating ---");
   db.bills.length = 0; db.bill_items.length = 0;
   // 1200 bills with one item each: more than a single page of either table.

@@ -64,6 +64,9 @@
     printBillButton:  document.getElementById("print-bill-button"),
     newBillButton:    document.getElementById("new-bill-button"),
     saveStatus:       document.getElementById("bill-save-status"),
+    editBanner:       document.getElementById("bill-edit-banner"),
+    editBannerText:   document.getElementById("bill-edit-banner-text"),
+    editBannerNew:    document.getElementById("bill-edit-banner-new"),
     historyContainer:      document.getElementById("bill-history-container"),
     printArea:             document.getElementById("print-receipt-area"),
     savedCustomerSelect:   document.getElementById("bill-saved-customer-select"),
@@ -1396,6 +1399,17 @@
       return;
     }
 
+    // An update replaces the stored bill outright, so it has to be asked for
+    // rather than fallen into — this is the last guard against composing a
+    // second customer's bill on top of the one already saved.
+    if (bState.currentBillId &&
+        !window.confirm("Update existing bill " + bState.currentBillNumber +
+          "?\n\nThis replaces its customer, items and totals. To bill someone " +
+          "else, cancel and press New Bill instead.")) {
+      setSaveStatus("Save cancelled. Press New Bill to start a fresh bill.", "is-warn");
+      return;
+    }
+
     if (bEl.saveBillButton) bEl.saveBillButton.disabled = true;
     setSaveStatus("Saving bill…", "is-info");
 
@@ -1407,6 +1421,7 @@
         payload.id = bState.currentBillId;
         await requestApi("/api/bills", { method: "PUT", body: payload });
         setSaveStatus("✅ Bill " + bState.currentBillNumber + " updated successfully.", "is-ok");
+        applyBillMode();
 
         // The customer's balance is derived on the server from every bill and
         // payment, so an edit needs no local adjustment — recomputing it here
@@ -1426,6 +1441,7 @@
 
         if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = result.billNumber;
         setSaveStatus("✅ Bill " + result.billNumber + " saved successfully!", "is-ok");
+        applyBillMode();
       }
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
@@ -1705,6 +1721,34 @@
   }
 
   // -------------------------------------------------------------------------
+  // New-bill vs edit mode
+  //
+  // The form stays bound to a bill after it is saved, so that a mistake caught
+  // straight away can be corrected with another Save. The cost is that the next
+  // Save also targets that bill: composing the next customer's bill without
+  // pressing New Bill used to overwrite the one just saved, which looked like
+  // the new bill never reaching history. Nothing here changes that binding —
+  // it makes it visible, and pairs it with a confirm on the overwrite itself.
+  // -------------------------------------------------------------------------
+  function applyBillMode() {
+    var editing = !!bState.currentBillId;
+    var ref     = bState.currentBillNumber || "";
+
+    if (bEl.saveBillButton) {
+      bEl.saveBillButton.textContent = editing
+        ? "💾 Update Bill " + ref
+        : "💾 Save Bill";
+    }
+
+    if (bEl.editBanner) bEl.editBanner.classList.toggle("hidden", !editing);
+    if (bEl.editBannerText) {
+      bEl.editBannerText.textContent = editing
+        ? "Editing bill " + ref + " — saving will overwrite it, not create a new bill."
+        : "";
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // New Bill
   // -------------------------------------------------------------------------
   function newBill() {
@@ -1739,6 +1783,7 @@
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
+    applyBillMode();
     renderLineItems();
     recalcTotals();
     if (bEl.search) bEl.search.focus();
@@ -2415,6 +2460,7 @@
         if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
         if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
         setSaveStatus("Deleted bill " + billNumber + ".", "is-info");
+        applyBillMode();
       }
       await loadBillHistory();
     } catch (err) {
@@ -2432,6 +2478,7 @@
 
       bState.currentBillId     = bill.id;
       bState.currentBillNumber = bill.bill_number;
+      applyBillMode();
       bState.balanceCarriedForward  = true; // prevent new-bill balance logic on re-save
       bState.editOriginalGrandTotal = Math.ceil(bill.grand_total);
       bState.editOriginalReceived   = billRecv(bill.id);
@@ -2643,6 +2690,7 @@
     if (bEl.saveBillButton)  bEl.saveBillButton.addEventListener("click", saveBill);
     if (bEl.printBillButton) bEl.printBillButton.addEventListener("click", printBill);
     if (bEl.newBillButton)   bEl.newBillButton.addEventListener("click", newBill);
+    if (bEl.editBannerNew)   bEl.editBannerNew.addEventListener("click", newBill);
 
     // Receipt modal wiring
     if (bEl.receiptModalClose)    bEl.receiptModalClose.addEventListener("click", closeReceiptModal);
@@ -2657,6 +2705,7 @@
 
     // Initial render
     setBillingStatus("Ready. Search for medicines to start a new bill.", "is-ok");
+    applyBillMode();
     renderLineItems();
     recalcTotals();
     loadBillHistory();
