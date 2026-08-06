@@ -1311,6 +1311,26 @@ function renderMedicineList(itemsToRender) {
       });
     }
 
+    // "Who bought this, and at what rate" — the same window the billing search
+    // opens, so the question can be answered from the stock list too.
+    //
+    // Hidden rather than disabled for anyone who cannot use it: the sale
+    // history is admin-only on the server, so for an employee the button would
+    // only ever produce an error.
+    const salesButton = row.querySelector(".action-sales");
+    if (salesButton) {
+      const canSeeSales =
+        canWriteRecords() && typeof window.showMedicineSalesModal === "function";
+      salesButton.classList.toggle("hidden", !canSeeSales);
+      if (canSeeSales) {
+        salesButton.title = `Who bought ${item.medicineName}, and at what price`;
+        salesButton.addEventListener("click", () => {
+          // No receipt viewer on this page, so bill numbers show as plain text.
+          window.showMedicineSalesModal(item.medicineName);
+        });
+      }
+    }
+
     const copyLocationButton = row.querySelector(".action-copy-location");
     copyLocationButton?.addEventListener("click", async () => {
       try {

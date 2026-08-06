@@ -1177,6 +1177,14 @@ button:focus-visible {
   color: #8a5500;
 }
 
+/* Bill number where there is no receipt viewer to open it in — the inventory
+   page. Styled to read as a reference, not as something to click. */
+.medicine-sales-billno {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .bill-row-actions {
   display: flex;
   align-items: center;
@@ -1433,6 +1441,20 @@ button:focus-visible {
   font-size: 0.77rem;
   color: var(--muted);
   font-family: var(--font-mono);
+}
+
+/* Where an auto-filled Sell rate came from. Quiet, but present — the counter
+   has to be able to tell a remembered rate from a typed one. Empty until a
+   rate is actually carried over, and the row keeps its height either way. */
+.bill-item-price-note {
+  font-size: 0.72rem;
+  color: #0b6d67;
+  font-weight: 600;
+  min-height: 0.9rem;
+}
+
+.bill-item-price-note:empty {
+  min-height: 0;
 }
 
 .bill-item-mrp {

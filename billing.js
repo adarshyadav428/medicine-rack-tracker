@@ -209,6 +209,73 @@
       .replace(/"/g, "&quot;");
   }
 
+  /**
+   * What to put in the Sell box when a medicine is added to a bill.
+   *
+   * Most specific answer first:
+   *
+   *   1. What this customer was last charged for it. Their own history beats
+   *      everything — a doctor on a standing rate must not be re-quoted.
+   *   2. What it last went out at to anybody. This is the case that used to
+   *      fall through: a first-time customer got the inventory list price even
+   *      though the shop has been selling the item at a settled rate for
+   *      months, so every new customer started the price over again.
+   *   3. The inventory selling price, then MRP, then zero.
+   *
+   * Only a price above zero counts as remembered. A line saved at 0 — a sample,
+   * a replacement, a half-finished bill — is a real row in the history, but
+   * carrying it forward would silently zero out the next customer's bill.
+   *
+   * Returns the price and where it came from; the caller shows the source on
+   * the line so an auto-filled rate is never mistaken for a typed one.
+   */
+  function pickSellPrice(medicine, customerPrice, soldStats) {
+    var med = medicine || {};
+
+    function usable(v) {
+      var n = parseFloat(v);
+      return isNaN(n) || n <= 0 ? null : n;
+    }
+
+    var fromCustomer = customerPrice ? usable(customerPrice.sellPrice) : null;
+    if (fromCustomer !== null) {
+      return { sellPrice: fromCustomer, source: "customer", soldAt: null };
+    }
+
+    var fromHistory = soldStats ? usable(soldStats.lastSellPrice) : null;
+    if (fromHistory !== null) {
+      return {
+        sellPrice: fromHistory,
+        source: "history",
+        soldAt: soldStats.lastSoldAt || null,
+      };
+    }
+
+    // Nothing sold yet — fall back to what inventory says the item is worth.
+    var listed =
+      med.sellingPrice !== null && med.sellingPrice !== undefined ? med.sellingPrice
+      : (med.sellPrice !== null && med.sellPrice !== undefined ? med.sellPrice
+      : (med.mrp !== null && med.mrp !== undefined ? med.mrp : 0));
+
+    var n = parseFloat(listed);
+    return { sellPrice: isNaN(n) ? 0 : n, source: "inventory", soldAt: null };
+  }
+
+  /**
+   * One line saying why the Sell box holds what it holds. An auto-filled rate
+   * that looks typed is the thing to avoid — the counter has to be able to see
+   * that the number came from an old bill and decide whether it still stands.
+   */
+  function priceNoteFor(chosen) {
+    if (!chosen) return "";
+    if (chosen.source === "customer") return "Their last rate";
+    if (chosen.source === "history") {
+      return "Last sold at " + fmtMoney(chosen.sellPrice) +
+        (chosen.soldAt ? " · " + fmtDate(chosen.soldAt) : "");
+    }
+    return "";
+  }
+
   function setBillingStatus(msg, tone) {
     if (!bEl.status) return;
     bEl.status.textContent = msg || "";
@@ -843,6 +910,32 @@
       });
   }
 
+  /**
+   * Fold a bill that was just saved into the in-memory sold-counts.
+   *
+   * Those counts are fetched once when the page opens, so without this the
+   * rate agreed on the first bill of the day would not be offered on the
+   * second — the shop would have to reload to see its own price. Only on a new
+   * bill: an edit rewrites lines that are already counted, and re-counting
+   * them here would inflate the tally the search ranking reads.
+   */
+  function rememberSoldPrices(lineItems) {
+    var now = new Date().toISOString();
+    (lineItems || []).forEach(function (item) {
+      var key = normalizeString(item.medicineName).toLowerCase();
+      if (!key) return;
+      var price = parseFloat(item.sellPrice);
+      var entry = bState.soldCounts[key];
+      if (!entry) {
+        entry = { count: 0, lastSoldAt: null, lastSellPrice: null };
+        bState.soldCounts[key] = entry;
+      }
+      entry.count += 1;
+      entry.lastSoldAt = now;
+      if (Number.isFinite(price)) entry.lastSellPrice = price;
+    });
+  }
+
   function renderDropdown(results, query) {
     if (!bEl.dropdown) return;
     currentDropdownResults = results;
@@ -930,7 +1023,7 @@
         e.preventDefault();
         if (e.target.closest(".medicine-dropdown-history-btn")) {
           hideDropdown();
-          showMedicineSalesModal(item.medicineName);
+          openMedicineSalesModal(item.medicineName);
           return;
         }
         if (e.target.closest(".medicine-dropdown-edit-btn")) {
@@ -1153,146 +1246,16 @@
   // -------------------------------------------------------------------------
   // "Who bought this?" — sales history for one medicine
   //
-  // The mirror of the per-customer last-price memory: that decides what to
-  // charge the person at the counter, this shows what the medicine has been
-  // going out at across everyone, so an odd quote can be checked before it is
-  // repeated.
+  // The window itself lives in medicine-sales.js so the inventory page can open
+  // the same one. Billing supplies the two things only it can: a receipt viewer
+  // for the bill numbers, and the search box to hand focus back to.
   // -------------------------------------------------------------------------
-  function showMedicineSalesModal(medicineName) {
-    var name = normalizeString(medicineName);
-    if (!name) return;
-
-    var existing = document.getElementById("medicine-sales-overlay");
-    if (existing) existing.parentNode.removeChild(existing);
-
-    var overlay = document.createElement("div");
-    overlay.id = "medicine-sales-overlay";
-    overlay.className = "manual-add-overlay";
-    overlay.innerHTML = [
-      '<div class="manual-add-modal medicine-sales-modal">',
-        '<div class="manual-add-header">',
-          "<h3>Sales history — " + escHtml(name) + "</h3>",
-          '<button class="manual-add-close" id="medicine-sales-close" type="button" aria-label="Close">✕</button>',
-        '</div>',
-        '<div class="manual-add-body">',
-          '<div id="medicine-sales-summary" class="medicine-sales-summary">Loading…</div>',
-          '<div id="medicine-sales-body"></div>',
-        '</div>',
-        '<div class="manual-add-footer">',
-          '<button class="btn btn-ghost" id="medicine-sales-done" type="button">Close</button>',
-        '</div>',
-      '</div>',
-    ].join("");
-
-    document.body.appendChild(overlay);
-
-    function closeModal() {
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      if (bEl.search) bEl.search.focus();
-    }
-    document.getElementById("medicine-sales-close").addEventListener("click", closeModal);
-    document.getElementById("medicine-sales-done").addEventListener("click", closeModal);
-    overlay.addEventListener("mousedown", function (e) { if (e.target === overlay) closeModal(); });
-    overlay.addEventListener("keydown", function (e) { if (e.key === "Escape") closeModal(); });
-
-    loadMedicineSales(name, closeModal);
-  }
-
-  async function loadMedicineSales(name, closeModal) {
-    var summaryEl = document.getElementById("medicine-sales-summary");
-    var bodyEl    = document.getElementById("medicine-sales-body");
-
-    var sales;
-    try {
-      var result = await requestApi(
-        "/api/bills?medicine=" + encodeURIComponent(name),
-        { method: "GET" }
-      );
-      sales = result.sales || [];
-    } catch (err) {
-      if (summaryEl) {
-        summaryEl.textContent = "Could not load sales history: " + (err.message || "unknown error");
-        summaryEl.className = "medicine-sales-summary is-warn";
-      }
-      return;
-    }
-
-    if (!document.getElementById("medicine-sales-body")) return; // modal closed
-
-    if (!sales.length) {
-      if (summaryEl) summaryEl.textContent = "This medicine has not been sold yet.";
-      if (bodyEl) bodyEl.innerHTML = "";
-      return;
-    }
-
-    var prices  = sales.map(function (s) { return s.sellPrice; });
-    var lowest  = Math.min.apply(null, prices);
-    var highest = Math.max.apply(null, prices);
-    var totalQty = sales.reduce(function (sum, s) { return sum + s.quantity; }, 0);
-    var buyers   = new Set(sales.map(function (s) {
-      return (s.customerName || "walk-in").toLowerCase();
-    })).size;
-
-    if (summaryEl) {
-      summaryEl.className = "medicine-sales-summary";
-      summaryEl.innerHTML =
-        '<span><strong>' + sales.length + '</strong> sale(s)</span>' +
-        '<span><strong>' + buyers + '</strong> buyer(s)</span>' +
-        '<span><strong>' + round2(totalQty) + '</strong> units</span>' +
-        '<span>Rate ' +
-          (lowest === highest
-            ? '<strong>' + fmtMoney(lowest) + '</strong>'
-            : '<strong>' + fmtMoney(lowest) + '</strong> – <strong>' + fmtMoney(highest) + '</strong>') +
-        '</span>' +
-        '<span>Last sold <strong>' + escHtml(fmtDate(sales[0].soldAt)) + '</strong></span>';
-    }
-
-    var rows = sales.map(function (s) {
-      // The spread between what this went out at and the dearest it has ever
-      // gone out at is the number worth noticing, so it is marked rather than
-      // left to be eyeballed down a column.
-      var isLow  = highest !== lowest && s.sellPrice === lowest;
-      var isHigh = highest !== lowest && s.sellPrice === highest;
-      var priceClass = isLow ? " medicine-sales-price--low" : (isHigh ? " medicine-sales-price--high" : "");
-
-      return "<tr>" +
-        "<td>" + escHtml(fmtDate(s.soldAt)) + "</td>" +
-        "<td>" + (s.customerName
-          ? escHtml(s.customerName)
-          : '<span style="color:var(--muted)">Walk-in</span>') + "</td>" +
-        '<td class="num-col">' + round2(s.quantity) + "</td>" +
-        '<td class="num-col"><span class="medicine-sales-price' + priceClass + '">' +
-          fmtMoney(s.sellPrice) + "</span></td>" +
-        "<td>" + (s.batchNo ? escHtml(s.batchNo) : '<span style="color:var(--muted)">—</span>') + "</td>" +
-        "<td>" +
-          '<button class="btn btn-ghost btn-xs" type="button" data-open-bill="' + escHtml(s.billId) + '">' +
-            escHtml(s.billNumber) +
-          "</button>" +
-        "</td>" +
-      "</tr>";
-    }).join("");
-
-    if (bodyEl) {
-      bodyEl.innerHTML =
-        '<div class="medicine-sales-table-wrap">' +
-          '<table class="medicine-sales-table">' +
-            "<thead><tr>" +
-              "<th>Date</th><th>Customer</th>" +
-              '<th class="num-col">Qty</th><th class="num-col">Rate</th>' +
-              "<th>Batch</th><th>Bill</th>" +
-            "</tr></thead>" +
-            "<tbody>" + rows + "</tbody>" +
-          "</table>" +
-        "</div>";
-
-      bodyEl.querySelectorAll("[data-open-bill]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          // Close this first — two stacked modals would trap the scroll lock.
-          closeModal();
-          viewBillInModal(btn.dataset.openBill);
-        });
-      });
-    }
+  function openMedicineSalesModal(medicineName) {
+    if (typeof window.showMedicineSalesModal !== "function") return;
+    window.showMedicineSalesModal(medicineName, {
+      onOpenBill: function (billId) { viewBillInModal(billId); },
+      onClose: function () { if (bEl.search) bEl.search.focus(); },
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -1472,17 +1435,17 @@
     var purchase =
       medicine.purchasePrice !== null && medicine.purchasePrice !== undefined ? medicine.purchasePrice
       : (medicine.rate !== null && medicine.rate !== undefined ? medicine.rate : null);
-    var sell =
-      medicine.sellingPrice !== null && medicine.sellingPrice !== undefined ? medicine.sellingPrice
-      : (medicine.sellPrice !== null && medicine.sellPrice !== undefined ? medicine.sellPrice
-      : (medicine.mrp !== null && medicine.mrp !== undefined ? medicine.mrp : 0));
 
-    // Override with last price for this customer if available
+    // This customer's own rate, else the rate the medicine last went out at to
+    // anyone, else the inventory price. See pickSellPrice for why.
     var medicineLower = (medicine.medicineName || "").toLowerCase().trim();
-    var lastPriceInfo = bState.customerLastPrices[medicineLower];
-    if (lastPriceInfo) {
-      sell = lastPriceInfo.sellPrice;
-    }
+    var chosen = pickSellPrice(
+      medicine,
+      bState.customerLastPrices[medicineLower],
+      bState.soldCounts[medicineLower]
+    );
+    var sell = chosen.sellPrice;
+
     // Always derived from what is actually on the line, never left blank. A
     // remembered markup from the customer's last bill is not reused: the cost
     // may have moved since, and the figure shown has to describe this sale.
@@ -1500,6 +1463,9 @@
       sellPrice:     Number(sell) || 0,
       markupPercent: markupPct,
       quantity:      1,
+      // Where that rate came from, shown under the name. Not saved with the
+      // bill — it describes how the box was filled, not what was sold.
+      priceNote:     priceNoteFor(chosen),
       // No longer entered on the bill — the boxes were removed while the batch
       // data is still not uploaded. The columns and the API still carry these,
       // so a bill saved earlier reopens with its values intact, and putting
@@ -1559,6 +1525,8 @@
     } else if (field === "sellPrice") {
       var sp = parseFloat(rawValue);
       item.sellPrice = isNaN(sp) ? 0 : sp;
+      // The note described the rate that was filled in, not this one.
+      clearPriceNote(item, rowId);
       // Back-calculate markup %
       var markupInput = document.getElementById("markup-" + rowId);
       item.markupPercent = computeMarkup(item.purchasePrice, item.sellPrice);
@@ -1574,6 +1542,7 @@
         item.sellPrice = round2(item.purchasePrice * (1 + mp / 100));
         var sellInput = document.getElementById("sell-" + rowId);
         if (sellInput) sellInput.value = item.sellPrice;
+        clearPriceNote(item, rowId);
       } else {
         item.markupPercent = isNaN(mp) ? null : mp;
       }
@@ -1587,6 +1556,14 @@
     }
 
     recalcTotals();
+  }
+
+  /** Drop the "where this rate came from" caption once the rate is overridden. */
+  function clearPriceNote(item, rowId) {
+    if (!item.priceNote) return;
+    item.priceNote = "";
+    var noteEl = document.getElementById("pricenote-" + rowId);
+    if (noteEl) noteEl.textContent = "";
   }
 
   function renderLineItems() {
@@ -1621,6 +1598,9 @@
         "<td>" +
           '<div class="bill-item-name" title="' + escHtml(item.medicineName) + '">' + escHtml(item.medicineName) + "</div>" +
           '<div class="bill-item-location">' + escHtml(item.location || "—") + "</div>" +
+          '<div class="bill-item-price-note" id="pricenote-' + item._rowId + '">' +
+            escHtml(item.priceNote || "") +
+          "</div>" +
         "</td>" +
         '<td class="num-col">' +
           '<input id="mrp-' + item._rowId + '" class="bill-table-input" type="number"' +
@@ -1902,6 +1882,10 @@
         if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = result.billNumber;
         setSaveStatus("✅ Bill " + result.billNumber + " saved successfully!", "is-ok");
         applyBillMode();
+
+        // These rates are now the newest the shop has, so the next bill of the
+        // session should offer them without waiting for a reload.
+        rememberSoldPrices(bState.lineItems);
       }
 
       if (bEl.printBillButton) bEl.printBillButton.disabled = false;
