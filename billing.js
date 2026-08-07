@@ -29,6 +29,7 @@
     initialized: false,
     currentCustomerIdx: null,   // index into saved-customers array, or null
     currentCustomerBalance: 0,  // cached previous balance of selected customer
+    openingBalanceTouched: false, // true once the user types in Opening Balance
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
     customerLastPrices: {},        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
     soldCounts: {},                // { medicineName.toLowerCase(): { count, lastSoldAt } }
@@ -122,6 +123,24 @@
 
   function round2(n) {
     return Math.round(n * 100) / 100;
+  }
+
+  /**
+   * Money read out of a form field.
+   *
+   * `parseFloat(x) || 0` let a negative through, and a negative Amount
+   * Received *raises* the balance instead of clearing it — a typo of "-500"
+   * silently added ₹500 to what the customer owed. The number inputs carry
+   * min="0", but that only blocks the spinner, not typing or pasting.
+   */
+  function readMoney(el) {
+    var n = parseFloat(el ? el.value : "0");
+    if (!isFinite(n) || n <= 0) return 0;
+    return round2(n);
+  }
+
+  function receivedAmountValue() {
+    return readMoney(bEl.receivedAmount);
   }
 
   /**
@@ -376,6 +395,65 @@
     return savedCustomerCache;
   }
 
+  /**
+   * Re-read the selected customer's balance from the server and put it on an
+   * open NEW bill.
+   *
+   * The Customers page records a payment as its own row; the balance is then
+   * derived server-side as opening + Σ(bill total − received) − Σ(payments).
+   * This page, though, caches that balance at the moment the customer is
+   * picked. Take a payment on the Customers page (or on the counter's other
+   * device) and the billing tab goes on showing — and, on save, *persisting* —
+   * a previous balance that has already been paid down. Syncing on select, on
+   * refocus, and once more immediately before the write keeps the two in step.
+   *
+   * Deliberately does nothing when a saved bill is open (its previous balance
+   * is a historical snapshot, not today's figure) or when the Opening Balance
+   * was typed by hand, which is the one place a manual correction lives.
+   *
+   * Returns {from, to} when the figure actually moved, else null.
+   */
+  async function syncSelectedCustomerBalance() {
+    if (bState.currentBillId) return null;
+    if (bState.openingBalanceTouched) return null;
+
+    var name = normalizeString(bEl.customerName ? bEl.customerName.value : "");
+    if (!name) return null;
+    var lower = name.toLowerCase();
+
+    await refreshSavedCustomers();
+
+    // The request is not instant and the counter does not wait for it: the
+    // bill may have been cleared, a different customer typed, or the balance
+    // corrected by hand while it was in flight. Any of those makes the answer
+    // stale, and writing it back would undo what the user just did.
+    if (bState.currentBillId || bState.openingBalanceTouched) return null;
+    if (normalizeString(bEl.customerName ? bEl.customerName.value : "").toLowerCase() !== lower) {
+      return null;
+    }
+
+    var list = loadSavedCustomers();
+    var idx = list.findIndex(function (c) { return c.name.toLowerCase() === lower; });
+    if (idx < 0) return null;
+
+    var was   = round2(bState.currentCustomerBalance || 0);
+    var fresh = round2(parseFloat(list[idx].balance) || 0);
+
+    bState.currentCustomerIdx     = idx;
+    bState.currentCustomerBalance = fresh;
+    if (bEl.openingBalance) {
+      bEl.openingBalance.value = fresh > 0 ? String(fresh) : "";
+    }
+    recalcPayment();
+
+    return Math.abs(fresh - was) > 0.005 ? { from: was, to: fresh } : null;
+  }
+
+  /** Fire-and-forget sync; failures are already surfaced by the refresh. */
+  function syncSelectedCustomerBalanceSoon() {
+    syncSelectedCustomerBalance().catch(function () {});
+  }
+
   // -------------------------------------------------------------------------
   // Per-bill ledger snapshots (previous balance / amount received)
   //
@@ -439,6 +517,7 @@
     if (isNaN(idx)) {
       bState.currentCustomerIdx     = null;
       bState.currentCustomerBalance = 0;
+      bState.openingBalanceTouched  = false;
       if (bEl.openingBalance) bEl.openingBalance.value = "";
       recalcPayment();
       return;
@@ -448,12 +527,18 @@
     if (!c) return;
     bState.currentCustomerIdx     = idx;
     bState.currentCustomerBalance = parseFloat(c.balance) || 0;
+    // Picking a customer replaces whatever was in the box, so any earlier
+    // manual correction is gone and the auto-sync is free to act again.
+    bState.openingBalanceTouched  = false;
     if (bEl.customerName)   bEl.customerName.value   = c.name  || "";
     if (bEl.customerPhone)  bEl.customerPhone.value  = c.phone || "";
     if (bEl.openingBalance) bEl.openingBalance.value = bState.currentCustomerBalance || "";
     setSaveCustomerStatus("", "");
     loadCustomerLastPrices(c.name);
     recalcPayment();
+    // The cached figure shows instantly; the server's replaces it a moment
+    // later if a payment has been recorded since this page loaded.
+    syncSelectedCustomerBalanceSoon();
   }
 
   function setSaveCustomerStatus(msg, tone) {
@@ -1789,7 +1874,7 @@
     var grandTotal = Math.ceil(preRound);
     var prevBal     = bState.currentCustomerBalance || 0;
     var totalDueVal = round2(grandTotal + prevBal);
-    var received    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+    var received    = receivedAmountValue();
     var balDue      = round2(totalDueVal - received);
 
     // Previous balance row — dim it when zero
@@ -1817,7 +1902,7 @@
       gstPercent:    gstPct,
       // Persisted on the bill so balances survive a different device/browser.
       previousBalance: bState.currentCustomerBalance || 0,
-      amountReceived:  parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0,
+      amountReceived:  receivedAmountValue(),
       items: bState.lineItems.map(function (item) {
         return {
           medicineId:    item.medicineId,
@@ -1855,6 +1940,31 @@
     if (bEl.saveBillButton) bEl.saveBillButton.disabled = true;
     setSaveStatus("Saving bill…", "is-info");
 
+    // Last chance to catch a payment recorded between picking the customer and
+    // pressing Save. What goes in the payload is what the receipt prints and
+    // what the ledger keeps, so it has to be the current figure — but a Total
+    // Due that moves after the amount was read out to the customer is worth
+    // stopping for rather than swapping in quietly.
+    if (!bState.currentBillId) {
+      var moved = null;
+      try {
+        moved = await syncSelectedCustomerBalance();
+      } catch (_) { /* refreshSavedCustomers already reported the failure */ }
+
+      if (moved && !window.confirm(
+            "This customer's previous balance is now " + fmtMoney(moved.to) +
+            ", not " + fmtMoney(moved.from) + " — a payment or bill was " +
+            "recorded elsewhere in the meantime.\n\nThe bill has been updated " +
+            "to the current figure. Save it?")) {
+        setSaveStatus(
+          "Save cancelled. Previous balance updated to " + fmtMoney(moved.to) + ".",
+          "is-warn"
+        );
+        if (bEl.saveBillButton) bEl.saveBillButton.disabled = false;
+        return;
+      }
+    }
+
     var payload = buildSavePayload();
 
     try {
@@ -1870,8 +1980,8 @@
         // added the edited amount a second time. Only the per-bill snapshot is
         // recorded, and the form keeps showing this bill's own previous
         // balance, which an edit never changes.
-        var _newRecv    = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
-        var _newPrevBal = parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0;
+        var _newRecv    = receivedAmountValue();
+        var _newPrevBal = round2(parseFloat(payload.previousBalance) || 0);
         setBillLedger(bState.currentBillId, _newPrevBal, _newRecv);
       } else {
         // Create new bill
@@ -1894,7 +2004,7 @@
       if (!bState.balanceCarriedForward) {
         var custName  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
         var custPhone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-        var received  = parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0;
+        var received  = receivedAmountValue();
         var _sub      = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
         var _gst      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
         var grandTot  = Math.ceil(round2(round2(_sub) + round2(round2(_sub) * _gst / 100)));
@@ -1916,14 +2026,17 @@
             });
           }
 
-          // Existing customer → use the stored balance (authoritative running ledger).
-          // New customer (not yet saved) → fall back to the Opening Balance
-          // field, which is the ONLY place the user's manually-entered opening amount lives.
-          // This was the root bug: idx < 0 was always returning 0, silently discarding
-          // whatever the user typed in the Opening Balance input.
-          var prevBal = (idx >= 0 && custList[idx])
-            ? (parseFloat(custList[idx].balance) || 0)
-            : (parseFloat(bEl.openingBalance ? bEl.openingBalance.value : "0") || 0);
+          // The previous balance that was just written to the bill row, reused
+          // verbatim. Reading it back off the customer cache instead let the
+          // two disagree: correct the Opening Balance by hand for an existing
+          // customer and the database kept the typed figure while this local
+          // snapshot kept the cached one, so the receipt printed one previous
+          // balance before a reload and another after it.
+          //
+          // For a customer not yet on file this is the Opening Balance field —
+          // the ONLY place a manually-entered opening amount lives. (The root
+          // bug once was idx < 0 returning 0 and discarding it outright.)
+          var prevBal = round2(parseFloat(payload.previousBalance) || 0);
 
           // Snapshot prevBal + received for this bill so history view can reconstruct
           // the exact receipt instead of using stale current-form state.
@@ -2006,7 +2119,7 @@
     var items     = (overrides && overrides.items) || bState.lineItems;
     var billNo    = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
     var prevBal   = (overrides && overrides.prevBalance  !== undefined) ? overrides.prevBalance  : (bState.currentCustomerBalance || 0);
-    var received  = (overrides && overrides.received     !== undefined) ? overrides.received     : (parseFloat(bEl.receivedAmount ? bEl.receivedAmount.value : "0") || 0);
+    var received  = (overrides && overrides.received     !== undefined) ? overrides.received     : receivedAmountValue();
     // A reprinted or re-shared bill must carry the date it was actually
     // issued. Only a live draft, which has no stored date yet, falls back to
     // the clock — otherwise an old bill goes to the customer dated today.
@@ -2246,6 +2359,7 @@
     if (bEl.receivedAmount)      bEl.receivedAmount.value      = "0";
     bState.currentCustomerIdx     = null;
     bState.currentCustomerBalance = 0;
+    bState.openingBalanceTouched   = false;
     bState.balanceCarriedForward   = false;
     bState.customerLastPrices      = {};
     bState.customerLastPricesFor   = null;
@@ -3062,6 +3176,7 @@
       // it in the Opening Balance field and re-save to fix historical receipts.
       var _storedPrev = (billPrev(bill.id) || 0);
       bState.currentCustomerBalance  = _storedPrev;
+      bState.openingBalanceTouched   = false;
       if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
 
       // Mark the customer as already resolved so tryAutoFillCustomer doesn't
@@ -3148,13 +3263,24 @@
     initImportModal();
     initHistorySearch();
 
-    // Opening balance field directly drives recalcPayment
+    // Opening balance field directly drives recalcPayment. Typing here is also
+    // what pins the figure: a hand-entered correction outranks the server's
+    // derived balance, so the auto-sync stands down until the customer is
+    // re-picked or the bill is cleared.
     if (bEl.openingBalance) {
       bEl.openingBalance.addEventListener("input", function () {
         bState.currentCustomerBalance = parseFloat(bEl.openingBalance.value) || 0;
+        bState.openingBalanceTouched  = true;
         recalcPayment();
       });
     }
+
+    // Coming back to this tab is the moment a payment taken on the Customers
+    // page — or on the shop's other device — needs to land on the open bill.
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") syncSelectedCustomerBalanceSoon();
+    });
+    window.addEventListener("focus", syncSelectedCustomerBalanceSoon);
 
     // Auto-fill the balance when the finished customer name (or, for an unnamed
     // bill, the phone) exactly matches a saved customer.
@@ -3189,6 +3315,7 @@
         if (name && !bState.currentBillId && bState.currentCustomerIdx !== null) {
           bState.currentCustomerIdx     = null;
           bState.currentCustomerBalance = 0;
+          bState.openingBalanceTouched  = false;
           if (bEl.openingBalance)      bEl.openingBalance.value      = "";
           if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
           bState.customerLastPrices    = {};
@@ -3211,10 +3338,12 @@
       // customer's balance as it stands today.
       if (!bState.currentBillId) {
         bState.currentCustomerBalance = parseFloat(c.balance) || 0;
+        bState.openingBalanceTouched  = false;
         if (bEl.openingBalance) {
           bEl.openingBalance.value = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
         }
         recalcPayment();
+        syncSelectedCustomerBalanceSoon();
       }
     }
     if (bEl.customerName)  bEl.customerName.addEventListener("blur",  tryAutoFillCustomer);
@@ -3260,7 +3389,18 @@
 
     // GST / round-off / received amount recalculation
     if (bEl.gstPercent)     bEl.gstPercent.addEventListener("input",    recalcTotals);
-    if (bEl.receivedAmount) bEl.receivedAmount.addEventListener("input", recalcPayment);
+    if (bEl.receivedAmount) {
+      bEl.receivedAmount.addEventListener("input", recalcPayment);
+      // The totals already ignore a negative or unparseable entry; put the
+      // field itself straight once the user leaves it, so what is on screen is
+      // what the bill will carry.
+      bEl.receivedAmount.addEventListener("change", function () {
+        var clean = receivedAmountValue();
+        var typed = (bEl.receivedAmount.value || "").trim();
+        if (typed !== "" && String(clean) !== typed) bEl.receivedAmount.value = String(clean);
+        recalcPayment();
+      });
+    }
 
     // Action buttons
     if (bEl.saveBillButton)  bEl.saveBillButton.addEventListener("click", saveBill);

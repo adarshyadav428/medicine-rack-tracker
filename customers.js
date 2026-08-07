@@ -314,14 +314,26 @@
   // Record payment
   // -------------------------------------------------------------------------
 
+  // Guards against a second POST for the same cash. Disabling the button is
+  // not enough on its own: Enter in the amount field calls straight through and
+  // never looks at it, so two quick presses recorded the payment twice and took
+  // the customer's balance down by double what they actually handed over.
+  var paymentInFlight = false;
+
   async function recordPayment() {
-    var amt = parseFloat(cEl.payAmount ? cEl.payAmount.value : "0") || 0;
-    if (amt <= 0) { setPayStatus("Enter a valid payment amount.", "is-warn"); return; }
+    if (paymentInFlight) return;
+
+    var amt = round2(parseFloat(cEl.payAmount ? cEl.payAmount.value : "0"));
+    if (!isFinite(amt) || amt <= 0) {
+      setPayStatus("Enter a valid payment amount.", "is-warn");
+      return;
+    }
 
     var list = loadCustomers();
     var c = list[cState.selectedIdx];
     if (!c) return;
 
+    paymentInFlight = true;
     if (cEl.payBtn) { cEl.payBtn.disabled = true; cEl.payBtn.textContent = "Saving…"; }
 
     try {
@@ -363,6 +375,7 @@
     } catch (err) {
       setPayStatus("Could not save payment: " + (err.message || "unknown error"), "is-warn");
     } finally {
+      paymentInFlight = false;
       if (cEl.payBtn) { cEl.payBtn.disabled = false; cEl.payBtn.textContent = "✔ Apply Payment"; }
     }
   }
