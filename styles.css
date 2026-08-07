@@ -940,6 +940,13 @@ button:focus-visible {
 .bill-save-customer-hint.is-warn { color: #c06020; }
 .bill-save-customer-hint.is-error{ color: var(--danger); }
 
+/* Marks a field a bill cannot be saved without. */
+.field-required {
+  color: var(--danger);
+  font-weight: 700;
+  margin-left: 0.1rem;
+}
+
 /* Three-column customer fields */
 .bill-fields-row {
   display: grid;

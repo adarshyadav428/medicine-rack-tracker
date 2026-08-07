@@ -144,6 +144,24 @@
   }
 
   /**
+   * The identity of a customer throughout this file. Names are unique
+   * case-insensitively — the server upserts on a name key — so this is what
+   * every lookup compares, and what the saved-customer dropdown is keyed by.
+   */
+  function customerKey(name) {
+    return normalizeString(name).toLowerCase();
+  }
+
+  /** Position of a customer in the current cache, or -1. */
+  function findCustomerIdx(name) {
+    var key = customerKey(name);
+    if (!key) return -1;
+    return loadSavedCustomers().findIndex(function (c) {
+      return customerKey(c.name) === key;
+    });
+  }
+
+  /**
    * Escape text bound for innerHTML or a double-quoted attribute.
    * Medicine and customer names are free text: a name containing " or & used
    * to break the row, the edit dialog or the printed receipt it landed in.
@@ -499,42 +517,77 @@
   function renderCustomerSelect() {
     if (!bEl.savedCustomerSelect) return;
     var list = loadSavedCustomers();
+
+    // Every option is rebuilt below, which throws away the browser's current
+    // selection. Remember who was picked and put them back afterwards — a
+    // background refresh used to leave the box reading "— Select a saved
+    // customer —" under a bill that plainly had one.
+    var selectedKey = customerKey(bEl.savedCustomerSelect.value);
+    if (!selectedKey && bEl.customerName) selectedKey = customerKey(bEl.customerName.value);
+
     bEl.savedCustomerSelect.textContent = "";
     var placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = list.length ? "— Select a saved customer —" : "— No saved customers yet —";
     bEl.savedCustomerSelect.appendChild(placeholder);
-    list.forEach(function (c, i) {
+    list.forEach(function (c) {
       var opt = document.createElement("option");
-      opt.value = String(i);
+      // Keyed by name, never by position. The cache is replaced wholesale and
+      // re-sorted by name on every refresh, so a position captured when the
+      // list was drawn could point at somebody else by the time it was read
+      // back — and that person's balance was then carried onto the bill.
+      opt.value = c.name;
       opt.textContent = c.name + (c.phone ? "  ·  " + c.phone : "");
       bEl.savedCustomerSelect.appendChild(opt);
     });
+
+    var still = selectedKey && list.find(function (c) {
+      return customerKey(c.name) === selectedKey;
+    });
+    bEl.savedCustomerSelect.value = still ? still.name : "";
   }
 
   function onSavedCustomerChange() {
-    var idx = parseInt(bEl.savedCustomerSelect ? bEl.savedCustomerSelect.value : "", 10);
-    if (isNaN(idx)) {
-      bState.currentCustomerIdx     = null;
-      bState.currentCustomerBalance = 0;
-      bState.openingBalanceTouched  = false;
-      if (bEl.openingBalance) bEl.openingBalance.value = "";
+    var picked = bEl.savedCustomerSelect ? bEl.savedCustomerSelect.value : "";
+
+    if (!customerKey(picked)) {
+      bState.currentCustomerIdx = null;
+      // Clearing the dropdown on a saved bill must not disturb the previous
+      // balance it was raised against; that figure belongs to the bill, not to
+      // whoever happens to be picked in the box.
+      if (!bState.currentBillId) {
+        bState.currentCustomerBalance = 0;
+        bState.openingBalanceTouched  = false;
+        if (bEl.openingBalance) bEl.openingBalance.value = "";
+        recalcPayment();
+      }
+      return;
+    }
+
+    var idx = findCustomerIdx(picked);
+    var c   = idx >= 0 ? loadSavedCustomers()[idx] : null;
+    if (!c) return;
+
+    bState.currentCustomerIdx = idx;
+    if (bEl.customerName)  bEl.customerName.value  = c.name  || "";
+    if (bEl.customerPhone) bEl.customerPhone.value = c.phone || "";
+    setSaveCustomerStatus("", "");
+    loadCustomerLastPrices(c.name);
+
+    // On a saved bill the Previous Balance is the snapshot that bill was raised
+    // against — a historical fact. tryAutoFillCustomer has always guarded it;
+    // picking from this dropdown did not, so it quietly replaced the snapshot
+    // with today's balance and a re-save wrote that onto the stored bill.
+    if (bState.currentBillId) {
       recalcPayment();
       return;
     }
-    var list = loadSavedCustomers();
-    var c = list[idx];
-    if (!c) return;
-    bState.currentCustomerIdx     = idx;
+
     bState.currentCustomerBalance = parseFloat(c.balance) || 0;
     // Picking a customer replaces whatever was in the box, so any earlier
     // manual correction is gone and the auto-sync is free to act again.
     bState.openingBalanceTouched  = false;
-    if (bEl.customerName)   bEl.customerName.value   = c.name  || "";
-    if (bEl.customerPhone)  bEl.customerPhone.value  = c.phone || "";
     if (bEl.openingBalance) bEl.openingBalance.value = bState.currentCustomerBalance || "";
-    setSaveCustomerStatus("", "");
-    loadCustomerLastPrices(c.name);
     recalcPayment();
     // The cached figure shows instantly; the server's replaces it a moment
     // later if a payment has been recorded since this page loaded.
@@ -1926,6 +1979,17 @@
       return;
     }
 
+    // Every bill has to belong to somebody. A nameless one still moved stock
+    // and still counted towards the day's takings, but it joined no ledger:
+    // nothing was owed by anyone, so a credit sale simply vanished and there
+    // was no record to chase. Picking from the dropdown and typing a new name
+    // both satisfy this — a name not yet on file is created on save, below.
+    if (!normalizeString(bEl.customerName ? bEl.customerName.value : "")) {
+      setSaveStatus("Select a customer, or type a name, before saving this bill.", "is-warn");
+      if (bEl.customerName) bEl.customerName.focus();
+      return;
+    }
+
     // An update replaces the stored bill outright, so it has to be asked for
     // rather than fallen into — this is the last guard against composing a
     // second customer's bill on top of the one already saved.
@@ -2012,19 +2076,11 @@
         if (custName) {
           var custList = loadSavedCustomers();
 
-          // Resolve the customer by the name actually on the bill. The cached
-          // index is only honoured when it still points at that same person —
-          // a stale index (customer picked, then the name edited) would
-          // otherwise carry someone else's balance onto this bill and skip
-          // creating the real customer.
-          var _lowerName = custName.toLowerCase();
-          var idx = bState.currentCustomerIdx;
-          if (idx === null || !custList[idx] ||
-              custList[idx].name.toLowerCase() !== _lowerName) {
-            idx = custList.findIndex(function (c) {
-              return c.name.toLowerCase() === _lowerName;
-            });
-          }
+          // Resolve by the name actually on the bill, never by the cached
+          // index — a stale index (customer picked, then the name edited, or
+          // the list re-sorted by a refresh) would carry someone else's
+          // balance onto this bill and skip creating the real customer.
+          var idx = findCustomerIdx(custName);
 
           // The previous balance that was just written to the bill row, reused
           // verbatim. Reading it back off the customer cache instead let the
@@ -3297,11 +3353,10 @@
       if (!name && !phone) return;
 
       var list = loadSavedCustomers();
-      var lower = name.toLowerCase();
       // Name is the identity. Phone only resolves a customer when no name has
       // been typed, because a household commonly shares one number.
       var idx = name
-        ? list.findIndex(function (c) { return c.name.toLowerCase() === lower; })
+        ? findCustomerIdx(name)
         : list.findIndex(function (c) { return c.phone && c.phone === phone; });
 
       if (idx < 0) {
@@ -3324,13 +3379,22 @@
         }
         return;
       }
-      if (bState.currentCustomerIdx === idx) return;
-
       var c = list[idx];
+
+      // Compare who is resolved, not where they sit. A refresh re-sorts the
+      // cache, so the same position can be a different person — and matching
+      // on it skipped the work for a customer that had genuinely changed.
+      if (bState.currentCustomerIdx !== null &&
+          list[bState.currentCustomerIdx] &&
+          customerKey(list[bState.currentCustomerIdx].name) === customerKey(c.name)) {
+        bState.currentCustomerIdx = idx;
+        return;
+      }
+
       bState.currentCustomerIdx = idx;
       if (bEl.customerName  && !name)  bEl.customerName.value  = c.name  || "";
       if (bEl.customerPhone && !phone) bEl.customerPhone.value = c.phone || "";
-      if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = String(idx);
+      if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = c.name;
       loadCustomerLastPrices(c.name);
 
       // On a saved bill the Previous Balance is the snapshot that bill was

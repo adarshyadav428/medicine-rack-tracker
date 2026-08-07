@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260806-salesmemory" />
+    <link rel="stylesheet" href="styles.css?v=20260807-custrequired" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -88,13 +88,17 @@
         <!-- Customer fields — 3 columns -->
         <div class="bill-fields-row">
           <div>
-            <label for="bill-customer-name">Customer / Business Name</label>
+            <label for="bill-customer-name">
+              Customer / Business Name <span class="field-required" aria-hidden="true">*</span>
+            </label>
             <input
               id="bill-customer-name"
               type="text"
               placeholder="e.g. City Medical Store"
               maxlength="120"
               autocomplete="off"
+              required
+              aria-required="true"
             />
           </div>
           <div>
@@ -472,6 +476,6 @@
     <script src="ledger.js?v=20260802-ledger"></script>
     <script src="medicine-sales.js?v=20260806-salesmemory"></script>
     <script src="app.js?v=20260806-salesmemory"></script>
-    <script src="billing.js?v=20260807-balancesync"></script>
+    <script src="billing.js?v=20260807-custrequired"></script>
   </body>
 </html>
