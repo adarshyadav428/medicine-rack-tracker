@@ -1,5 +1,35 @@
 # Billing integrity fixes
 
+## MRP-specific rates, loss warnings and bill-only medicines — 9 November 2026
+
+Apply `supabase/migrations/20261109084506_mrp_variant_pricing_bill_only.sql`
+after the atomic-ledger migration, during a backed-up coordinated maintenance
+window, before deploying this version. It adds a default-false bill_only column
+and a service-only price RPC, and updates transactional line persistence. No
+historical amounts or inventory records are rewritten. Reload both devices after
+deployment. Bill-only writes/imports fail closed if the upgrade is absent; older
+clients cannot resave invoices containing these lines and erase the exclusion.
+
+Customer and overall price references now match normalized medicine name plus
+MRP in integer paise. Missing MRP only matches missing MRP, and never borrows a
+known-MRP rate. Supplier rows with the same name and same MRP share that variant's
+history. The sales viewer filters by the selected MRP too. Ambiguous name-only
+legacy reference maps omit the price rather than mix variants.
+
+Negative markup/below-cost selling shows an inline warning on phone, PC and the
+bill-only editor. It remains allowed for intentional sales. Add medicine for this
+bill only is available on both billing layouts. Its fields are saved with the
+invoice, without calling the inventory write API. Such lines retain invoice
+charges/customer dues and receipt data, but are excluded from all profit-report
+totals/breakdowns and inventory price suggestions. Optional reference purchase
+price may be retained without creating profit. Existing unflagged records keep
+their original reporting treatment; historical classification is not guessed.
+Local verification: 615 assertions across 24 test files, 44 phone pricing/manual
+entry browser checks, 46 cross-device checks, the existing 13 phone flows and
+saved-receipt/retry browser checks passed. The feature migration was exercised
+in isolated PostgreSQL, including rerun safety, missing-upgrade rejection and
+service-only RPC permissions. It has not been applied to production.
+
 ## Phone counter workflow and visible price references — 9 November 2026
 
 Phone medicine search exposes MRP, purchase price, inventory selling rate and

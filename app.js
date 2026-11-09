@@ -1341,7 +1341,7 @@ function renderMedicineList(itemsToRender) {
         salesButton.title = `Who bought ${item.medicineName}, and at what price`;
         salesButton.addEventListener("click", () => {
           // No receipt viewer on this page, so bill numbers show as plain text.
-          window.showMedicineSalesModal(item.medicineName);
+          window.showMedicineSalesModal(item.medicineName, { mrp: item.mrp });
         });
       }
     }

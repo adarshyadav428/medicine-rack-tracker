@@ -101,7 +101,7 @@
     var sales;
     try {
       var result = await window.requestApi(
-        "/api/bills?medicine=" + encodeURIComponent(name),
+        "/api/bills?medicine=" + encodeURIComponent(name) + (Object.prototype.hasOwnProperty.call(opts,"mrp") ? "&mrp=" + encodeURIComponent(opts.mrp == null ? "unknown" : opts.mrp) : ""),
         { method: "GET" }
       );
       sales = result.sales || [];

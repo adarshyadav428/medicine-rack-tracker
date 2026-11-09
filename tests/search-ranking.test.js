@@ -217,7 +217,7 @@ const { createFixture } = require("./helpers/financial-fixture");
     await fixture.pg.exec("TRUNCATE public.bill_items,public.bills CASCADE");
     const empty = await fixture.request("bills", "GET", { query: { soldcounts: "1" } });
     eq("no sales yet is an empty map", empty.json.counts, {});
-    eq("badge reads the same map", src.includes("bState.soldCounts[medicineLower]"), true);
+    eq("badge reads the same map", src.includes("bState.soldCountsByMrp[priceVariantKey(item.medicineName,item.mrp)]"), true);
   } finally { await fixture.close(); }
   console.log(fails ? "\n" + fails + " FAILED" : "\nall search-ranking assertions passed");
   process.exitCode = fails ? 1 : 0;

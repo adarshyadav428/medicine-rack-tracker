@@ -2,6 +2,8 @@
 const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync(path.join(__dirname, "..", "billing.js"), "utf8");
 function section(start, end) { const a = source.indexOf(start); return source.slice(a, source.indexOf(end, a)); }
+function customerResult(priceMap){return {priceMap,mrpScoped:true,priceMapByMrp:Object.fromEntries(Object.entries(priceMap).map(([k,v])=>[k+"\u001f6100",v]))};}
+function globalResult(counts){return {counts,mrpScoped:true,countsByMrp:Object.fromEntries(Object.entries(counts).map(([k,v])=>[k+"\u001f6100",v]))};}
 const requests = [], events = [];
 const model = { customerLastPrices: {}, customerLastPricesFor: null, soldCounts: {} };
 const context = {
@@ -26,8 +28,8 @@ const drain = () => new Promise(resolve => setImmediate(resolve));
   context.refreshPriceHistory({ force: true });
   check("concurrent reference refreshes coalesce customer and global reads", requests.length, 2);
   check("phone price metadata distinguishes pending references", [context.getPriceInfo("a").customerStatus, context.getPriceInfo("a").globalStatus], ["loading", "loading"]);
-  requests.find(r => r.url.includes("soldcounts")).resolve({ counts: { "test medicine": { lastSellPrice: 52, lastSoldAt: "2026-10-01T00:00:00Z" } } });
-  requests.find(r => r.url.includes("lastprices")).resolve({ priceMap: { "test medicine": { sellPrice: 48.5 } } });
+  requests.find(r => r.url.includes("soldcounts")).resolve(globalResult({ "test medicine": { lastSellPrice: 52, lastSoldAt: "2026-10-01T00:00:00Z" } }));
+  requests.find(r => r.url.includes("lastprices")).resolve(customerResult({ "test medicine": { sellPrice: 48.5 } }));
   await loading;
   const first = context.getPriceInfo("a"), second = context.getPriceInfo("b");
   check("phone exposes both historical references and existing customer autofill", [first.customerLastRate, first.latestSoldRate, first.suggestedRate, first.source], [48.5, 52, 48.5, "customer"]);
@@ -45,19 +47,19 @@ const drain = () => new Promise(resolve => setImmediate(resolve));
   const freshAlice = context.loadCustomerLastPrices("Alice", { force: true });
   const freshRequest = requests.at(-1);
   context.bEl.customerName.value = "Alice";
-  oldRequest.resolve({ priceMap: { "test medicine": { sellPrice: 99 } } }); await oldAlice;
+  oldRequest.resolve(customerResult({ "test medicine": { sellPrice: 99 } })); await oldAlice;
   check("Alice-to-Bob-to-Alice rejects first Alice's late response", model.customerLastPrices["test medicine"], undefined);
-  bobRequest.resolve({ priceMap: { "test medicine": { sellPrice: 88 } } });
-  freshRequest.resolve({ priceMap: { "test medicine": { sellPrice: 49 } } }); await freshAlice;
+  bobRequest.resolve(customerResult({ "test medicine": { sellPrice: 88 } }));
+  freshRequest.resolve(customerResult({ "test medicine": { sellPrice: 49 } })); await freshAlice;
   check("latest request owns the selected customer's reference", context.getPriceInfo("a").customerLastRate, 49);
   const failed = context.loadCustomerLastPrices("Alice", { force: true }); requests.at(-1).reject(new Error("offline")); await failed;
   check("failed refresh marks retained reference as unavailable instead of no sale", [context.getPriceInfo("a").customerStatus, context.getPriceInfo("a").customerLastRate], ["error", 49]);
-  const empty = context.loadCustomerLastPrices("Alice", { force: true }); requests.at(-1).resolve({ priceMap: {} }); await empty;
+  const empty = context.loadCustomerLastPrices("Alice", { force: true }); requests.at(-1).resolve(customerResult({})); await empty;
   check("successful empty history is distinct from failure", [context.getPriceInfo("a").customerStatus, context.getPriceInfo("a").customerLastRate], ["ready", null]);
   await context.loadCustomerLastPrices(""); context.bEl.customerName.value = "";
   check("no customer has an explicit reference state", context.getPriceInfo("a").customerStatus, "none");
   // Resolve the coalesced global read started by the later customer change.
-  requests.filter(r => r.url.includes("soldcounts")).slice(1).forEach(r => r.resolve({ counts: {} })); await drain();
+  requests.filter(r => r.url.includes("soldcounts")).slice(1).forEach(r => r.resolve(globalResult({}))); await drain();
   check("reference loading never edits the bill's customer input", context.bEl.customerName.value, "");
   console.log(checks + " phone price-info assertions passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

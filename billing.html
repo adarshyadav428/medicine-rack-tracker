@@ -18,7 +18,7 @@
     />
     <link rel="stylesheet" href="styles.css?v=20260807-custrequired" />
     <link rel="stylesheet" href="mobile.css?v=20261031-compact" />
-    <link rel="stylesheet" href="phone-billing.css?v=20261109-phone-pricing" />
+    <link rel="stylesheet" href="phone-billing.css?v=20261109-mrp-bill-only" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -213,6 +213,7 @@
         </div>
 
         <!-- Line items -->
+        <button id="bill-add-only" class="btn btn-ghost btn-xs" type="button">＋ Add medicine for this bill only</button>
         <div id="bill-line-items-wrap" style="margin-top:1rem;">
           <p id="bill-items-empty" class="billing-empty-state">
             <span class="billing-empty-icon">💊</span>
@@ -493,9 +494,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
     <script src="ledger.js?v=20261108-ledger-integrity"></script>
-    <script src="medicine-sales.js?v=20260806-salesmemory"></script>
-    <script src="app.js?v=20261109-phone-pricing"></script>
-    <script src="billing.js?v=20261109-phone-pricing"></script>
-    <script src="phone-billing.js?v=20261109-phone-pricing"></script>
+    <script src="medicine-sales.js?v=20261109-mrp-bill-only"></script>
+    <script src="app.js?v=20261109-mrp-bill-only"></script>
+    <script src="billing.js?v=20261109-mrp-bill-only"></script>
+    <script src="phone-billing.js?v=20261109-mrp-bill-only"></script>
   </body>
 </html>
