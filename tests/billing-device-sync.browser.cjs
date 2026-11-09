@@ -158,6 +158,59 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await fixture.updateBill(billId, { amountReceived: 80 });
     await refresh(phone);
     check("remote partial payment replaces a previous Paid in full mode exactly", (await snapshot(phone)).received, 80);
+
+    // Existing accounts and their full histories must refresh on Customers too.
+    const accountPC = await open(false), accountPhone = await open(true);
+    for (const p of [accountPC, accountPhone]) {
+      await p.goto(base + "/customers.html");
+      await p.locator(".cust-card").filter({ hasText: "Alice" }).first().click();
+      await p.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹420.00" && !document.querySelector("#cust-pay-btn").disabled);
+    }
+    check("both devices read the pre-existing account and bill", [await accountPhone.locator("#cust-profile-balance").innerText(), (await accountPhone.locator("#cust-bills-container").innerText()).includes(original.number)], ["₹420.00", true]);
+    await accountPC.locator("#cust-edit-btn").click();
+    await accountPC.locator("#cust-edit-phone-input").fill("Unsaved contact");
+    await accountPC.locator("#cust-pay-amount").fill("5");
+    await accountPhone.locator("#cust-pay-amount").fill("20");
+    await accountPhone.locator("#cust-pay-btn").click();
+    await accountPhone.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹400.00" && !document.querySelector("#cust-pay-btn").disabled);
+    await accountPC.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await accountPC.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹400.00" && !document.querySelector("#cust-pay-btn").disabled);
+    check("phone standalone payment syncs PC dues and history", [(await accountPC.locator("#cust-bills-container").innerText()).includes("20.00"), await accountPC.locator("#cust-edit-phone-input").inputValue(), await accountPC.locator("#cust-pay-amount").inputValue()], [true, "Unsaved contact", "5"]);
+    await refresh(phone);
+    check("Billing refreshes its existing customer cache", (await snapshot(phone)).customers.find(c => c.name === "Alice").balance, 400);
+    check("current dues do not rewrite historical previous balance", (await snapshot(phone)).previousBalance, 200);
+    await phone.evaluate(() => window.MedicineBilling.newBill(true));
+    await phone.evaluate(() => window.MedicineBilling.setField("savedCustomer", "Alice", "change"));
+    await phone.waitForFunction(() => window.MedicineBilling.snapshot().previousBalance === 400);
+    await phone.evaluate(id => {
+      const b = window.MedicineBilling; b.commit({ ...b.draft(id), quantity: 1, sellPrice: 100 }); b.setField("received", "10");
+    }, MEDICINE_ID);
+    check("new phone bill uses the freshly consolidated due", await phone.evaluate(() => window.MedicineBilling.save(false)), true);
+    await accountPC.locator("#cust-sync-refresh").click();
+    await accountPC.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹490.00" && !document.querySelector("#cust-pay-btn").disabled);
+    check("new bill updates existing account across devices", Number((await fixture.customer("Alice")).balance), 490);
+    await accountPhone.locator("#cust-edit-btn").click();
+    await accountPhone.locator("#cust-edit-name-input").fill("Alice Renamed");
+    await accountPhone.locator("#cust-edit-phone-input").fill("1234567890");
+    await accountPhone.locator("#cust-edit-save-btn").click();
+    await accountPhone.waitForFunction(() => document.querySelector("#cust-profile-name").textContent === "Alice Renamed" && document.querySelector("#cust-edit-form").classList.contains("hidden"));
+    await accountPC.locator("#cust-sync-refresh").click();
+    await accountPC.waitForFunction(() => document.querySelector("#cust-profile-name").textContent === "Alice Renamed");
+    check("renamed account stays selected with synchronized contact and history", [await accountPC.locator("#cust-profile-phone").innerText(), (await accountPC.locator("#cust-bills-container").innerText()).includes(original.number), await accountPC.locator("#cust-edit-phone-input").inputValue()], ["1234567890", true, "Unsaved contact"]);
+    await refresh(phone);
+    check("Billing picks up renamed customer without page reload", (await snapshot(phone)).customers.some(c => c.name === "Alice Renamed" && c.balance === 490), true);
+    await fixture.createCustomer("New remote account", 75);
+    await accountPC.waitForFunction(() => document.querySelector("#cust-list").textContent.includes("New remote account"), null, { timeout: 20000 });
+    check("Customers periodically syncs additions while a profile is open", (await accountPC.locator("#cust-list").innerText()).includes("New remote account"), true);
+    await accountPC.evaluate(() => {
+      localStorage.setItem("medicineRackTracker.balancesImported.v1", "1");
+      localStorage.setItem("medicineRackTracker.customers.v1", JSON.stringify([{ name: "Legacy zero account", phone: "123", balance: 0 }]));
+    });
+    await accountPC.locator("#cust-review-browser").click();
+    await accountPC.waitForFunction(() => document.querySelector("#cust-list").textContent.includes("Legacy zero account"));
+    check("review publishes an old browser-only zero-due profile through real RPC", Number((await fixture.customer("Legacy zero account")).balance), 0);
+    await refresh(phone);
+    check("recovered browser profile becomes available on the other device", (await snapshot(phone)).customers.some(c => c.name === "Legacy zero account"), true);
     check("no uncaught browser errors", errors, []);
     console.log(checks + " device sync browser/API/PostgreSQL assertions passed");
   } finally {

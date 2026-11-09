@@ -12,6 +12,7 @@
   var customerCache = [];
   var pendingOperations = new Map();
   var completedOperations = new Set();
+  var customerSyncInFlight = false;
   var cState = {
     initialized: false,
     selectedKey: null,
@@ -123,7 +124,8 @@
     var result = await requestApi("/api/customers?includeArchived=1", { method: "GET" });
     if (seq !== cState.customerReadSeq) return customerCache;
     var selected = selectedCustomer();
-    customerCache = (result.customers || []).map(normalizeCustomer);
+    if (!Array.isArray(result.customers)) throw new Error("Incomplete customer response");
+    customerCache = result.customers.map(normalizeCustomer);
     if (selected) {
       var resolved = findCustomer(selected);
       cState.selectedKey = resolved ? customerKey(resolved) : null;
@@ -249,7 +251,7 @@
     if (cEl.editForm) cEl.editForm.classList.add("hidden");
     if (cEl.editBtn) cEl.editBtn.textContent = "✏ Edit";
   }
-  async function openProfile(key, preserveForms) {
+  async function openProfile(key, preserveForms, background) {
     var c = customerCache.find(function (row) { return customerKey(row) === key; });
     if (!c) return;
     cState.selectedKey = key;
@@ -267,7 +269,7 @@
     showProfileContent(true);
     renderProfile(c);
     renderCustomerList();
-    if (cEl.billsContainer) cEl.billsContainer.innerHTML = '<p class="status-message is-info">Refreshing account…</p>';
+    if (cEl.billsContainer && !background) cEl.billsContainer.innerHTML = '<p class="status-message is-info">Refreshing account…</p>';
     try {
       await refreshCustomers();
       if (seq !== cState.profileSeq) return;
@@ -279,11 +281,13 @@
       }
       renderProfile(fresh);
       renderCustomerList();
-      await loadAndRenderBills(fresh, seq);
+      if (await loadAndRenderBills(fresh, seq, background) === false) throw new Error("Account history could not be verified");
+      return true;
     } catch (error) {
       if (seq !== cState.profileSeq) return;
       setPageStatus("Could not refresh this account: " + (error.message || "Unknown error"), "is-error");
-      if (cEl.billsContainer) cEl.billsContainer.innerHTML = '<p class="status-message is-error">Account freshness could not be confirmed. Reopen the profile to retry.</p>';
+      if (cEl.billsContainer && !background) cEl.billsContainer.innerHTML = '<p class="status-message is-error">Account freshness could not be confirmed. Reopen the profile to retry.</p>';
+      return false;
     } finally {
       if (seq === cState.profileSeq) {
         cState.profileLoading = false;
@@ -307,17 +311,33 @@
     renderCustomerList();
     updateButtons();
   }
-  function refreshSelectedProfile(queueIfLoading) {
+  function refreshSelectedProfile(queueIfLoading, background) {
     if (cState.profileLoading) {
       if (queueIfLoading === true) cState.refreshQueued = true;
       return;
     }
     if (cState.paymentInFlight || cState.editInFlight || cState.deleteInFlight) return;
     var c = selectedCustomer();
-    if (c) return openProfile(customerKey(c), true);
+    if (c) return openProfile(customerKey(c), true, background);
     return refreshCustomers().then(renderCustomerList).catch(function (error) {
       setPageStatus("Could not refresh customers: " + error.message, "is-warn");
+      return false;
     });
+  }
+
+  async function syncCustomerAccounts() {
+    if (!cState.initialized || !isAdmin() || document.hidden || customerSyncInFlight ||
+        cState.profileLoading || cState.editInFlight || cState.paymentInFlight || cState.deleteInFlight) return;
+    customerSyncInFlight = true;
+    var syncStatus = document.getElementById("cust-sync-status");
+    try {
+      var ok = await refreshSelectedProfile(false, true);
+      if (syncStatus) syncStatus.textContent = ok === false
+        ? "Could not refresh all account data. Previously loaded history is kept; retry when connected."
+        : "Customer details, dues and history refreshed from the shared database.";
+    } catch (error) {
+      if (syncStatus) syncStatus.textContent = "Account sync failed. Your entries are kept; retry when connected.";
+    } finally { customerSyncInFlight = false; }
   }
   function showEditForm() {
     var c = selectedCustomer();
@@ -403,13 +423,13 @@
     }
   }
 
-  async function loadAndRenderBills(customer, profileSeq) {
+  async function loadAndRenderBills(customer, profileSeq, background) {
     if (!cEl.billsContainer || !isSelected(customer)) return false;
     var requestSeq = ++cState.historySeq;
     var owner = customerKey(customer);
     cState.historyOwner = null;
     cState.historyPayments = [];
-    cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading history…</p>';
+    if (!background) cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading history…</p>';
     var params = "customer=" + encodeURIComponent(customer.name);
     if (customer.id) params += "&customerId=" + encodeURIComponent(customer.id);
     try {
@@ -418,15 +438,16 @@
         requestApi("/api/payments?" + params, { method: "GET" }),
       ]);
       if (requestSeq !== cState.historySeq || profileSeq !== cState.profileSeq || !isSelected(customer)) return false;
-      var bills = Array.isArray(pair[0].bills) ? pair[0].bills : [];
-      var payments = Array.isArray(pair[1].payments) ? pair[1].payments : [];
+      if (!Array.isArray(pair[0].bills) || !Array.isArray(pair[1].payments)) throw new Error("Incomplete account history response");
+      var bills = pair[0].bills;
+      var payments = pair[1].payments;
       cState.historyOwner = owner;
       cState.historyPayments = payments;
       renderHistory(bills, payments, customer);
       return true;
     } catch (error) {
       if (requestSeq !== cState.historySeq || profileSeq !== cState.profileSeq || !isSelected(customer)) return false;
-      cEl.billsContainer.innerHTML = '<p class="status-message is-error">Could not load history: ' +
+      if (!background) cEl.billsContainer.innerHTML = '<p class="status-message is-error">Could not load history: ' +
         escHtml(error.message || "Unknown error") + "</p>";
       return false;
     }
@@ -650,8 +671,12 @@
       return Array.isArray(list) ? list : null;
     } catch (_) { return null; }
   }
-  async function offerLocalImport() {
-    if (localStorage.getItem(IMPORT_DONE_KEY)) return;
+  async function offerLocalImport(forceReview) {
+    if (forceReview !== true && localStorage.getItem(IMPORT_DONE_KEY)) return;
+    if (forceReview === true) {
+      try { await refreshCustomers(); renderCustomerList(); }
+      catch (error) { setPageStatus("Cannot review browser records until current accounts can be loaded: " + error.message, "is-error"); return; }
+    }
     var legacyRows = readLegacyCustomers();
     if (!legacyRows) {
       setPageStatus("Saved browser balances could not be read. They have been kept for manual review.", "is-warn");
@@ -670,8 +695,10 @@
         return;
       }
       seen.set(key, balance);
-      if (balance === 0) return;
       var match = customerCache.find(function (c) { return nameKey(c.name) === key; });
+      // Missing zero-due browser customers still need a shared profile. A
+      // zero cached locally must never clear an existing account's debt.
+      if (balance === 0 && match) return;
       if (match && (match.archived || match.openingBalance !== 0 || Math.abs(match.balance - balance) < 0.005)) return;
       pending.push({
         name: match ? match.name : String(legacy.name).trim(), phone: match && match.phone ? match.phone : String(legacy.phone || ""),
@@ -688,6 +715,7 @@
         return;
       }
       try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
+      if (forceReview === true) setPageStatus("No additional browser balances or customer records can be safely imported. Shared records are unchanged.", "is-info");
       return;
     }
     var preview = pending.slice(0, 10).map(function (c) {
@@ -744,9 +772,15 @@
     if (cEl.payAmount) cEl.payAmount.addEventListener("keydown", function (event) {
       if (event.key === "Enter") { event.preventDefault(); recordPayment(); }
     });
-    window.addEventListener("focus", refreshSelectedProfile);
+    var syncButton = document.getElementById("cust-sync-refresh");
+    if (syncButton) syncButton.addEventListener("click", syncCustomerAccounts);
+    var legacyButton = document.getElementById("cust-review-browser");
+    if (legacyButton) legacyButton.addEventListener("click", function () { offerLocalImport(true); });
+    window.setInterval(syncCustomerAccounts, 15000);
+    window.addEventListener("focus", syncCustomerAccounts);
+    window.addEventListener("online", syncCustomerAccounts);
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") refreshSelectedProfile();
+      if (document.visibilityState === "visible") syncCustomerAccounts();
     });
     updateButtons();
   }

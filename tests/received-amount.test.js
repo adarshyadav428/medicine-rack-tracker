@@ -37,7 +37,7 @@ const syncSrc = grab(
 );
 const makeSync = new Function(
   "bState", "bEl", "normalizeString", "round2",
-  "refreshSavedCustomers", "loadSavedCustomers", "recalcPayment",
+  "refreshSavedCustomers", "loadSavedCustomers", "recalcPayment", "billSaveInFlight",
   syncSrc + "\n return syncSelectedCustomerBalance;"
 );
 
@@ -96,10 +96,11 @@ function scenario(opts) {
     round2,
     async () => { if (opts.duringFlight) opts.duringFlight(state, el); },
     () => list,
-    () => { recalcs += 1; }
+    () => { recalcs += 1; },
+    !!opts.saving
   );
 
-  return sync().then((moved) => ({
+  return sync(opts.alreadyRefreshed).then((moved) => ({
     moved,
     balance: state.currentCustomerBalance,
     field: el.openingBalance.value,
@@ -117,6 +118,8 @@ const base = { customerName: "Dr. Yaswant", shownBalance: 1200 };
   check("state picks up the new figure", paid.balance, 700);
   check("so does the Opening Balance box", paid.field, "700");
   check("totals are recalculated",     paid.recalcs, 1);
+  const saving = await scenario({ ...base, serverBalance: 700, saving: true, alreadyRefreshed: true });
+  check("background account refresh cannot change a pending bill save", [saving.balance, saving.recalcs], [1200, 0]);
 
   // Nothing happened elsewhere: sync silently, report no move.
   const same = await scenario({ ...base, serverBalance: 1200 });
