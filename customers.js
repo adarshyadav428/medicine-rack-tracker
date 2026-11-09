@@ -775,7 +775,7 @@
     cState.initialized = true;
     if (!isAdmin()) { setPageStatus("Admin access required to view customer profiles.", "is-error"); return; }
     setPageStatus("Loading customers…", "is-info");
-    refreshCustomers().then(function () {
+    var initialLoad = refreshCustomers().then(function () {
       setPageStatus("", "");
       renderCustomerList();
       updateButtons();
@@ -813,6 +813,7 @@
       if (document.visibilityState === "visible") syncCustomerAccounts();
     });
     updateButtons();
+    return initialLoad;
   }
   window.__onCustomersReady = initCustomersPage;
 })();

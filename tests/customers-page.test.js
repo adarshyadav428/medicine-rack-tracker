@@ -69,7 +69,7 @@ async function page(server,storage=new Map([["medicineRackTracker.balancesImport
  const nodes=new Map(),events=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,new Element(id));return nodes.get(id);};
  const localStorage={getItem(k){return storage.has(k)?storage.get(k):null;},setItem(k,v){storage.set(k,String(v));},removeItem(k){storage.delete(k);}};
  const context={document:{body:{dataset:{page:"customers"}},visibilityState:"visible",getElementById:node,addEventListener(t,f){events.set("document:"+t,f);}},window:{crypto:webcrypto,confirm(){return true;},setInterval(f){events.set("poll",f);},addEventListener(t,f){events.set("window:"+t,f);}},localStorage,TextEncoder,Uint8Array,requestApi:server.request,isAdmin:()=>true,isAuthenticated:()=>true,console,setTimeout,clearTimeout};
- vm.runInNewContext(expose,context,{filename:"customers.js"});context.window.__onCustomersReady();await drain();
+ vm.runInNewContext(expose,context,{filename:"customers.js"});await context.window.__onCustomersReady();await drain();
  return{api:context.customerPage,node,storage,events};
 }
 let assertions=0;

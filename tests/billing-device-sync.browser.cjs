@@ -86,6 +86,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await phone.locator("#phone-item-qty").fill("0.0001"); await phone.locator("#phone-save").click();
     check("phone rejects unsupported item precision before adding", [await phone.locator("#phone-billing").getAttribute("data-screen"), (await snapshot(phone)).items[0].quantity], ["item", 3]);
     await phone.locator("#phone-item-qty").fill("3");
+    await phone.locator(".phone-item-details summary").click();
     await phone.locator("#phone-item-batch").fill("PHONE-B123"); await phone.locator("#phone-item-expiry").fill("11/27");
     await phone.locator("#phone-save").click();
     await phone.locator("#phone-received").fill("-5"); await phone.locator("#phone-save").click();
