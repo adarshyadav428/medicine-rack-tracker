@@ -18,7 +18,7 @@
     />
     <link rel="stylesheet" href="styles.css?v=20260807-custrequired" />
     <link rel="stylesheet" href="mobile.css?v=20261031-compact" />
-    <link rel="stylesheet" href="phone-billing.css?v=20261031-adarsh" />
+    <link rel="stylesheet" href="phone-billing.css?v=20261109-device-sync" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -61,6 +61,11 @@
       </section>
 
       <!-- ── Bill form card ─────────────────────────────────────────── -->
+      <section class="panel" aria-label="Device sync">
+        <p id="bill-sync-status" class="status-message" role="status">Saved bills are shared across your devices.</p>
+        <button id="bill-sync-refresh" class="btn btn-ghost btn-xs" type="button">Refresh saved bills</button>
+        <button id="bill-sync-reload" class="btn btn-secondary btn-xs" type="button" hidden>Load latest saved bill</button>
+      </section>
       <section id="bill-form-section" class="panel billing-form-card fade-up delay-1">
         <!-- Bill number + date bar -->
         <div class="bill-header-row">
@@ -490,7 +495,7 @@
     <script src="ledger.js?v=20261108-ledger-integrity"></script>
     <script src="medicine-sales.js?v=20260806-salesmemory"></script>
     <script src="app.js?v=20261108-ledger-integrity"></script>
-    <script src="billing.js?v=20261108-ledger-integrity"></script>
-    <script src="phone-billing.js?v=20261108-ledger-integrity"></script>
+    <script src="billing.js?v=20261109-device-sync"></script>
+    <script src="phone-billing.js?v=20261109-device-sync"></script>
   </body>
 </html>

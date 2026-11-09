@@ -348,6 +348,76 @@
   var billCustomerId = null;
   var billIssuedName = null;
   var billLoadSequence = 0;
+  var cleanBillFingerprint = null;
+  var billSyncInFlight = false;
+  var billSyncMessage = "Saved bills are shared across your devices.";
+  var billSyncReloadAvailable = false;
+
+  function billFingerprint() {
+    return JSON.stringify({
+      items: bState.lineItems,
+      fields: [bEl.customerName, bEl.customerPhone, bEl.notes, bEl.gstPercent,
+        bEl.receivedAmount, bEl.openingBalance].map(function (el) { return el ? el.value : ""; }),
+      previousBalance: bState.currentCustomerBalance
+    });
+  }
+
+  function phoneItemEditorOpen() {
+    var phone = document.getElementById("phone-billing");
+    return document.body.classList.contains("phone-billing-active") && phone && phone.dataset.screen === "item";
+  }
+
+  function hasUnsavedBillChanges() {
+    return phoneItemEditorOpen() || (cleanBillFingerprint !== null
+      ? cleanBillFingerprint !== billFingerprint()
+      : bState.lineItems.length > 0 || !!bEl.customerName.value || !!bEl.notes.value);
+  }
+
+  function setBillSyncStatus(message, canReload) {
+    billSyncMessage = message;
+    billSyncReloadAvailable = !!canReload;
+    var status = document.getElementById("bill-sync-status");
+    var reload = document.getElementById("bill-sync-reload");
+    if (status) status.textContent = message;
+    if (reload) reload.hidden = !canReload;
+    notifyBillingChange("syncStatus");
+  }
+
+  // Poll only while this page is visible. The existing versioned write RPC
+  // remains the authority if another device saves after this read.
+  async function syncSavedBills() {
+    if (!bState.initialized || !isAdmin() || document.hidden || billSyncInFlight || billSaveInFlight) return;
+    billSyncInFlight = true;
+    var id = bState.currentBillId, revision = billRevision, sequence = billLoadSequence;
+    try {
+      if (await loadBillHistory({ background: true }) === false) throw new Error("History refresh failed");
+      if (!id) {
+        if (sequence === billLoadSequence) setBillSyncStatus("History refreshed. Open a saved bill to continue on this device.", false);
+        return;
+      }
+      if (pendingBillOperation || billSaveInFlight || sequence !== billLoadSequence) return;
+      var result = await requestApi("/api/bills?id=" + encodeURIComponent(id), { method: "GET" });
+      if (billSaveInFlight || pendingBillOperation || sequence !== billLoadSequence || id !== bState.currentBillId || revision !== billRevision) return;
+      if (!result.bill || !Array.isArray(result.items)) throw new Error("Incomplete bill response");
+      if (Number(result.bill.version) !== Number(revision)) {
+        if (hasUnsavedBillChanges()) {
+          setBillSyncStatus("Updated on another device. Your unsaved changes are kept here. Load latest to discard them and continue with the saved bill.", true);
+        } else {
+          await loadBillForEdit(id, { background: true, result: result });
+        }
+      } else {
+        setBillSyncStatus("Saved bill is up to date across your devices.", false);
+      }
+    } catch (error) {
+      if (sequence === billLoadSequence && !billSaveInFlight) {
+        setBillSyncStatus(error.status === 404
+          ? "This bill is no longer available. Your local changes are kept here; check History before continuing."
+          : "Could not check for updates. Your changes are kept here; reconnect and refresh before continuing.", error.status !== 404 && !!bState.currentBillId);
+      }
+    } finally {
+      billSyncInFlight = false;
+    }
+  }
 
   function loadSavedCustomers() {
     return savedCustomerCache;
@@ -1948,6 +2018,8 @@
       bState.currentCustomerBalance = Number(bill.previous_balance) || 0;
       bEl.openingBalance.value = bState.currentCustomerBalance || "";
       renderLineItems(); recalcTotals();
+      cleanBillFingerprint = billFingerprint();
+      setBillSyncStatus("Bill saved. It can now be opened from History on your other devices.", false);
       if (!payload.id) rememberSoldPrices(payload.items);
       pendingBillOperation = null;
       if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bState.currentBillNumber;
@@ -1960,6 +2032,9 @@
         else if (!error.status || error.status >= 500) pendingBillOperation.uncertain = true;
       }
       setSaveStatus((committed ? "Bill saved, but display update failed: " : "Save not confirmed: ") + error.message, committed ? "is-ok" : "is-error");
+      if (!committed && error.status === 409 && bState.currentBillId) {
+        setBillSyncStatus("The saved bill or account changed. Your edits are kept here. Load latest before retrying your changes.", true);
+      }
     } finally {
       billSaveInFlight = false;
       controls.forEach(function(el,i) { el.disabled = disabled[i]; });
@@ -2221,17 +2296,20 @@
   // -------------------------------------------------------------------------
   function newBill(savedSuccessfully) {
     if (billSaveInFlight) return;
+    if (savedSuccessfully !== true && bState.lineItems.length) {
+      if (!window.confirm("Start a new bill? Current bill will be discarded if not saved.")) {
+        return;
+      }
+    }
+
     billLoadSequence += 1;
     billVersion = null;
     billRevision = null;
     billCustomerId = null;
     billIssuedName = null;
     pendingBillOperation = null;
-    if (savedSuccessfully !== true && bState.lineItems.length) {
-      if (!window.confirm("Start a new bill? Current bill will be discarded if not saved.")) {
-        return;
-      }
-    }
+    cleanBillFingerprint = null;
+    setBillSyncStatus("Saved bills are shared across your devices.", false);
 
     bState.lineItems         = [];
     bState.currentBillId     = null;
@@ -2675,11 +2753,12 @@
   // A search is a round trip, so a stale reply must not overwrite a newer one.
   var historyRequestSeq = 0;
 
-  async function loadBillHistory() {
+  async function loadBillHistory(options) {
+    var background = options && options.background;
     var query = historyQuery();
     var mySeq = ++historyRequestSeq;
 
-    if (query.active) setHistorySummary("Searching…");
+    if (query.active && !background) setHistorySummary("Searching…");
 
     try {
       // Only the matching window. Balance chaining used to force the whole
@@ -2687,6 +2766,7 @@
       // customer it is chaining, via fetchCustomerLedger().
       var result = await requestApi("/api/bills" + query.qs, { method: "GET" });
       if (mySeq !== historyRequestSeq) return; // a later search already answered
+      if (!Array.isArray(result.bills)) throw new Error("Incomplete bill history response");
 
       bState.billHistory = result.bills || [];
       noteBillLedgerRows(bState.billHistory);
@@ -2713,8 +2793,10 @@
           result.truncated ? "is-warn" : ""
         );
       }
+      return true;
     } catch (error) {
       if (mySeq !== historyRequestSeq) return;
+      if (background) return false;
       setHistorySummary("");
       if (bEl.historyContainer) {
         bEl.historyContainer.innerHTML =
@@ -3032,14 +3114,26 @@
     }
   }
 
-  async function loadBillForEdit(billId) {
-    if (billSaveInFlight) return;
+  async function loadBillForEdit(billId, options) {
+    options = options || {};
+    if (billSaveInFlight) return false;
+    if (pendingBillOperation) {
+      setSaveStatus("Resolve the unconfirmed save before loading another bill. Retry Save to confirm the original transaction.", "is-warn");
+      return false;
+    }
+    if (!options.background && hasUnsavedBillChanges() && !window.confirm("Discard your unsaved changes and load the latest saved bill?")) return false;
+    var startingFingerprint = billFingerprint();
     var loadSequence = ++billLoadSequence;
     try {
-      setBillingStatus("Loading bill for editing…", "is-info");
-      var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
+      if (!options.background) setBillingStatus("Loading bill for editing…", "is-info");
+      var result = options.result || await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill  = result.bill;
-      if (loadSequence !== billLoadSequence || billSaveInFlight) return;
+      if (loadSequence !== billLoadSequence || billSaveInFlight) return false;
+      if (startingFingerprint !== billFingerprint()) {
+        setBillSyncStatus("You edited while the bill was loading. Your changes are kept here; choose the saved bill again when ready.", !!bState.currentBillId);
+        return false;
+      }
+      if (!bill || bill.id !== billId || !Array.isArray(result.items)) throw new Error("Incomplete bill response");
       pendingBillOperation = null;
       billVersion = bill.updated_at;
       billRevision = bill.version;
@@ -3074,12 +3168,13 @@
       if (bEl.customerPhone)  bEl.customerPhone.value  = bill.customer_phone || "";
       if (bEl.notes)          bEl.notes.value          = bill.notes          || "";
       if (bEl.gstPercent)     bEl.gstPercent.value     = bill.gst_percent    || "0";
+      if (bEl.receivedAmount) bEl.receivedAmount.value = bill.amount_received == null ? "0" : String(bill.amount_received);
       if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bill.bill_number;
       if (bEl.printBillButton)   bEl.printBillButton.disabled = false;
 
       // Restore the previous-balance snapshot so the form & receipt show the
-      // correct "Previous Balance" for this specific bill. The user can correct
-      // it in the Opening Balance field and re-save to fix historical receipts.
+      // correct "Previous Balance" for this specific bill. Account adjustments
+      // are separate; editing this field must not rewrite historical balances.
       var _storedPrev = (billPrev(bill.id) || 0);
       bState.currentCustomerBalance  = _storedPrev;
       bState.openingBalanceTouched   = false;
@@ -3098,8 +3193,11 @@
         loadCustomerLastPrices(priceCustomer ? priceCustomer.name : bill.customer_name);
       }
 
+      notifyBillingChange("loadBill");
       renderLineItems();
       recalcTotals();
+      cleanBillFingerprint = billFingerprint();
+      setBillSyncStatus(options.background ? "Latest changes from your other device loaded." : "Latest saved bill loaded. Changes you save here will be available on your other devices.", false);
 
       var editMsg = items.length === 0
         ? "Bill loaded for editing. No saved line items found — please re-add medicines above, then click Save Bill."
@@ -3108,11 +3206,13 @@
       setBillingStatus("", "");
 
       // Scroll to top of form
-      if (bEl.billFormSection) {
+      if (bEl.billFormSection && !options.background) {
         bEl.billFormSection.scrollIntoView({ behavior: "smooth", block: "start" });
       }
+      return true;
     } catch (error) {
       setBillingStatus("Could not load bill: " + (error.message || "Unknown error"), "is-error");
+      return false;
     }
   }
 
@@ -3351,6 +3451,16 @@
     loadBillHistory();
     refreshSavedCustomers().catch(function () { /* visible error already displayed */ });
     loadSoldCounts();
+    var syncRefresh = document.getElementById("bill-sync-refresh");
+    var syncReload = document.getElementById("bill-sync-reload");
+    if (syncRefresh) syncRefresh.addEventListener("click", syncSavedBills);
+    if (syncReload) syncReload.addEventListener("click", function () {
+      if (bState.currentBillId) loadBillForEdit(bState.currentBillId);
+    });
+    setInterval(syncSavedBills, 15000);
+    window.addEventListener("focus", syncSavedBills);
+    window.addEventListener("online", syncSavedBills);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) syncSavedBills(); });
 
     // A bill always starts with a medicine, so start with the cursor there.
     setTimeout(function () {
@@ -3479,6 +3589,8 @@
         status: bEl.saveStatus.textContent,
         statusTone: bEl.saveStatus.className,
         customerStatus: bEl.saveCustomerStatus.textContent,
+        syncStatus: billSyncMessage,
+        syncReloadAvailable: billSyncReloadAvailable,
         error: bEl.status.classList.contains("is-error") ? bEl.status.textContent : "",
       };
     },
@@ -3527,6 +3639,8 @@
     },
     remove: function(id) { if (!billSaveInFlight) removeLineItem(id); },
     editBill: loadBillForEdit,
+    refreshSavedBills: syncSavedBills,
+    reloadBill: function () { return bState.currentBillId ? loadBillForEdit(bState.currentBillId) : Promise.resolve(false); },
     newBill: newBill,
     save: async function (andNew) {
       await saveBill();

@@ -22,6 +22,11 @@
       <a href="dashboard.html">Medicine database</a><a href="customers.html">Customers</a>
     </nav>
     <p id="phone-global-error" class="phone-feedback is-error" role="alert"></p>
+    <aside class="phone-sync" aria-label="Device sync">
+      <p id="phone-sync-status" class="phone-feedback" role="status"></p>
+      <button id="phone-sync-refresh" class="phone-history-link" type="button">Refresh saved bills</button>
+      <button id="phone-sync-reload" class="phone-history-link" type="button" hidden>Load latest saved bill</button>
+    </aside>
     <main id="phone-sale-screen" class="phone-screen">
       <div class="phone-invoice-strip"><div><small>Bill number</small><strong id="phone-invoice">New bill</strong></div><div><small>Bill date</small><span id="phone-date"></span></div></div>
       <section class="phone-sale-customer">
@@ -215,6 +220,10 @@
     text("total", bill.total); text("balance", bill.balance);
     text("customer-status", bill.customerStatus || "");
     text("global-error", bill.error || "");
+    text("sync-status", bill.syncStatus || "Saved bills are shared across your devices.");
+    el("sync-reload").hidden = !bill.syncReloadAvailable;
+    el("sync-refresh").disabled = pending || bill.saving;
+    el("sync-reload").disabled = pending || bill.saving;
     text("save-status", bill.status); el("save-status").className = "phone-feedback " + bill.statusTone;
     text("edit-message", "Editing " + bill.number + ". Save updates this bill; use Save & New to start the next sale.");
     el("edit-message").hidden = !bill.id;
@@ -246,7 +255,7 @@
     if (!api.ready()) return;
     var fieldName = event.detail && event.detail.field;
     var bill = api.snapshot();
-    if (fieldName === "newBill" || lastBillId !== bill.id) {
+    if (fieldName === "newBill" || fieldName === "loadBill" || lastBillId !== bill.id) {
       paymentLocked = false;
       lastBillId = bill.id;
     }
@@ -321,14 +330,18 @@
     setReceivedFromPaymentMode(paymentMode === "cash" ? api.snapshot().totalAmount : 0);
     draw();
   });
-  el("history").addEventListener("click", function () { go("history"); });
-  el("quick-history").addEventListener("click", function () { go("history"); });
+  el("history").addEventListener("click", function () { go("history"); api.refreshSavedBills(); });
+  el("quick-history").addEventListener("click", function () { go("history"); api.refreshSavedBills(); });
+  el("sync-refresh").addEventListener("click", function () { api.refreshSavedBills(); });
+  el("sync-reload").addEventListener("click", async function () {
+    if (await api.reloadBill()) { draft = null; go("sale"); draw(); }
+  });
   document.querySelector("main.page-shell").addEventListener("click", async function (event) {
     var button = event.target.closest("[data-edit-bill]");
     if (!media.matches || !button) return;
     event.preventDefault(); event.stopImmediatePropagation();
     button.disabled = true;
-    try { await api.editBill(button.dataset.editBill); go("sale"); draw(); }
+    try { if (await api.editBill(button.dataset.editBill)) { draft = null; go("sale"); draw(); } }
     finally { button.disabled = false; }
   }, true);
   el("new-sale").addEventListener("click", function () {

@@ -1,5 +1,36 @@
 # Billing integrity fixes
 
+## Saved bills across phone and PC — 9 November 2026
+
+Save a bill on either device, then open Billing → History → Edit on the other
+device using an authorized admin session on the same site. Updates target the
+same invoice and ledger. Unfinished bills stay on their current device until
+Save; this change does not upload unfinished drafts.
+
+History refreshes every 15 seconds while the page is visible, when it regains
+focus, on reconnect, and from Refresh saved bills. Opening phone History also
+refreshes it. A clean open invoice loads newer saved revisions automatically.
+Unsaved fields and open phone item editors are preserved; Load latest saved bill
+requires confirmation before discarding edits. Existing database version checks
+reject simultaneous stale saves. Failed refreshes retain previously loaded
+history and invoice data. Search filters survive refreshes.
+
+Opening a saved bill now restores its saved amount received (including zero),
+instead of retaining the previous form's receipt. Cancelling New Bill preserves
+the invoice's optimistic version. Read responses cannot overwrite edits made
+while a bill was loading or a subsequently selected bill.
+
+No additional database migration is required beyond the atomic ledger migration.
+Deploy the matching billing.js and phone-billing.js together with billing.html
+and phone-billing.css; the billing script cache versions were updated.
+
+Regression: tests/billing-device-sync.browser.cjs uses independent PC/phone
+browser contexts against the actual API handlers and isolated PostgreSQL/PGlite.
+Verified: 23 device-sync assertions, the 13 existing phone flows, saved-bill
+ownership/receipt/retry browser checks, 18 customer browser/RPC assertions, and
+all 563 assertions in npm test passed. These are local results; production
+deployment and cross-device production smoke testing remain rollout steps.
+
 This change replaces independent financial REST writes with a transactional database ledger. It also separates editable bill drafts, issued receipts, customer contact details, and explicit account adjustments.
 
 ## Rollout requirement

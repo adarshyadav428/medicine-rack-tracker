@@ -40,6 +40,8 @@
   .phone-icon { display: grid; place-items: center; width: 42px; min-height: 44px; flex-shrink: 0; border: 1px solid #cce4df; border-radius: 12px; color: var(--brand-strong); background: var(--brand-soft); font-size: 1.7rem !important; }
   #phone-billing[data-screen="sale"] .phone-icon { font-size: 1.1rem !important; }
   .phone-history-link { min-height: 44px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 12px; padding: 8px 11px; font-size: 0.72rem !important; font-weight: 600 !important; }
+  .phone-sync { padding: 0 14px 10px; border-bottom: 1px solid var(--line); }
+  .phone-sync .phone-feedback { margin: 8px 0; }
   .phone-menu { position: fixed; z-index: 60; top: calc(80px + env(safe-area-inset-top)); left: 14px; right: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-soft); border-radius: var(--radius-lg); padding: 6px; }
   .phone-menu button, .phone-menu a { display: block; text-align: left; width: 100%; padding: 14px; background: none; border: 0; border-radius: 10px; color: var(--ink); text-decoration: none; min-height: 44px; font-size: 0.85rem; }
   .phone-menu button:hover, .phone-menu a:hover { background: var(--brand-soft); }
