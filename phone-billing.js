@@ -68,10 +68,9 @@
       <p id="phone-save-status" class="phone-feedback" role="status" aria-live="polite"></p>
     </main>
     <main id="phone-search-screen" class="phone-screen" hidden>
-      <p id="phone-search-party" class="phone-search-party"></p>
+      <div class="phone-search-context"><p id="phone-search-party" class="phone-search-party"></p><button id="phone-search-customer" type="button">Choose customer</button></div>
       <label class="phone-field phone-search-field"><span>Search medicines</span><input id="phone-item-search" type="search" autocomplete="off" placeholder="Medicine name…" /></label>
-      <div class="phone-search-heading"><strong>Your medicine database</strong><span id="phone-search-count"></span></div>
-      <button id="phone-add-only" class="phone-history-link" type="button">＋ Add medicine for this bill only</button>
+      <div class="phone-search-heading"><div><strong>Medicines</strong><span id="phone-search-count"></span></div><button id="phone-add-only" class="phone-history-link" type="button" aria-label="Add medicine for this bill only">＋ Bill-only item</button></div>
       <div id="phone-search-results" class="phone-search-results"></div>
     </main>
     <main id="phone-item-screen" class="phone-screen" hidden>
@@ -217,23 +216,27 @@
       searchResults = api.search(query);
     }
     var results = searchResults;
-    text("search-count", results.length ? (results.length === 40 ? "First 40 matches" : results.length + " found") : "");
+    text("search-count", results.length ? (results.length === 40 ? "First 40" : results.length + " matches") : "");
     var bill = api.snapshot();
-    text("search-party", bill.customerName ? "Prices for " + bill.customerName : "Choose a customer on the bill to see their last rate.");
+    var hasCustomer = !!bill.customerName.trim();
+    text("search-party", hasCustomer ? "Billing " + bill.customerName : "No customer selected");
+    text("search-customer", hasCustomer ? "Change" : "Choose customer");
+    el("search-results").classList.toggle("has-customer", hasCustomer);
     var html = results.length ? results.map(function (item) {
       var info = priceInfo(item);
       var inBill = bill.items.filter(function (line) { return line.medicineId === item.id; }).reduce(function (sum, line) { return sum + Number(line.quantity); }, 0);
-      var customerRate = bill.customerName.trim() ? historyRate(info.customerLastRate, info.customerStatus) : "Choose a customer";
-      return '<button type="button" class="phone-search-item" data-medicine="' + esc(item.id) + '"><strong>' + esc(item.medicineName) +
-        (inBill ? '<small class="phone-in-bill">In bill · ' + esc(round(inBill)) + '</small>' : '') + '</strong>' +
-        '<span class="phone-result-meta">' + (info.seller ? '<span>' + esc(info.seller) + '</span>' : '') +
-        (info.location ? '<span class="phone-search-rack">Rack: ' + esc(info.location) + '</span>' : '') +
-        '<span>Stock: ' + esc(info.stock == null || info.stock === "" ? "Not recorded" : info.stock) + '</span></span>' +
-        '<span class="phone-result-prices"><span class="phone-result-mrp"><small>MRP</small><b>' + esc(recordedMoney(info.mrp)) + '</b></span>' +
-        '<span class="phone-result-purchase"><small>Purchase</small><b>' + esc(recordedMoney(info.purchasePrice)) + '</b></span>' +
-        '<span class="phone-result-selling"><small>Inventory sell</small><b>' + esc(recordedMoney(info.inventoryRate)) + '</b></span></span>' +
-        '<span class="phone-result-history"><span class="phone-result-customer-rate"><small>This customer’s last rate</small><b>' + esc(customerRate) + '</b></span>' +
-        '<span class="phone-result-latest-rate"><small>Latest sold rate</small><b>' + esc(historyRate(info.latestSoldRate, info.globalStatus)) + '</b></span></span></button>';
+      function rateTone(value, status) {
+        return status === "error" || status === "unavailable" ? "is-unavailable" : value != null && Number.isFinite(Number(value)) ? "is-recorded" : "is-empty";
+      }
+      return '<button type="button" class="phone-search-item" data-medicine="' + esc(item.id) + '">' +
+        '<span class="phone-result-top"><span class="phone-result-title"><strong>' + esc(item.medicineName) + '</strong>' +
+        (inBill ? '<small class="phone-in-bill">Added · Qty ' + esc(round(inBill)) + '</small>' : '') + '</span>' +
+        '<span class="phone-result-mrp"><small>MRP</small><b>' + esc(recordedMoney(info.mrp)) + '</b></span></span>' +
+        '<span class="phone-result-details"><span class="phone-result-meta">' + (info.seller ? '<span>' + esc(info.seller) + '</span>' : '') +
+        (info.location ? '<span class="phone-search-rack">Rack: ' + esc(info.location) + '</span>' : '') + '</span>' +
+        '<span class="phone-result-purchase"><small>Purchase</small><b>' + esc(recordedMoney(info.purchasePrice)) + '</b></span></span>' +
+        '<span class="phone-result-history">' + (hasCustomer ? '<span class="phone-result-customer-rate ' + rateTone(info.customerLastRate,info.customerStatus) + '"><small>Customer’s last rate</small><b>' + esc(historyRate(info.customerLastRate,info.customerStatus)) + '</b></span>' : '') +
+        '<span class="phone-result-latest-rate ' + rateTone(info.latestSoldRate,info.globalStatus) + '"><small>Last sold (same MRP)</small><b>' + esc(historyRate(info.latestSoldRate, info.globalStatus)) + '</b></span></span></button>';
     }).join("") : '<p class="phone-empty">' + (query ? "No matching medicine. Try another name." : "Your medicine inventory is empty.") + '</p>';
     if (el("search-results").innerHTML !== html) el("search-results").innerHTML = html;
   }
@@ -458,6 +461,11 @@
     draft = null; document.activeElement.blur(); go(next); draw();
   });
   el("add-items").addEventListener("click", function () { go("search"); });
+  el("search-customer").addEventListener("click", function () {
+    document.activeElement.blur(); go("sale"); draw();
+    el("saved-customer").focus({ preventScroll: true });
+    el("saved-customer").scrollIntoView({ block: "center" });
+  });
   el("add-only").addEventListener("click", function () { api.newBillOnlyItem(); });
   window.addEventListener("medicine-bill-only-added", function () { draft = null; go("sale"); draw(); });
   el("remove-item").addEventListener("click", function () {

@@ -1,5 +1,25 @@
 # Billing integrity fixes
 
+## Phone price-list visual design — 9 November 2026
+
+Medicine choices now use a clear name/MRP header, blue MRP badge, amber purchase
+price, and separate customer-blue/latest-sale-green price bands. Missing history
+is muted rather than styled as a recorded price. Stock and inventory selling
+price have been removed from the phone result markup; the underlying inventory
+and existing pricing calculations are unchanged. Supplier/rack and added-quantity
+markers remain available to distinguish similar entries.
+
+A single customer context/Choose customer action replaces repeated per-medicine
+prompts when no party is selected. It returns to the actual saved-customer picker
+without dropping the bill or search query. The bill-only action sits beside the
+result heading, and Review bill is a prominent footer action. The item editor
+uses the same price colours. This visual update adds no database migration; the
+previous MRP/bill-only migration is still a prerequisite for those features.
+Verified locally: 615 assertions, 47 phone pricing/design browser checks, 46
+cross-device checks and the existing 13 phone flows passed. Visual review covered
+320/390/430-pixel layouts, selected and unselected customers, price colours,
+absence of stock/inventory selling fields and keyboard-height item entry.
+
 ## MRP-specific rates, loss warnings and bill-only medicines — 9 November 2026
 
 Apply `supabase/migrations/20261109084506_mrp_variant_pricing_bill_only.sql`
