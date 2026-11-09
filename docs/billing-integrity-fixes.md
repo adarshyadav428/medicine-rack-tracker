@@ -1,5 +1,34 @@
 # Billing integrity fixes
 
+## Customer account sync — 9 November 2026
+
+The billing refresh now refreshes customer profiles and authoritative current
+dues as well as invoice history. New-bill carry-forward updates from that cache;
+issued bills retain their original previous-balance snapshots. Older customer
+responses cannot replace newer cache results; incomplete reads never become an
+empty customer list.
+
+Customers refreshes the list, selected profile, bill history and standalone
+payments every 15 seconds while visible, on focus/reconnect, and through Refresh
+customer accounts. Background reads preserve unsaved contact/payment inputs and
+retain the last good history on a failed read. Account selection follows stable
+IDs across renames. Financial writes retain their existing concurrency guards.
+
+Review saved browser records is available on the original device for data still
+stored only in that browser. It rechecks server balances before offering the
+existing guarded reconciliation preview, even if an old import flag is present.
+Missing zero-due customer profiles can now be included; a local zero never
+clears an existing shared account's debt. Invalid/conflicting amounts remain for
+review. The preview requires confirmation because stale browser balances are
+not proof of current debt. Browser-only records are not automatically uploaded.
+
+Deploy billing.html/billing.js and customers.html/customers.js together. No new
+database migration is needed beyond the existing atomic-ledger migration.
+Local verification: 570 assertions in npm test, 34 cross-device browser/API/
+PostgreSQL checks, 18 existing customer browser checks, 13 phone flows, and the
+saved-receipt/ownership/retry browser checks all passed. Production records were
+not changed or reconciled; merge/deployment and live smoke testing remain.
+
 ## Saved bills across phone and PC — 9 November 2026
 
 Save a bill on either device, then open Billing → History → Edit on the other

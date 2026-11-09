@@ -68,7 +68,7 @@ function backend(initial){
 async function page(server,storage=new Map([["medicineRackTracker.balancesImported.v1","1"]])){
  const nodes=new Map(),events=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,new Element(id));return nodes.get(id);};
  const localStorage={getItem(k){return storage.has(k)?storage.get(k):null;},setItem(k,v){storage.set(k,String(v));},removeItem(k){storage.delete(k);}};
- const context={document:{body:{dataset:{page:"customers"}},visibilityState:"visible",getElementById:node,addEventListener(t,f){events.set("document:"+t,f);}},window:{crypto:webcrypto,confirm(){return true;},addEventListener(t,f){events.set("window:"+t,f);}},localStorage,TextEncoder,Uint8Array,requestApi:server.request,isAdmin:()=>true,isAuthenticated:()=>true,console,setTimeout,clearTimeout};
+ const context={document:{body:{dataset:{page:"customers"}},visibilityState:"visible",getElementById:node,addEventListener(t,f){events.set("document:"+t,f);}},window:{crypto:webcrypto,confirm(){return true;},setInterval(f){events.set("poll",f);},addEventListener(t,f){events.set("window:"+t,f);}},localStorage,TextEncoder,Uint8Array,requestApi:server.request,isAdmin:()=>true,isAuthenticated:()=>true,console,setTimeout,clearTimeout};
  vm.runInNewContext(expose,context,{filename:"customers.js"});context.window.__onCustomersReady();await drain();
  return{api:context.customerPage,node,storage,events};
 }
@@ -148,6 +148,22 @@ async function pay(p,amount){p.node("cust-pay-amount").value=String(amount);awai
  }
  {
   const s=backend([customer("a","Alice")]),storage=new Map([["medicineRackTracker.customers.v1",JSON.stringify([{name:"Alice",balance:100},{name:"alice",balance:200}])]]);const p=await page(s,storage);check("conflicting legacy balances are retained for review without writes",[s.calls.some(c=>c.method==="PUT"),storage.has("medicineRackTracker.balancesImported.v1"),p.node("customers-status").textContent.includes("manual review")],[false,false,true]);
+ }
+ {
+  const s=backend([customer("a","Alice",200)]),p=await page(s);await select(p,"a");
+  p.api.showEditForm();p.node("cust-edit-phone-input").value="Unsent phone";p.node("cust-pay-amount").value="25";
+  s.addBill("a",100,20);s.addPayment("a",30);await p.events.get("poll")();
+  check("poll updates existing customer's due and history",[p.node("cust-profile-balance").textContent,p.node("cust-bills-container").innerHTML.includes("B-"),p.node("cust-bills-container").innerHTML.includes("30.00")],["₹250.00",true,true]);
+  check("account sync preserves contact and payment drafts",[p.node("cust-edit-phone-input").value,p.node("cust-pay-amount").value,p.node("cust-edit-form").classList.contains("hidden")],["Unsent phone","25",false]);
+  const history=p.node("cust-bills-container").innerHTML;s.hook=async c=>{if(c.path==="/api/payments"&&c.method==="GET")throw Error("Offline");};await p.events.get("poll")();
+  check("failed background history read retains last good history",[p.node("cust-bills-container").innerHTML===history,p.node("cust-sync-status").textContent.includes("Could not refresh")],[true,true]);
+  s.hook=null;s.addPayment("a",10);await p.events.get("window:online")();check("reconnect refreshes existing account",p.node("cust-profile-balance").textContent,"₹240.00");
+  p.api.closeProfile();s.db.customers.push(customer("b","Bob",500));await p.events.get("poll")();check("poll refreshes list without selected account",p.node("cust-list").innerHTML.includes("Bob"),true);
+ }
+ {
+  const s=backend([]),storage=new Map([["medicineRackTracker.balancesImported.v1","1"],["medicineRackTracker.customers.v1",JSON.stringify([{name:"Old browser customer",balance:0,phone:"123"}])]]),p=await page(s,storage);
+  await p.node("cust-review-browser").emit("click");await drain();
+  check("explicit review recovers a missing zero-due customer despite old import marker",s.calls.some(c=>c.method==="PUT"&&c.body.customers[0].name==="Old browser customer"&&c.body.customers[0].balance===0),true);
  }
  console.log(assertions+" customer-page assertions passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

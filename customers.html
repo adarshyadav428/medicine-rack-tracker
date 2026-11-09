@@ -59,6 +59,11 @@
       </section>
 
       <!-- ── Two-column layout ──────────────────────────────────── -->
+      <section class="panel" aria-label="Customer sync">
+        <p id="cust-sync-status" class="status-message" role="status">Customer accounts are shared across devices. Checking for updates every 15 seconds.</p>
+        <button id="cust-sync-refresh" class="btn btn-ghost btn-xs" type="button">Refresh customer accounts</button>
+        <button id="cust-review-browser" class="btn btn-ghost btn-xs" type="button">Review saved browser records</button>
+      </section>
       <div class="customers-layout fade-up delay-1">
 
         <!-- Left: list panel -->
@@ -184,6 +189,6 @@
 
     <script src="sync-config.js"></script>
     <script src="app.js?v=20261108-ledger-integrity"></script>
-    <script src="customers.js?v=20261108-ledger-integrity"></script>
+    <script src="customers.js?v=20261109-account-sync"></script>
   </body>
 </html>

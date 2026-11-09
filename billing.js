@@ -339,6 +339,7 @@
   // refresh replaces with the server's figure.
   // -------------------------------------------------------------------------
   var savedCustomerCache = [];
+  var savedCustomerReadSequence = 0;
   var billSaveInFlight = false;
   var pendingBillOperation = null;
   var pendingImportOperation = null;
@@ -390,6 +391,9 @@
     billSyncInFlight = true;
     var id = bState.currentBillId, revision = billRevision, sequence = billLoadSequence;
     try {
+      await refreshSavedCustomers();
+      if (billSaveInFlight || sequence !== billLoadSequence) return;
+      await syncSelectedCustomerBalance(true);
       if (await loadBillHistory({ background: true }) === false) throw new Error("History refresh failed");
       if (!id) {
         if (sequence === billLoadSequence) setBillSyncStatus("History refreshed. Open a saved bill to continue on this device.", false);
@@ -445,9 +449,12 @@
 
   /** Pull the customer list and their server-derived balances. */
   async function refreshSavedCustomers() {
+    var readSequence = ++savedCustomerReadSequence;
     try {
       var result = await requestApi("/api/customers", { method: "GET" });
-      savedCustomerCache = (result.customers || []).map(function (c) {
+      if (readSequence !== savedCustomerReadSequence) return savedCustomerCache;
+      if (!Array.isArray(result.customers)) throw new Error("Incomplete customer response");
+      savedCustomerCache = result.customers.map(function (c) {
         return {
           id: c.id,
           name: c.name,
@@ -473,7 +480,9 @@
       }
 
       renderCustomerSelect();
+      notifyBillingChange("customers");
     } catch (error) {
+      if (readSequence !== savedCustomerReadSequence) throw error;
       // Carry-forward silently reading zero is worse than a visible failure —
       // it looks like the customer simply owes nothing.
       setSaveCustomerStatus(
@@ -504,7 +513,7 @@
    *
    * Returns {from, to} when the figure actually moved, else null.
    */
-  async function syncSelectedCustomerBalance() {
+  async function syncSelectedCustomerBalance(alreadyRefreshed) {
     if (bState.currentBillId) return null;
     if (bState.openingBalanceTouched) return null;
 
@@ -512,13 +521,13 @@
     if (!name) return null;
     var lower = name.toLowerCase();
 
-    await refreshSavedCustomers();
+    if (alreadyRefreshed !== true) await refreshSavedCustomers();
 
     // The request is not instant and the counter does not wait for it: the
     // bill may have been cleared, a different customer typed, or the balance
     // corrected by hand while it was in flight. Any of those makes the answer
     // stale, and writing it back would undo what the user just did.
-    if (bState.currentBillId || bState.openingBalanceTouched) return null;
+    if (billSaveInFlight && alreadyRefreshed === true || bState.currentBillId || bState.openingBalanceTouched) return null;
     if (normalizeString(bEl.customerName ? bEl.customerName.value : "").toLowerCase() !== lower) {
       return null;
     }
