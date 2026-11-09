@@ -35,8 +35,8 @@ const server=http.createServer(async(req,res)=>{
      Object.assign(bill,{customer_id:customer.id,customer_name:payload.customerName,customer_phone:payload.customerPhone,notes:payload.notes,subtotal,gst_amount:gst,grand_total:total,gst_percent:payload.gstPercent,previous_balance:payload.previousBalance,amount_received:payload.amountReceived,balance_due:payload.previousBalance+total-payload.amountReceived,version:(bill.version||0)+1,updated_at:new Date(Date.parse('2026-10-31T10:00:00Z')+(++writeVersion)*1000).toISOString(),items:payload.items.map(x=>({...x,medicine_name:x.medicineName,sell_price:x.sellPrice,purchase_price:x.purchasePrice,medicine_id:x.medicineId}))});
      data={bill,billNumber:bill.bill_number};
     }
-   }else if(url.searchParams.has('soldcounts'))data={counts:{}};
-   else if(url.searchParams.has('lastprices'))data={priceMap:{'u tone 450ml':{sellPrice:179.6}}};
+   }else if(url.searchParams.has('soldcounts'))data={counts:{},countsByMrp:{},mrpScoped:true};
+   else if(url.searchParams.has('lastprices'))data={priceMap:{'u tone 450ml':{sellPrice:179.6}},priceMapByMrp:{['u tone 450ml'+String.fromCharCode(31)+'22000']:{sellPrice:179.6}},mrpScoped:true};
    else if(url.searchParams.has('id')){const bill=bills.find(x=>x.id===url.searchParams.get('id'));data={bill,items:bill?bill.items:[]};}
    else data={bills};
   }

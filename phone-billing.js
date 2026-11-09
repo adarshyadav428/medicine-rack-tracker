@@ -71,6 +71,7 @@
       <p id="phone-search-party" class="phone-search-party"></p>
       <label class="phone-field phone-search-field"><span>Search medicines</span><input id="phone-item-search" type="search" autocomplete="off" placeholder="Medicine name…" /></label>
       <div class="phone-search-heading"><strong>Your medicine database</strong><span id="phone-search-count"></span></div>
+      <button id="phone-add-only" class="phone-history-link" type="button">＋ Add medicine for this bill only</button>
       <div id="phone-search-results" class="phone-search-results"></div>
     </main>
     <main id="phone-item-screen" class="phone-screen" hidden>
@@ -89,6 +90,7 @@
           <label class="phone-field"><span>Sell price (₹)</span><input id="phone-item-rate" type="number" inputmode="decimal" min="0" step="0.01" /></label>
         </div>
         <p id="phone-item-price-note" class="phone-price-note"></p>
+        <p id="phone-item-loss-warning" class="billing-loss-warning" role="status" hidden>Warning: negative markup — check the selling price.</p>
         <details class="phone-item-details"><summary>More details: batch, expiry, MRP &amp; markup</summary>
           <div class="phone-two-fields">
             <label class="phone-field"><span>Batch number</span><input id="phone-item-batch" maxlength="120" /></label>
@@ -123,7 +125,7 @@
     return "No previous sale";
   }
   function priceInfo(medicine) {
-    return (api.priceInfo && api.priceInfo(medicine.id || medicine.medicineId)) || {
+    return (api.priceInfo && api.priceInfo(medicine.id || medicine.medicineId, medicine.mrp)) || {
       mrp: medicine.mrp, purchasePrice: medicine.purchasePrice != null ? medicine.purchasePrice : medicine.rate,
       inventoryRate: medicine.sellingPrice != null ? medicine.sellingPrice : medicine.sellPrice,
       stock: medicine.quantity, seller: medicine.seller, location: medicine.location,
@@ -245,7 +247,9 @@
     var lineTotal = api.lineTotal ? api.lineTotal(draft.sellPrice, draft.quantity)
       : Math.floor((Math.round(Number(draft.sellPrice) * 100) * Math.round(Number(draft.quantity) * 1000) + 500) / 1000) / 100;
     text("item-subtotal", money(lineTotal));
+    el("item-loss-warning").hidden = !(Number(el("item-markup").value) < 0 || (draft.purchasePrice > 0 && Number(draft.sellPrice) < draft.purchasePrice));
     text("item-mrp-value", recordedMoney(draft.mrp));
+    drawReferencePrices();
   }
   function saveItem(andNew) {
     updateDraftTotal();
@@ -326,10 +330,10 @@
       (bill.id && bill.customerName === bill.issuedCustomerName && bill.customers.find(function (customer) { return customer.id === bill.customerId; }));
     el("saved-customer").value = selectedCustomer ? selectedCustomer.id || selectedCustomer.name : "";
     el("billed-items").innerHTML = bill.items.length ? bill.items.map(function (item, index) {
-      return '<button class="phone-billed-item" data-row="' + esc(item._rowId) + '" type="button" aria-label="Edit ' + esc(item.medicineName) + '"><span class="phone-item-title"><span><small>' + (index + 1) + '</small> ' + esc(item.medicineName) + '</span><strong>' + esc(money(round(item.quantity * item.sellPrice))) + '</strong></span><span class="phone-item-calculation"><span>' + esc(item.quantity) + ' × ' + esc(money(item.sellPrice)) + '</span><span class="phone-edit-hint">Edit →</span></span></button>';
+      return '<button class="phone-billed-item" data-row="' + esc(item._rowId) + '" type="button" aria-label="Edit ' + esc(item.medicineName) + '"><span class="phone-item-title"><span><small>' + (index + 1) + '</small> ' + esc(item.medicineName) + (item.billOnly ? ' <small>Bill only · no profit</small>' : '') + '</span><strong>' + esc(money(round(item.quantity * item.sellPrice))) + '</strong></span><span class="phone-item-calculation"><span>' + esc(item.quantity) + ' × ' + esc(money(item.sellPrice)) + '</span><span class="phone-edit-hint">Edit →</span></span></button>';
     }).join("") : '<p class="phone-empty">Your bill is ready for its first medicine.</p>';
     var busy = pending || bill.saving;
-    root.querySelectorAll("input, select, #phone-save-customer, [data-payment], [data-row], #phone-new-sale, #phone-add-items, #phone-remove-item").forEach(function (input) {
+    root.querySelectorAll("input, select, #phone-save-customer, [data-payment], [data-row], #phone-new-sale, #phone-add-items, #phone-add-only, #phone-remove-item").forEach(function (input) {
       input.disabled = busy || (input === el("item-markup") && draft && draft.purchasePrice == null);
     });
     root.querySelectorAll("[data-payment]").forEach(function (button) { button.setAttribute("aria-pressed", String(button.dataset.payment === paymentMode)); });
@@ -420,6 +424,7 @@
         text("item-price-note", "Custom rate");
         if (draft.purchasePrice > 0) field("item-markup", round((Number(draft.sellPrice) - draft.purchasePrice) / draft.purchasePrice * 100));
       }
+      if (id === "item-mrp") text("item-price-note", "MRP changed · review the selling rate");
     });
   });
   el("item-markup").addEventListener("input", function () {
@@ -444,7 +449,7 @@
   el("item-sales-history").addEventListener("click", function () {
     if (!draft || pending || api.snapshot().saving) return;
     updateDraftTotal();
-    if (api.salesHistory && draft.medicineId) api.salesHistory(draft.medicineId);
+    if (api.salesHistory && draft.medicineId) api.salesHistory(draft.medicineId, draft.mrp);
     else if (window.showMedicineSalesModal) window.showMedicineSalesModal(draft.medicineName);
   });
   el("back").addEventListener("click", function () {
@@ -453,6 +458,8 @@
     draft = null; document.activeElement.blur(); go(next); draw();
   });
   el("add-items").addEventListener("click", function () { go("search"); });
+  el("add-only").addEventListener("click", function () { api.newBillOnlyItem(); });
+  window.addEventListener("medicine-bill-only-added", function () { draft = null; go("sale"); draw(); });
   el("remove-item").addEventListener("click", function () {
     if (draft && draft._rowId) {
       api.remove(draft._rowId); draft = null; go("sale"); draw();

@@ -55,8 +55,8 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ error: "Response lost after the transaction committed." }));
             return;
           }
-        } else if (url.searchParams.has("soldcounts")) data = { counts: {} };
-        else if (url.searchParams.has("lastprices")) data = { priceMap: {} };
+        } else if (url.searchParams.has("soldcounts")) data = { counts: {}, countsByMrp: {}, mrpScoped: true };
+        else if (url.searchParams.has("lastprices")) data = { priceMap: {}, priceMapByMrp: {}, mrpScoped: true };
         else if (url.searchParams.has("id")) {
           const bill = bills.find(b => b.id === url.searchParams.get("id"));
           data = { bill, items: bill ? bill.items : [] };

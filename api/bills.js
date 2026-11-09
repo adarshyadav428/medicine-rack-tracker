@@ -13,6 +13,7 @@ module.exports = async (req, res) => {
    if(q.from)query.from=ledger.date(q.from,"From date");if(q.to)query.to=ledger.date(q.to,"To date");
    if(query.from&&query.to&&query.from>query.to)throw new ledger.FinancialInputError("From date must not be after To date.");
    query.customer=ledger.text(q.customer,"Customer",120);query.medicine=ledger.text(q.medicine,"Medicine",240);query.search=ledger.text(q.search,"Search",200);
+   if(q.mrp!==undefined)query.mrp=q.mrp==="unknown"?null:ledger.decimal(q.mrp,"MRP");
    const kind=query.id?"bill":query.medicine?"medicine_sales":q.lastprices==="1"?"lastprices":q.soldcounts==="1"?"soldcounts":q.customers==="1"?"restore_customers":"bills";
    if(kind==="lastprices"&&!query.customer&&!query.customerId)throw new ledger.FinancialInputError("Customer is required for last prices.");
    return sendJson(res,200,await ledger.read(config,{...query,kind}));

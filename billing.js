@@ -34,6 +34,8 @@
     customerLastPrices: Object.create(null),        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
     soldCounts: Object.create(null),                // { medicineName.toLowerCase(): { count, lastSoldAt } }
     customerLastPricesFor: null,   // lowercase customer name these prices belong to
+    customerLastPricesByMrp: Object.create(null),
+    soldCountsByMrp: Object.create(null),
     customerPriceStatus: "idle",
     customerPriceRequest: null,
     globalPriceStatus: "idle",
@@ -848,7 +850,10 @@
     var key = cname.toLowerCase();
     if (bState.customerPriceRequest && bState.customerPriceRequest.key === key) return bState.customerPriceRequest.promise;
     if (!(options && options.force) && bState.customerLastPricesFor === key && bState.customerPriceStatus === "ready") return Promise.resolve();
-    if (bState.customerLastPricesFor !== key) bState.customerLastPrices = Object.create(null);
+    if (bState.customerLastPricesFor !== key) {
+      bState.customerLastPrices = Object.create(null);
+      bState.customerLastPricesByMrp = Object.create(null);
+    }
     bState.customerLastPricesFor = key;
     bState.customerPriceStatus = "loading";
     var owner = { key: key, promise: null };
@@ -858,10 +863,11 @@
     if (typeof loadSoldCounts === "function") loadSoldCounts({ force: true });
     owner.promise = requestApi("/api/bills?lastprices=1&customer=" + encodeURIComponent(cname), { method: "GET" })
       .then(function (result) {
-        if (!result || !result.priceMap || typeof result.priceMap !== "object" || Array.isArray(result.priceMap)) throw new Error("Incomplete customer price history");
+        if (!result || result.mrpScoped !== true || !result.priceMapByMrp || !result.priceMap || typeof result.priceMap !== "object" || Array.isArray(result.priceMap)) throw new Error("Incomplete customer price history");
         // Request identity also rejects an old Alice reply after Alice → Bob → Alice.
         if (bState.customerPriceRequest === owner && bState.customerLastPricesFor === key) {
           bState.customerLastPrices = Object.assign(Object.create(null), result.priceMap);
+          bState.customerLastPricesByMrp = Object.assign(Object.create(null), result.priceMapByMrp);
           bState.customerPriceStatus = "ready";
         }
       })
@@ -904,19 +910,24 @@
     ]);
   }
 
-  function getPriceInfo(medicineId) {
+  function priceVariantKey(name, mrp) {
+    return normalizeString(name).toLowerCase() + "\u001f" + (mrp == null || mrp === "" ? "?" : Math.round(Number(mrp) * 100));
+  }
+
+  function getPriceInfo(medicineId, requestedMrp) {
     var medicine = state.items.find(function (item) { return item.id === medicineId; });
     if (!medicine) return null;
+    if (arguments.length > 1) medicine = Object.assign({}, medicine, { mrp: requestedMrp });
     function recorded(value) {
       if (value === null || value === undefined || value === "") return null;
       var number = Number(value);
       return Number.isFinite(number) && number >= 0 ? number : null;
     }
-    var key = normalizeString(medicine.medicineName).toLowerCase();
+    var key = priceVariantKey(medicine.medicineName, medicine.mrp);
     var customerName = priceCustomerName();
     var ownsCustomer = bState.customerLastPricesFor === customerName.toLowerCase();
-    var customerPrice = ownsCustomer ? bState.customerLastPrices[key] : null;
-    var sold = bState.soldCounts[key];
+    var customerPrice = ownsCustomer ? (bState.customerLastPricesByMrp || {})[key] : null;
+    var sold = (bState.soldCountsByMrp || {})[key];
     var chosen = pickSellPrice(medicine, customerPrice, sold);
     return {
       mrp: recorded(medicine.mrp),
@@ -1075,9 +1086,10 @@
     priceHistoryChanged();
     owner.promise = requestApi("/api/bills?soldcounts=1", { method: "GET" })
       .then(function (result) {
-        if (!result || !result.counts || typeof result.counts !== "object" || Array.isArray(result.counts)) throw new Error("Incomplete sale price history");
+        if (!result || result.mrpScoped !== true || !result.countsByMrp || !result.counts || typeof result.counts !== "object" || Array.isArray(result.counts)) throw new Error("Incomplete sale price history");
         if (bState.globalPriceRequest === owner) {
           bState.soldCounts = Object.assign(Object.create(null), result.counts);
+          bState.soldCountsByMrp = Object.assign(Object.create(null), result.countsByMrp);
           bState.globalPriceStatus = "ready";
         }
       })
@@ -1164,8 +1176,9 @@
         : "Stock: ?";
 
       var medicineLower = (item.medicineName || "").toLowerCase().trim();
-      var lastPriceInfo = bState.customerLastPrices[medicineLower];
-      var soldStats     = bState.soldCounts[medicineLower];
+      var variantInfo = getPriceInfo(item.id);
+      var lastPriceInfo = variantInfo.customerLastRate == null ? null : { sellPrice: variantInfo.customerLastRate };
+      var soldStats = bState.soldCountsByMrp[priceVariantKey(item.medicineName,item.mrp)];
 
       var metaParts = [];
       if (item.seller) metaParts.push("🏢 " + escHtml(item.seller));
@@ -1205,7 +1218,7 @@
         e.preventDefault();
         if (e.target.closest(".medicine-dropdown-history-btn")) {
           hideDropdown();
-          openMedicineSalesModal(item.medicineName);
+          openMedicineSalesModal(item.medicineName,item.mrp);
           return;
         }
         if (e.target.closest(".medicine-dropdown-edit-btn")) {
@@ -1241,6 +1254,7 @@
   // Manual-add medicine modal
   // -------------------------------------------------------------------------
   function showManualAddModal(prefillName) {
+    if (billSaveInFlight) return;
     var existing = document.getElementById("manual-add-overlay");
     if (existing) existing.parentNode.removeChild(existing);
 
@@ -1250,22 +1264,22 @@
     overlay.innerHTML = [
       '<div class="manual-add-modal">',
         '<div class="manual-add-header">',
-          '<h3>Add New Medicine</h3>',
+          '<h3>Add medicine to this bill only</h3>',
           '<button class="manual-add-close" id="manual-add-close" type="button" aria-label="Close">✕</button>',
         '</div>',
         '<div class="manual-add-body">',
-          '<p class="manual-add-hint">Medicine will be saved to your inventory and added to this bill.</p>',
+          '<p class="manual-add-hint">Saved inside this invoice only. Not added to inventory and excluded from profit reports.</p>',
           '<div class="manual-add-fields">',
             '<div class="manual-add-field manual-add-field--wide">',
               '<label for="manual-name">Medicine Name *</label>',
               '<input type="text" id="manual-name" autocomplete="off" maxlength="200" placeholder="e.g. Paracetamol 500mg Tab" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-mrp">MRP (&#8377;) *</label>',
+              '<label for="manual-mrp">MRP (&#8377;) <span class="manual-optional">(optional)</span></label>',
               '<input type="number" id="manual-mrp" min="0" step="0.01" placeholder="0.00" />',
             '</div>',
             '<div class="manual-add-field">',
-              '<label for="manual-purchase">Purchase Price (&#8377;) *</label>',
+              '<label for="manual-purchase">Purchase Price (&#8377;) <span class="manual-optional">(optional)</span></label>',
               '<input type="number" id="manual-purchase" min="0" step="0.01" placeholder="0.00" />',
             '</div>',
             '<div class="manual-add-field">',
@@ -1285,11 +1299,12 @@
               '<input type="number" id="manual-qty" min="0.001" step="0.001" value="1" placeholder="1" />',
             '</div>',
           '</div>',
+          '<p class="billing-loss-warning" id="manual-loss-warning" role="status" hidden>Warning: negative markup — check this below-cost selling rate.</p>',
           '<p class="manual-add-save-status" id="manual-add-save-status"></p>',
         '</div>',
         '<div class="manual-add-footer">',
           '<button class="btn btn-ghost" id="manual-add-cancel" type="button">Cancel</button>',
-          '<button class="btn btn-primary" id="manual-add-submit" type="button">Save &amp; Add to Bill</button>',
+          '<button class="btn btn-primary" id="manual-add-submit" type="button">Add to bill only</button>',
         '</div>',
       '</div>',
     ].join("");
@@ -1307,6 +1322,9 @@
 
     if (prefillName && nameEl) nameEl.value = prefillName;
 
+    function warnManualLoss() { document.getElementById("manual-loss-warning").hidden = !(Number(markupEl.value) < 0); }
+    markupEl.addEventListener("input", warnManualLoss);
+    sellEl.addEventListener("input", warnManualLoss);
     function recalcSell() {
       var purchase = parseFloat(purchaseEl.value);
       var markup   = parseFloat(markupEl.value);
@@ -1320,6 +1338,7 @@
       var sell     = parseFloat(sellEl.value);
       if (!isNaN(purchase) && purchase > 0 && !isNaN(sell)) {
         markupEl.value = round2((sell - purchase) / purchase * 100);
+        if (document.getElementById("manual-loss-warning")) document.getElementById("manual-loss-warning").hidden = !(Number(markupEl.value) < 0);
       }
     }
 
@@ -1329,64 +1348,44 @@
 
     function closeModal() {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      if (bEl.search) bEl.search.focus();
+      var focus = document.body.classList.contains("phone-billing-active") ? document.getElementById("phone-item-search") : bEl.search;
+      if (focus) focus.focus({preventScroll:true});
     }
 
     async function submitManual() {
       var name = (nameEl.value || "").trim();
       if (!name) { nameEl.focus(); return; }
       var mrpRaw      = parseFloat(mrpEl.value);
-      if (isNaN(mrpRaw) || mrpRaw < 0) { mrpEl.focus(); return; }
+      if (mrpEl.value === "") mrpRaw = null;
+      else if (!mrpEl.checkValidity()) { mrpEl.reportValidity(); return; }
       var purchaseRaw = parseFloat(purchaseEl.value);
-      if (isNaN(purchaseRaw) || purchaseRaw < 0) { purchaseEl.focus(); return; }
+      if (purchaseEl.value === "") purchaseRaw = null;
+      else if (!purchaseEl.checkValidity()) { purchaseEl.reportValidity(); return; }
 
       var markupRaw   = parseFloat(markupEl.value);
       // Sell price defaults to MRP if not set
       var sellRaw     = parseFloat(sellEl.value);
-      if (isNaN(sellRaw) || sellRaw < 0) sellRaw = mrpRaw;
+      if (sellEl.value === "" && mrpRaw != null) sellRaw = mrpRaw;
+      if (sellRaw == null || !Number.isFinite(sellRaw) || sellRaw < 0 || !sellEl.checkValidity() || !qtyEl.checkValidity() || !markupEl.checkValidity()) {
+        saveStatusEl.textContent = "Enter a valid selling rate and quantity with supported precision."; return;
+      }
       // Auto-calc markup if not set but purchase & sell are known
       if (isNaN(markupRaw) && purchaseRaw > 0) {
         markupRaw = round2((sellRaw - purchaseRaw) / purchaseRaw * 100);
       }
       var locationVal = (locationEl.value || "").trim() || "—";
-      var qty         = Math.max(0.001, parseFloat(qtyEl.value) || 0.001);
+      var qty = Number(qtyEl.value);
+      if (!Number.isFinite(qty) || qty < 0.001) { qtyEl.reportValidity(); return; }
 
       var submitBtn = document.getElementById("manual-add-submit");
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
       if (saveStatusEl) { saveStatusEl.textContent = ""; saveStatusEl.className = "manual-add-save-status"; }
 
-      var savedItem = null;
-      try {
-        var result = await requestApi("/api/medicines", {
-          method: "POST",
-          body: {
-            item: {
-              medicineName:  name,
-              location:      locationVal,
-              mrp:           mrpRaw,
-              purchasePrice: purchaseRaw,
-              sellingPrice:  sellRaw,
-              quantity:      null,
-            },
-          },
-        });
-        if (result && result.item) {
-          savedItem = result.item;
-          state.items.unshift(savedItem);
-          if (typeof saveLocalItems === "function") saveLocalItems(state.items);
-        }
-      } catch (err) {
-        if (saveStatusEl) {
-          saveStatusEl.textContent = "⚠ Inventory save failed (" + (err.message || "unknown") + ") — adding to bill only.";
-          saveStatusEl.className = "manual-add-save-status is-warn";
-        }
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save & Add to Bill"; }
-      }
-
       var rowId = "row-" + (bState.nextRowId++);
       bState.lineItems.push({
         _rowId:        rowId,
-        medicineId:    savedItem ? savedItem.id : null,
+        medicineId:    null,
+        billOnly:      true,
         medicineName:  name,
         location:      locationVal,
         mrp:           mrpRaw,
@@ -1402,8 +1401,9 @@
       recalcTotals();
 
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      window.dispatchEvent(new CustomEvent("medicine-bill-only-added"));
       if (bEl.search) bEl.search.value = "";
-      setTimeout(function () { if (bEl.search) bEl.search.focus(); }, 0);
+      setTimeout(function () { if (bEl.search && !document.body.classList.contains("phone-billing-active")) bEl.search.focus(); }, 0);
     }
 
     document.getElementById("manual-add-close").addEventListener("click", closeModal);
@@ -1432,9 +1432,10 @@
   // the same one. Billing supplies the two things only it can: a receipt viewer
   // for the bill numbers, and the search box to hand focus back to.
   // -------------------------------------------------------------------------
-  function openMedicineSalesModal(medicineName) {
+  function openMedicineSalesModal(medicineName, mrp) {
     if (typeof window.showMedicineSalesModal !== "function") return;
     window.showMedicineSalesModal(medicineName, {
+      mrp: mrp,
       onOpenBill: function (billId) { viewBillInModal(billId); },
       onClose: function () {
         if (document.body.classList.contains("phone-billing-active")) {
@@ -1503,6 +1504,7 @@
               '<input type="number" id="manual-stock-qty" min="0" step="1" value="' + (invItem.quantity !== null && invItem.quantity !== undefined ? invItem.quantity : "") + '" placeholder="?" />',
             '</div>',
           '</div>',
+          '<p id="inventory-loss-warning" class="billing-loss-warning" role="status" hidden>Warning: negative markup — check the selling price.</p>',
           '<p class="manual-add-save-status" id="manual-add-save-status"></p>',
         '</div>',
         '<div class="manual-add-footer">',
@@ -1535,6 +1537,14 @@
     markupEl.addEventListener("input", recalcSell);
     sellEl.addEventListener("input", recalcMarkup);
 
+    function warnInventoryLoss() {
+      var warning = document.getElementById("inventory-loss-warning");
+      if (warning) warning.hidden = !(Number(markupEl.value) < 0);
+    }
+    markupEl.addEventListener("input", warnInventoryLoss);
+    sellEl.addEventListener("input", warnInventoryLoss);
+    purchaseEl.addEventListener("input", warnInventoryLoss);
+    warnInventoryLoss();
     function closeModal() {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       if (bEl.search) bEl.search.focus();
@@ -1627,11 +1637,8 @@
     // This customer's own rate, else the rate the medicine last went out at to
     // anyone, else the inventory price. See pickSellPrice for why.
     var medicineLower = (medicine.medicineName || "").toLowerCase().trim();
-    var chosen = pickSellPrice(
-      medicine,
-      bState.customerLastPrices[medicineLower],
-      bState.soldCounts[medicineLower]
-    );
+    var info = getPriceInfo(medicine.id);
+    var chosen = {sellPrice:info.suggestedRate,source:info.source,soldAt:info.latestSoldAt};
     var sell = chosen.sellPrice;
 
     // Always derived from what is actually on the line, never left blank. A
@@ -1743,6 +1750,9 @@
       applyMarkupBand(document.getElementById("markup-" + rowId), item.markupPercent);
     }
 
+    var lossWarning = document.getElementById("loss-" + rowId);
+    if (lossWarning) lossWarning.hidden = !(item.markupPercent < 0);
+
     // Update line total cell
     var totalEl = document.getElementById("total-" + rowId);
     if (totalEl) {
@@ -1793,6 +1803,8 @@
       tr.innerHTML =
         '<td role="cell">' +
           '<div class="bill-item-name" title="' + escHtml(item.medicineName) + '">' + escHtml(item.medicineName) + "</div>" +
+          '<div id="loss-' + item._rowId + '" class="billing-loss-warning" role="status"' + (item.markupPercent < 0 ? '' : ' hidden') + '>Warning: negative markup — check the selling price.</div>' +
+          (item.billOnly ? '<small>Bill only · excluded from profit</small>' : '') +
           '<div class="bill-item-location">' + escHtml(item.location || "—") + "</div>" +
           '<div class="bill-item-mobile-meta">Buy ' + purchaseDisplay + '</div>' +
           '<div class="bill-item-price-note" id="pricenote-' + item._rowId + '">' +
@@ -2026,6 +2038,7 @@
   function buildSavePayload() {
     var gstPct = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
     return {
+      billOnlySupported: true,
       customerName:  normalizeString(bEl.customerName  ? bEl.customerName.value  : ""),
       customerPhone: normalizeString(bEl.customerPhone ? bEl.customerPhone.value : ""),
       notes:         normalizeString(bEl.notes         ? bEl.notes.value         : ""),
@@ -2036,6 +2049,7 @@
       items: bState.lineItems.map(function (item) {
         return {
           medicineId:    item.medicineId,
+          billOnly:      !!item.billOnly,
           medicineName:  item.medicineName,
           location:      item.location,
           mrp:           item.mrp,
@@ -3259,6 +3273,7 @@
         return {
           _rowId:        "row-" + (bState.nextRowId++),
           medicineId:    it.medicine_id,
+          billOnly:      !!it.bill_only,
           medicineName:  it.medicine_name,
           location:      it.location,
           mrp:           it.mrp !== null ? Number(it.mrp) : null,
@@ -3374,6 +3389,8 @@
     if (bEl.saveCustomerBtn)     bEl.saveCustomerBtn.addEventListener("click", saveCurrentCustomer);
     if (bEl.repairBalanceBtn)    bEl.repairBalanceBtn.addEventListener("click", reconcileCustomerBalance);
     if (bEl.restoreCustomersBtn) bEl.restoreCustomersBtn.addEventListener("click", restoreCustomersFromHistory);
+    var addOnlyButton = document.getElementById("bill-add-only");
+    if (addOnlyButton) addOnlyButton.addEventListener("click", function () { showManualAddModal(bEl.search.value); });
     initImportModal();
     initHistorySearch();
 
@@ -3727,9 +3744,9 @@
     priceInfo: getPriceInfo,
     refreshPriceHistory: refreshPriceHistory,
     lineTotal: lineMoney,
-    salesHistory: function (medicineId) {
+    salesHistory: function (medicineId, mrp) {
       var medicine = state.items.find(function (item) { return item.id === medicineId; });
-      if (medicine) return openMedicineSalesModal(medicine.medicineName);
+      if (medicine) return openMedicineSalesModal(medicine.medicineName,arguments.length > 1 ? mrp : medicine.mrp);
     },
     draft: function (medicineId) {
       var medicine = state.items.find(function (item) { return item.id === medicineId; });
@@ -3768,6 +3785,7 @@
     remove: function(id) { if (!billSaveInFlight) removeLineItem(id); },
     editBill: loadBillForEdit,
     saveCustomer: saveCurrentCustomer,
+    newBillOnlyItem: function () { showManualAddModal("", true); },
     refreshSavedBills: syncSavedBills,
     reloadBill: function () { return bState.currentBillId ? loadBillForEdit(bState.currentBillId) : Promise.resolve(false); },
     newBill: newBill,

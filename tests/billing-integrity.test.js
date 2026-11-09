@@ -6,6 +6,8 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'billing.js'), 'utf8');
 function section(a, b) { return src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a))); }
 function check(label, fn) { fn(); console.log('PASS ' + label); }
 const model = { customerLastPrices: {}, customerLastPricesFor: null };
+function customerResult(priceMap){return {priceMap,mrpScoped:true,priceMapByMrp:Object.fromEntries(Object.entries(priceMap).map(([k,v])=>[k+"\u001f6100",v]))};}
+function globalResult(counts){return {counts,mrpScoped:true,countsByMrp:Object.fromEntries(Object.entries(counts).map(([k,v])=>[k+"\u001f6100",v]))};}
 const requests = [];
 const context = {
   bState: model,
@@ -30,13 +32,13 @@ const creditReceipt = context.buildReceiptHtml({ customerName: 'Alice', customer
 check('prior credit is explained on the printed receipt', () => assert.equal(creditReceipt.includes('Previous Credit'), true));
 check('credit receipt exposes the resulting total due', () => assert.equal(creditReceipt.includes('Total Due'), true));
 (async () => {
-  context.loadCustomerLastPrices('Alice'); requests[0].resolve({ priceMap: { test: { sellPrice: 100 } } });
+  context.loadCustomerLastPrices('Alice'); requests[0].resolve(customerResult({ test: { sellPrice: 100 } }));
   await new Promise(r => setImmediate(r));
   context.loadCustomerLastPrices('Bob');
   check('pending Bob lookup cannot consume Alice price', () => assert.equal(model.customerLastPrices.test, undefined));
   requests[1].reject(new Error('offline')); await new Promise(r => setImmediate(r));
   context.loadCustomerLastPrices('Bob');
   check('failed price lookup is retried on reselection', () => assert.equal(requests.length, 3));
-  requests[2].resolve({ priceMap: { test: { sellPrice: 200 } } }); await new Promise(r => setImmediate(r));
+  requests[2].resolve(customerResult({ test: { sellPrice: 200 } })); await new Promise(r => setImmediate(r));
   check('completed lookup belongs to selected customer', () => assert.equal(model.customerLastPrices.test.sellPrice, 200));
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -145,6 +145,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
 
     // No data disappears when refresh fails, and reconnect checks again.
     failReads = true; await refresh(pc);
+    await pc.waitForFunction(()=>window.MedicineBilling.snapshot().syncStatus.includes("Could not check"),null,{timeout:6000});
     check("failed reads retain bill and history", [(await snapshot(pc)).id, await pc.locator('[data-edit-bill="' + billId + '"]').count(), (await snapshot(pc)).syncStatus.includes("Could not check")], [billId, 1, true]);
     failReads = false;
     await pc.evaluate(() => window.dispatchEvent(new Event("online")));

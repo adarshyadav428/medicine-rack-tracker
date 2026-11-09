@@ -1,4 +1,5 @@
 #phone-billing { display: none; }
+.billing-loss-warning { color: #a51d28; background: #fff1f2; border-left: 3px solid #dc3545; padding: 8px 10px; font-size: 0.8rem; margin: 6px 0; }
 #phone-billing [hidden] { display: none !important; }
 
 /* The phone keeps the website's design tokens and its existing billing engine. */

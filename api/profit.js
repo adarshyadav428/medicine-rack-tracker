@@ -52,6 +52,7 @@ function aggregate(bills, items) {
   const byBill     = {};
 
   for (const item of items) {
+    if (item.bill_only === true) continue;
     const bill = billMap[item.bill_id];
     if (!bill) continue;
 
@@ -202,7 +203,7 @@ module.exports = async (req, res) => {
         const page = await callSupabaseRest(
           config,
           `${ITEMS_TABLE}?bill_id=in.(${encodedIds})` +
-            `&select=bill_id,medicine_name,sell_price,purchase_price,quantity` +
+            `&select=bill_id,medicine_name,sell_price,purchase_price,quantity,bill_only` +
             `&order=id.asc&limit=${PAGE_SIZE}&offset=${itemOffset}`,
           { method: "GET" }
         );

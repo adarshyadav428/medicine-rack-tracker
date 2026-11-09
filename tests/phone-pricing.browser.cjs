@@ -22,7 +22,7 @@ async function bounded(promise, label) {
 (async () => {
   fs.mkdirSync(ARTIFACTS, { recursive: true });
   const fixture = await createFixture(), errors = [], contexts = [];
-  let heldCustomer = null, failCustomer = null;
+  let heldCustomer = null, failCustomer = null, inventoryWrites = 0;
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://fixture");
@@ -30,7 +30,7 @@ async function bounded(promise, label) {
         let status = 200, json;
         if (url.pathname === "/api/supabase-config") json = { enabled: true, backendManaged: true };
         else if (url.pathname.startsWith("/api/auth/")) json = { authenticated: true, user: { email: "admin@example.test", role: "admin" } };
-        else if (url.pathname === "/api/medicines") json = { items: medicines };
+        else if (url.pathname === "/api/medicines") { if(req.method!=="GET")inventoryWrites++; json = { items: medicines }; }
         else {
           let raw = ""; for await (const chunk of req) raw += chunk;
           const customer = url.searchParams.get("customer"), history = url.searchParams.get("lastprices") === "1";
@@ -70,8 +70,9 @@ async function bounded(promise, label) {
   const refresh = p => p.evaluate(() => window.MedicineBilling.refreshPriceHistory({ force: true }));
   try {
     await fixture.createCustomer("Alice"); await fixture.createCustomer("Bob");
-    await fixture.createBill("Alice", [{ medicineId: FIRST, medicineName: "ENTERO QUINOL", quantity: 1, sellPrice: 48.5 }]);
-    await fixture.createBill("Bob", [{ medicineId: FIRST, medicineName: "ENTERO QUINOL", quantity: 1, sellPrice: 52 }]);
+    await fixture.createBill("Alice", [{ medicineId: FIRST, medicineName: "ENTERO QUINOL", mrp:61, quantity: 1, sellPrice: 48.5 }]);
+    await fixture.createBill("Bob", [{ medicineId: FIRST, medicineName: "ENTERO QUINOL", mrp:61, quantity: 1, sellPrice: 52 }]);
+    await fixture.createBill("Alice", [{medicineId:SECOND,medicineName:"ENTERO QUINOL",mrp:56,quantity:1,sellPrice:45}]);
     const p = await page(), alice = (await snap(p)).customers.find(c => c.name === "Alice"), bob = (await snap(p)).customers.find(c => c.name === "Bob");
     await p.locator("#phone-saved-customer").selectOption(alice.id);
     await p.locator("#phone-add-items").click(); await p.locator("#phone-item-search").fill("entero");
@@ -81,6 +82,7 @@ async function bounded(promise, label) {
     check("search exposes MRP and purchase before selection", [(await result(p).locator(".phone-result-mrp").innerText()).includes("61.00"), (await result(p).locator(".phone-result-purchase").innerText()).includes("44.91")], [true, true]);
     check("search separates inventory, customer and latest overall rates", [(await result(p).locator(".phone-result-selling").innerText()).includes("54.56"), (await result(p).locator(".phone-result-customer-rate").innerText()).includes("48.50"), (await result(p).locator(".phone-result-latest-rate").innerText()).includes("52.00")], [true, true, true]);
     check("duplicate row retains its own MRP and purchase", [(await result(p, SECOND).locator(".phone-result-mrp").innerText()).includes("56.00"), (await result(p, SECOND).locator(".phone-result-purchase").innerText()).includes("41.41")], [true, true]);
+    check("same name with another MRP has its own last rate", (await result(p, SECOND).locator(".phone-result-customer-rate").innerText()).includes("45.00"), true);
     check("actual zero stock is not presented as unknown", /Stock:\s*0\b/i.test(await result(p).innerText()), true);
     check("normal search does not show a large refresh control", await p.locator("#phone-sync-refresh").isVisible(), false);
     await p.screenshot({ path: path.join(ARTIFACTS, "search-prices-390.png") });
@@ -88,11 +90,19 @@ async function bounded(promise, label) {
     const desktop = await page(false); await desktop.locator("#bill-saved-customer-select").selectOption("Alice"); await desktop.locator("#billing-search").fill("entero");
     await desktop.waitForFunction(id => window.MedicineBilling.priceInfo(id).customerStatus === "ready", FIRST);
     check("shared phone pricing matches PC inventory and history values", await p.evaluate(id => window.MedicineBilling.priceInfo(id), FIRST).then(x => [x.mrp, x.purchasePrice, x.inventoryRate, x.customerLastRate, x.latestSoldRate]), await desktop.evaluate(id => { const x = window.MedicineBilling.priceInfo(id); return [x.mrp, x.purchasePrice, x.inventoryRate, x.customerLastRate, x.latestSoldRate]; }, FIRST));
+    await desktop.locator(".medicine-dropdown-edit-btn").first().click();
+    await desktop.locator("#manual-markup").fill("-10");
+    check("inventory-detail editor also warns about negative markup",await desktop.locator("#inventory-loss-warning").isVisible(),true);
+    await desktop.locator("#manual-add-close").click();
 
     await result(p).click();
     check("item editor keeps MRP purchase and both rates visible", await Promise.all(["item-mrp-value", "item-purchase", "item-customer-rate", "item-latest-rate"].map(id => p.locator("#phone-" + id).isVisible())), [true, true, true, true]);
     check("customer's historical rate is the initial suggested sell rate", await p.locator("#phone-item-rate").inputValue(), "48.5");
     await p.locator("#phone-use-latest-rate").click(); check("Use latest rate is an explicit action", await p.locator("#phone-item-rate").inputValue(), "52");
+    await p.locator(".phone-item-details summary").click();await p.locator("#phone-item-mrp").fill("56");
+    await p.waitForFunction(()=>document.querySelector("#phone-item-customer-rate").textContent.includes("45.00"));
+    check("editing MRP changes only the matching price references",await p.locator("#phone-item-rate").inputValue(),"52");
+    await p.locator("#phone-item-mrp").fill("61");await p.locator(".phone-item-details summary").click();
     await p.locator("#phone-item-rate").fill("33.25"); await p.locator("#phone-item-qty").fill("2");
     await p.locator("#phone-item-sales-history").click(); await p.locator("#medicine-sales-done").click();
     check("sales history opens without discarding the item draft", [await p.locator("#phone-item-qty").inputValue(), await p.locator("#phone-item-rate").inputValue()], ["2", "33.25"]);
@@ -101,7 +111,11 @@ async function bounded(promise, label) {
     await p.evaluate(() => { window.fixturePriceRefresh = window.MedicineBilling.refreshPriceHistory({ force: true }); });
     await bounded(gate.reached.promise, "Delayed customer history request did not arrive"); gate.release.resolve(); await p.evaluate(() => window.fixturePriceRefresh);
     check("history refresh never overwrites typed quantity or selling rate", [await p.locator("#phone-item-qty").inputValue(), await p.locator("#phone-item-rate").inputValue()], ["2", "33.25"]);
-    await p.locator(".phone-item-details summary").click(); await p.locator("#phone-item-batch").fill("B-TEST"); await p.locator("#phone-item-expiry").fill("11/27");
+    await p.locator(".phone-item-details summary").click();
+    await p.locator("#phone-item-markup").fill("-10");
+    check("negative phone markup has a visible warning", await p.locator("#phone-item-loss-warning").isVisible(), true);
+    await p.locator("#phone-item-rate").fill("33.25");
+    await p.locator("#phone-item-batch").fill("B-TEST"); await p.locator("#phone-item-expiry").fill("11/27");
     await p.locator(".phone-item-details summary").click();
     await p.locator("#phone-save").click(); await p.waitForFunction(() => document.querySelector("#phone-billing").dataset.screen === "search");
     check("Add & continue preserves search text ready to replace", await p.locator("#phone-item-search").evaluate(el => [el.value, el.selectionStart, el.selectionEnd]), ["entero", 0, 6]);
@@ -159,8 +173,28 @@ async function bounded(promise, label) {
     await p.locator("#phone-save").click();
     await p.waitForFunction(() => !!window.MedicineBilling.snapshot().id && !window.MedicineBilling.snapshot().saving);
     const saved = (await fixture.request("bills", "GET", { query: { id: (await snap(p)).id } })).json;
-    check("phone saves both selected inventory entries through real API", saved.items.map(i => [i.medicine_id, Number(i.quantity), Number(i.sell_price)]), [[FIRST, 2, 33.25], [SECOND, 1, 48.5]]);
+    check("phone saves both selected inventory entries through real API", saved.items.map(i => [i.medicine_id, Number(i.quantity), Number(i.sell_price)]), [[FIRST, 2, 33.25], [SECOND, 1, 45]]);
     check("saved line keeps its optional fields", [saved.items[0].batch_no, saved.items[0].expiry], ["B-TEST", "11/27"]);
+    await desktop.evaluate(id=>window.MedicineBilling.editBill(id),saved.bill.id);
+    const rowId=await desktop.evaluate(()=>window.MedicineBilling.snapshot().items[0]._rowId);
+    await desktop.locator("#markup-"+rowId).fill("-10");
+    check("negative PC markup has a visible warning",await desktop.locator("#loss-"+rowId).isVisible(),true);
+    await p.evaluate(()=>window.MedicineBilling.newBill(true));
+    await p.locator("#phone-saved-customer").selectOption(alice.id);
+    await p.locator("#phone-add-items").click();await p.locator("#phone-add-only").click();
+    await p.locator("#manual-name").fill("One-off phone medicine");await p.locator("#manual-mrp").fill("100");
+    await p.locator("#manual-purchase").fill("50");await p.locator("#manual-markup").fill("-20");
+    await p.locator("#manual-qty").fill("2");
+    check("bill-only editor warns before accepting negative markup",await p.locator("#manual-loss-warning").isVisible(),true);
+    await p.locator("#manual-add-submit").click();
+    await p.waitForFunction(()=>document.querySelector("#phone-billing").dataset.screen==="sale");
+    check("bill-only entry is added without any inventory write",[inventoryWrites,(await snap(p)).items[0].billOnly],[0,true]);
+    await p.locator("#phone-save").click();await p.waitForFunction(()=>!!window.MedicineBilling.snapshot().id&&!window.MedicineBilling.snapshot().saving);
+    const manualId=(await snap(p)).id;
+    const manual=(await fixture.request("bills","GET",{query:{id:manualId}})).json;
+    check("bill-only invoice stores marker and exact charge",[manual.items[0].bill_only,Number(manual.bill.grand_total)],[true,80]);
+    await desktop.evaluate(id=>window.MedicineBilling.editBill(id),manualId);
+    check("bill-only medicine reopens on PC with exclusion intact",(await snap(desktop)).items[0].billOnly,true);
     check("no uncaught browser errors", errors, []);
     console.log(JSON.stringify({ checks, layouts, artifacts: ARTIFACTS }));
   } finally {
