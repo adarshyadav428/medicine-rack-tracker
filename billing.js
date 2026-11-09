@@ -31,8 +31,8 @@
     currentCustomerBalance: 0,  // cached previous balance of selected customer
     openingBalanceTouched: false, // true once the user types in Opening Balance
     balanceCarriedForward: false, // true after first Save Bill; prevents double-add on re-save
-    customerLastPrices: {},        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
-    soldCounts: {},                // { medicineName.toLowerCase(): { count, lastSoldAt } }
+    customerLastPrices: Object.create(null),        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
+    soldCounts: Object.create(null),                // { medicineName.toLowerCase(): { count, lastSoldAt } }
     customerLastPricesFor: null,   // lowercase customer name these prices belong to
   };
 
@@ -119,6 +119,10 @@
     return new Date().toLocaleDateString("en-IN", {
       weekday: "long", day: "2-digit", month: "long", year: "numeric",
     });
+  }
+
+  function lineMoney(price, quantity) {
+    return Math.floor((Math.round(Number(price) * 100) * Math.round(Number(quantity) * 1000) + 500) / 1000) / 100;
   }
 
   function round2(n) {
@@ -335,6 +339,15 @@
   // refresh replaces with the server's figure.
   // -------------------------------------------------------------------------
   var savedCustomerCache = [];
+  var billSaveInFlight = false;
+  var pendingBillOperation = null;
+  var pendingImportOperation = null;
+  var pendingProfileOperations = Object.create(null);
+  var billVersion = null;
+  var billRevision = null;
+  var billCustomerId = null;
+  var billIssuedName = null;
+  var billLoadSequence = 0;
 
   function loadSavedCustomers() {
     return savedCustomerCache;
@@ -346,29 +359,18 @@
    * server are clean until edited, so a routine save is not a write storm but
    * a real edit is never dropped.
    */
-  function persistSavedCustomers(list) {
-    savedCustomerCache = Array.isArray(list) ? list : [];
-
-    savedCustomerCache.forEach(function (customer) {
-      if (!customer || !normalizeString(customer.name)) return;
-      if (customer._clean && !customer._dirty) return;
-      customer._dirty = false;
-      customer._clean = true;
-
-      var body = {
-        name: customer.name,
-        phone: customer.phone || "",
-      };
-      // Only send an opening balance when one was actually set, so a routine
-      // save can never wipe a customer's opening amount.
-      if (customer.openingBalance !== undefined && customer.openingBalance !== null) {
-        body.openingBalance = customer.openingBalance;
-      }
-
-      requestApi("/api/customers", { method: "POST", body: body }).catch(function () {
-        customer._clean = false; // let a later save retry
-      });
-    });
+  async function persistSavedCustomers(list) {
+    for (var customer of list) {
+      if (!customer || !normalizeString(customer.name) || customer._clean && !customer._dirty) continue;
+      var body = { id: customer.id, name: customer.name, phone: customer.phone || "" };
+      if (!customer.id && customer.openingBalance !== undefined) body.openingBalance = customer.openingBalance;
+      var profileKey = JSON.stringify(body);
+      body.operationId = pendingProfileOperations[profileKey] || (pendingProfileOperations[profileKey] = operationId());
+      await requestApi("/api/customers", { method: "POST", body: body });
+      delete pendingProfileOperations[profileKey];
+      customer._dirty = false; customer._clean = true;
+    }
+    await refreshSavedCustomers();
   }
 
   /** Pull the customer list and their server-derived balances. */
@@ -406,9 +408,10 @@
       // it looks like the customer simply owes nothing.
       setSaveCustomerStatus(
         "⚠ Could not load customer balances: " + (error.message || "unknown error") +
-          ". Previous balances will show as 0 until this is fixed.",
+          ". Saving is blocked until balances can be verified.",
         "is-warn"
       );
+      throw error;
     }
     return savedCustomerCache;
   }
@@ -460,7 +463,7 @@
     bState.currentCustomerIdx     = idx;
     bState.currentCustomerBalance = fresh;
     if (bEl.openingBalance) {
-      bEl.openingBalance.value = fresh > 0 ? String(fresh) : "";
+      bEl.openingBalance.value = fresh !== 0 ? String(fresh) : "";
     }
     recalcPayment();
 
@@ -601,80 +604,24 @@
   }
 
   async function saveCurrentCustomer() {
-    var name    = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
-    var phone   = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-    var balRaw  = bEl.openingBalance ? bEl.openingBalance.value : "";
-    var balance = balRaw !== "" ? (parseFloat(balRaw) || 0) : 0;
-    if (!name) {
-      setSaveCustomerStatus("Enter a customer name first.", "is-warn");
-      return;
+    if (billSaveInFlight) return;
+    var name = normalizeString(bEl.customerName.value);
+    if (!name) { setSaveCustomerStatus("Enter a customer name first.", "is-warn"); return; }
+    var existing = loadSavedCustomers().find(function(c) { return customerKey(c.name) === customerKey(name); });
+    if (!existing && billCustomerId && name === billIssuedName) {
+      existing = loadSavedCustomers().find(function(c) { return c.id === billCustomerId; });
     }
-    var list = loadSavedCustomers();
-    var idx = list.findIndex(function (c) {
-      return c.name.toLowerCase() === name.toLowerCase();
-    });
-    if (idx >= 0) {
-      list[idx].name  = name;
-      list[idx].phone = phone;
-      list[idx]._dirty = true;
-      // The balance on screen is DERIVED: opening + everything billed, less
-      // everything received and paid. Writing it back as the opening anchor
-      // would count all of that activity a second time and roughly double the
-      // customer's outstanding amount. Back the activity out first, so the
-      // figure typed here reads as the balance and nothing is double-counted.
-      if (balRaw !== "") {
-        list[idx].openingBalance = Ledger.openingBalanceFor(
-          balance, list[idx].balance, list[idx].openingBalance
-        );
-        list[idx].balance = balance;
-      }
-      bState.currentCustomerIdx     = idx;
-      bState.currentCustomerBalance = list[idx].balance || 0;
-      setSaveCustomerStatus("Customer updated.", "is-ok");
-    } else {
-      list.push({
-        name: name,
-        phone: phone,
-        balance: balance,
-        openingBalance: balance,
-        _dirty: true,
-      });
-      bState.currentCustomerIdx     = list.length - 1;
-      bState.currentCustomerBalance = balance;
+    var body = { id: existing && existing.id, name: existing ? existing.name : name, phone: normalizeString(bEl.customerPhone.value) };
+    // This field is a historical snapshot on saved bills, not an account target.
+    if (!existing && !bState.currentBillId) body.openingBalance = bState.currentCustomerBalance || 0;
+    try {
+      var profileKey = JSON.stringify(body);
+      body.operationId = pendingProfileOperations[profileKey] || (pendingProfileOperations[profileKey] = operationId());
+      await requestApi("/api/customers", { method: "POST", body: body });
+      delete pendingProfileOperations[profileKey];
+      await refreshSavedCustomers();
       setSaveCustomerStatus("Customer saved.", "is-ok");
-    }
-    persistSavedCustomers(list);
-
-    // Backfill missing previous-balance snapshots for this customer's historical
-    // bills so that viewing an old bill from history always shows the correct
-    // Previous Balance without relying on live inference every time.
-    var finalBalance = (idx >= 0 ? list[idx].balance : list[list.length - 1].balance) || 0;
-
-    renderCustomerSelect();
-    recalcPayment();
-
-    if (finalBalance > 0) {
-      reconstructBillSnapshots(await fetchCustomerLedger(name), finalBalance);
-      await flushLedgerWrites();
-    }
-  }
-
-  // Snapshots rebuilt below are queued here and written to the server, so the
-  // repair survives a reload instead of living only in this tab.
-  var pendingLedgerWrites = [];
-
-  function flushLedgerWrites() {
-    if (!pendingLedgerWrites.length) return Promise.resolve();
-    var batch = pendingLedgerWrites;
-    pendingLedgerWrites = [];
-    return requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: batch } })
-      .catch(function (err) {
-        setSaveCustomerStatus(
-          "Rebuilt on screen, but saving to the server failed: " +
-            (err.message || "unknown error"),
-          "is-warn"
-        );
-      });
+    } catch (error) { setSaveCustomerStatus("Customer was not saved: " + error.message, "is-warn"); }
   }
 
   // -------------------------------------------------------------------------
@@ -698,8 +645,8 @@
         { method: "GET" }
       );
       return Array.isArray(result.payments) ? result.payments : [];
-    } catch (_) {
-      return [];
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -719,8 +666,8 @@
       var bills = Array.isArray(result.bills) ? result.bills : [];
       noteBillLedgerRows(bills);
       return bills;
-    } catch (_) {
-      return [];
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -736,20 +683,6 @@
   /** billRecv as the (billId, bill) callback ledger.js expects. */
   function recvFor(billId) {
     return billRecv(billId);
-  }
-
-  // Walk backwards through a customer's ledger and fill in any missing
-  // previous-balance snapshots, using currentBalance as the anchor.
-  // Existing snapshots are never overwritten.
-  function reconstructBillSnapshots(ledger, currentBalance) {
-    var events = Ledger.buildTimeline(ledger.bills, ledger.payments, "desc");
-    if (!events.length) return;
-
-    Ledger.chainBackward(events, currentBalance, recvFor).forEach(function (snap) {
-      if (billPrev(snap.id) !== null) return; // never overwrite a real snapshot
-      setBillLedger(snap.id, snap.previousBalance, snap.amountReceived);
-      pendingLedgerWrites.push(snap);
-    });
   }
 
   async function restoreCustomersFromHistory() {
@@ -774,7 +707,7 @@
         added++;
       });
 
-      persistSavedCustomers(existing);
+      await persistSavedCustomers(existing);
       renderCustomerSelect();
 
       if (added > 0) {
@@ -797,85 +730,24 @@
   // The first bill's existing snapshot is used as the starting anchor (ground truth).
   // All subsequent bills have their snapshots overwritten with the correct value.
   async function reconcileCustomerBalance() {
-    var custName = normalizeString(bEl.customerName ? bEl.customerName.value : "");
-    if (!custName) {
-      setSaveCustomerStatus("Select or enter a customer name first.", "is-warn");
-      return;
-    }
-    var cname = custName.toLowerCase();
-    var btn = bEl.repairBalanceBtn;
-    if (btn) { btn.disabled = true; btn.textContent = "Repairing…"; }
-    setSaveCustomerStatus("Re-chaining balances…", "is-info");
-
+    if (billSaveInFlight) return;
+    var name = normalizeString(bEl.customerName.value);
+    if (!name) return;
+    var customer = loadSavedCustomers().find(function(c) { return customerKey(c.name) === customerKey(name); });
+    if (bEl.repairBalanceBtn) bEl.repairBalanceBtn.disabled = true;
     try {
-      // Bills and standalone payments both move the balance, so the chain walks
-      // the two merged in date order.
-      var ledger = await fetchCustomerLedger(custName);
-      if (!ledger.bills.length) {
-        setSaveCustomerStatus("No bills found for \"" + custName + "\".", "is-warn");
-        return;
-      }
-      var events = Ledger.buildTimeline(ledger.bills, ledger.payments, "asc");
-
-      // Anchor: whatever is stored for the FIRST (oldest) bill — user should have
-      // already corrected this if it was wrong (e.g. via Edit bill + change Opening Balance).
-      var firstBillEvent = events.find(function (ev) { return ev.type === "bill"; });
-      var anchor = firstBillEvent ? (billPrev(firstBillEvent.bill.id) || 0) : 0;
-
-      var chain = Ledger.chainForward(events, anchor, recvFor);
-      var ledgerUpdates  = chain.updates;
-      var paymentCount   = chain.paymentCount;
-      var runningBalance = chain.finalBalance;
-
-      ledgerUpdates.forEach(function (u) {
-        setBillLedger(u.id, u.previousBalance, u.amountReceived);
-      });
-
-      // Write the re-chained snapshots back so every device sees the repair.
-      try {
-        await requestApi("/api/bills", { method: "PUT", body: { ledgerUpdates: ledgerUpdates } });
-        await refreshSavedCustomers();
-      } catch (err) {
-        setSaveCustomerStatus(
-          "Re-chained on screen, but saving to the server failed: " +
-            (err.message || "unknown error"),
-          "is-warn"
-        );
-      }
-
-      // Point the local cache at the recomputed figure. The refresh above
-      // already replaced it with the server's derived balance where that
-      // succeeded; this keeps the two consistent when it did not.
-      var custList = loadSavedCustomers();
-      var cidx = custList.findIndex(function (c) { return c.name.toLowerCase() === cname; });
-      if (cidx >= 0) {
-        custList[cidx].balance = runningBalance;
-        bState.currentCustomerIdx     = cidx;
-        bState.currentCustomerBalance = runningBalance;
-        renderCustomerSelect();
-      }
-
-      // Update the opening balance field:
-      // — in edit mode: show the corrected snapshot for the bill being edited
-      // — in new-bill mode: show the customer's running total (= prev balance for next bill)
-      if (bState.currentBillId) {
-        var thisBillPrev = (billPrev(bState.currentBillId) || 0);
-        bState.currentCustomerBalance  = thisBillPrev;
-        if (bEl.openingBalance) bEl.openingBalance.value = thisBillPrev > 0 ? String(thisBillPrev) : "";
-      } else {
-        if (bEl.openingBalance) bEl.openingBalance.value = runningBalance > 0 ? String(runningBalance) : "";
-      }
-
-      recalcPayment();
-      setSaveCustomerStatus(
-        "✅ " + ledgerUpdates.length + " bill(s) re-chained" +
-          (paymentCount ? " across " + paymentCount + " payment(s)" : "") +
-          ". Balance: ₹" + runningBalance,
-        "is-ok"
-      );
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Repair Balance"; }
-    }
+      await requestApi("/api/bills", { method: "PUT", body: {
+        repairCustomerId: customer && customer.id || (name === billIssuedName ? billCustomerId : null),
+        repairCustomerName: name,
+        operationId: operationId()
+      } });
+      await refreshSavedCustomers();
+      await loadBillHistory();
+      if (bState.currentBillId) await loadBillForEdit(bState.currentBillId);
+      else { bState.openingBalanceTouched = false; await syncSelectedCustomerBalance(); }
+      setSaveCustomerStatus("Balance snapshots repaired and verified.", "is-ok");
+    } catch (error) { setSaveCustomerStatus("Repair not confirmed: " + error.message, "is-warn"); }
+    finally { if (bEl.repairBalanceBtn) bEl.repairBalanceBtn.disabled = false; }
   }
 
   // Fetch and cache the last sell price for each medicine sold to a customer.
@@ -883,7 +755,7 @@
   function loadCustomerLastPrices(custName) {
     var cname = normalizeString(custName);
     if (!cname) {
-      bState.customerLastPrices    = {};
+      bState.customerLastPrices    = Object.create(null);
       bState.customerLastPricesFor = null;
       return;
     }
@@ -892,17 +764,19 @@
 
     // Mark immediately so parallel calls don't fire duplicate requests
     bState.customerLastPricesFor = key;
+    bState.customerLastPrices = Object.create(null);
 
     requestApi("/api/bills?lastprices=1&customer=" + encodeURIComponent(cname), { method: "GET" })
       .then(function (result) {
         // Only apply if the customer hasn't changed while the request was in flight
         if (bState.customerLastPricesFor === key) {
-          bState.customerLastPrices = result.priceMap || {};
+          bState.customerLastPrices = Object.assign(Object.create(null), result.priceMap || {});
         }
       })
       .catch(function () {
         if (bState.customerLastPricesFor === key) {
-          bState.customerLastPrices = {};
+          bState.customerLastPrices = Object.create(null);
+          bState.customerLastPricesFor = null;
         }
       });
   }
@@ -1620,9 +1494,15 @@
     if (bEl.search) bEl.search.value = "";
 
     setTimeout(function () {
+      if (document.body.classList.contains("phone-billing-active")) return;
       var markupInput = document.getElementById("markup-" + newRowId);
       var sellInput   = document.getElementById("sell-"   + newRowId);
-      if (markupInput && !markupInput.disabled) {
+      var qtyInput    = document.getElementById("qty-"    + newRowId);
+      if (window.matchMedia("(max-width: 640px)").matches && qtyInput) {
+        // Price details start collapsed on a phone; focus a visible field.
+        qtyInput.focus();
+        qtyInput.select();
+      } else if (markupInput && !markupInput.disabled) {
         markupInput.focus();
         markupInput.select();
       } else if (sellInput) {
@@ -1690,7 +1570,7 @@
     // Update line total cell
     var totalEl = document.getElementById("total-" + rowId);
     if (totalEl) {
-      totalEl.textContent = fmtMoney(round2(item.sellPrice * item.quantity));
+      totalEl.textContent = fmtMoney(lineMoney(item.sellPrice, item.quantity));
     }
 
     recalcTotals();
@@ -1717,8 +1597,10 @@
 
     bState.lineItems.forEach(function (item) {
       var tr = document.createElement("tr");
+      tr.setAttribute("role", "row");
+      tr.classList.toggle("is-pricing-open", Boolean(item._pricingOpen));
       var hasPurchase = item.purchasePrice !== null && item.purchasePrice !== undefined;
-      var lineTotal = round2(item.sellPrice * item.quantity);
+      var lineTotal = lineMoney(item.sellPrice, item.quantity);
 
       // Recomputed at render rather than trusted from state, so a line loaded
       // from a saved bill or an import shows a figure too.
@@ -1733,50 +1615,55 @@
       var purchaseDisplay = hasPurchase ? fmtMoney(item.purchasePrice) : "—";
 
       tr.innerHTML =
-        "<td>" +
+        '<td role="cell">' +
           '<div class="bill-item-name" title="' + escHtml(item.medicineName) + '">' + escHtml(item.medicineName) + "</div>" +
           '<div class="bill-item-location">' + escHtml(item.location || "—") + "</div>" +
+          '<div class="bill-item-mobile-meta">Buy ' + purchaseDisplay + '</div>' +
           '<div class="bill-item-price-note" id="pricenote-' + item._rowId + '">' +
             escHtml(item.priceNote || "") +
           "</div>" +
         "</td>" +
-        '<td class="num-col">' +
+        '<td role="cell" class="num-col bill-extra-price" id="mrp-cell-' + item._rowId + '" data-label="MRP (₹)">' +
           '<input id="mrp-' + item._rowId + '" class="bill-table-input" type="number"' +
-          ' data-col="mrp"' +
+          ' data-col="mrp" aria-label="MRP" inputmode="decimal"' +
           ' min="0" step="0.01"' +
           ' value="' + mrpVal + '"' +
           ' placeholder="—"' +
           " />" +
         "</td>" +
-        '<td class="num-col bill-purchase-col"><span style="font-family:var(--font-mono);font-size:0.85rem;color:#3a5560;">' + purchaseDisplay + "</span></td>" +
-        '<td class="num-col">' +
+        '<td role="cell" class="num-col bill-purchase-col bill-extra-price" id="purchase-cell-' + item._rowId + '" data-label="Purchase (₹)"><span style="font-family:var(--font-mono);font-size:0.85rem;color:#3a5560;">' + purchaseDisplay + "</span></td>" +
+        '<td role="cell" class="num-col bill-extra-price" id="markup-cell-' + item._rowId + '" data-label="Markup %">' +
           '<input id="markup-' + item._rowId + '" class="bill-table-input" type="number"' +
-          ' data-col="markup"' +
+          ' data-col="markup" aria-label="Markup percent"' +
           ' min="-100" max="2000" step="0.01"' +
           ' value="' + markupVal + '"' +
           ' placeholder="' + (hasPurchase ? "0" : "N/A") + '"' +
           (hasPurchase ? "" : " disabled") +
           " />" +
         "</td>" +
-        '<td class="num-col">' +
+        '<td role="cell" class="num-col" data-label="Sell price (₹)">' +
           '<input id="sell-' + item._rowId + '" class="bill-table-input bill-table-input--sell" type="number"' +
-          ' data-col="sell"' +
+          ' data-col="sell" aria-label="Sell price" inputmode="decimal"' +
           ' min="0" step="0.01"' +
           ' value="' + sellVal + '"' +
           ' placeholder="0"' +
           " />" +
         "</td>" +
-        '<td class="num-col">' +
+        '<td role="cell" class="num-col" data-label="Quantity">' +
           '<input id="qty-' + item._rowId + '" class="bill-table-input" type="number"' +
-          ' data-col="qty"' +
+          ' data-col="qty" aria-label="Quantity" inputmode="decimal"' +
           ' min="0.001" step="0.001"' +
           ' value="' + item.quantity + '"' +
           ' placeholder="1"' +
           " />" +
         "</td>" +
-        '<td class="num-col"><span id="total-' + item._rowId + '" class="bill-item-line-total">' + fmtMoney(lineTotal) + "</span></td>" +
-        "<td>" +
+        '<td role="cell" class="num-col" data-label="Total (₹)"><span id="total-' + item._rowId + '" class="bill-item-line-total">' + fmtMoney(lineTotal) + "</span></td>" +
+        '<td role="cell">' +
           '<div class="bill-row-actions">' +
+          '<button class="btn btn-ghost btn-xs bill-price-toggle" data-toggle-prices="' + item._rowId +
+            '" type="button" aria-label="Price details for ' + escHtml(item.medicineName) +
+            '" aria-expanded="' + Boolean(item._pricingOpen) + '" aria-controls="mrp-cell-' + item._rowId +
+            ' purchase-cell-' + item._rowId + ' markup-cell-' + item._rowId + '" title="MRP, purchase price and markup">⋯</button>' +
           (item.medicineId
             ? '<button class="btn btn-ghost btn-xs bill-edit-inv-btn" data-edit-inv="' + item._rowId + '" title="Edit medicine in inventory" type="button">✏</button>'
             : '') +
@@ -1790,6 +1677,15 @@
     bEl.itemsTbody.appendChild(frag);
 
     // Bind row events after render
+    bEl.itemsTbody.querySelectorAll("[data-toggle-prices]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var item = bState.lineItems.find(function (x) { return String(x._rowId) === btn.dataset.togglePrices; });
+        if (!item) return;
+        item._pricingOpen = !item._pricingOpen;
+        btn.closest("tr").classList.toggle("is-pricing-open", item._pricingOpen);
+        btn.setAttribute("aria-expanded", String(item._pricingOpen));
+      });
+    });
     bEl.itemsTbody.querySelectorAll("[data-remove]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         removeLineItem(btn.dataset.remove);
@@ -1890,14 +1786,18 @@
     if (next) { next.focus(); next.select(); }
   }
 
+  function notifyBillingChange(field) {
+    window.dispatchEvent(new CustomEvent("medicine-bill-change", { detail: { field: field } }));
+  }
+
   function recalcTotals() {
     var subtotalVal = bState.lineItems.reduce(function (sum, item) {
-      return sum + round2(item.sellPrice * item.quantity);
+      return sum + lineMoney(item.sellPrice, item.quantity);
     }, 0);
     subtotalVal = round2(subtotalVal);
 
     var gstPct = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-    var gstAmt = round2(subtotalVal * gstPct / 100);
+    var gstAmt = Math.floor((Math.round(subtotalVal * 100) * Math.round(gstPct * 100) + 5000) / 10000) / 100;
     var preRoundTotal = round2(subtotalVal + gstAmt);
 
     var grandTotalVal = Math.ceil(preRoundTotal);
@@ -1916,14 +1816,15 @@
     }
 
     recalcPayment();
+    notifyBillingChange("total");
   }
 
   function recalcPayment() {
     var subtotalVal = bState.lineItems.reduce(function (sum, item) {
-      return sum + round2(item.sellPrice * item.quantity);
+      return sum + lineMoney(item.sellPrice, item.quantity);
     }, 0);
     var gstPct      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-    var preRound   = round2(round2(subtotalVal) + round2(round2(subtotalVal) * gstPct / 100));
+    var preRound   = round2(round2(subtotalVal) + Math.floor((Math.round(subtotalVal * 100) * Math.round(gstPct * 100) + 5000) / 10000) / 100);
     var grandTotal = Math.ceil(preRound);
     var prevBal     = bState.currentCustomerBalance || 0;
     var totalDueVal = round2(grandTotal + prevBal);
@@ -1932,7 +1833,7 @@
 
     // Previous balance row — dim it when zero
     var prevRow = document.querySelector(".bill-prev-balance-row");
-    if (prevRow) prevRow.style.opacity = prevBal > 0 ? "1" : "0.38";
+    if (prevRow) prevRow.style.opacity = prevBal !== 0 ? "1" : "0.38";
     if (bEl.prevBalance) bEl.prevBalance.textContent = fmtMoney(prevBal);
 
     if (bEl.totalDue)  bEl.totalDue.textContent  = fmtMoney(totalDueVal);
@@ -1973,171 +1874,97 @@
     };
   }
 
+  function operationId() {
+    return window.crypto.randomUUID();
+  }
+
   async function saveBill() {
-    if (!bState.lineItems.length) {
-      setSaveStatus("Add at least one medicine to the bill.", "is-warn");
-      return;
+    if (billSaveInFlight) return;
+    if (!bState.lineItems.length || !normalizeString(bEl.customerName.value)) {
+      setSaveStatus("Select a customer and add at least one medicine.", "is-warn"); return;
     }
-
-    // Every bill has to belong to somebody. A nameless one still moved stock
-    // and still counted towards the day's takings, but it joined no ledger:
-    // nothing was owed by anyone, so a credit sale simply vanished and there
-    // was no record to chase. Picking from the dropdown and typing a new name
-    // both satisfy this — a name not yet on file is created on save, below.
-    if (!normalizeString(bEl.customerName ? bEl.customerName.value : "")) {
-      setSaveStatus("Select a customer, or type a name, before saving this bill.", "is-warn");
-      if (bEl.customerName) bEl.customerName.focus();
-      return;
-    }
-
-    // An update replaces the stored bill outright, so it has to be asked for
-    // rather than fallen into — this is the last guard against composing a
-    // second customer's bill on top of the one already saved.
-    if (bState.currentBillId &&
-        !window.confirm("Update existing bill " + bState.currentBillNumber +
-          "?\n\nThis replaces its customer, items and totals. To bill someone " +
-          "else, cancel and press New Bill instead.")) {
-      setSaveStatus("Save cancelled. Press New Bill to start a fresh bill.", "is-warn");
-      return;
-    }
-
-    if (bEl.saveBillButton) bEl.saveBillButton.disabled = true;
+    if (bState.currentBillId && !window.confirm("Update existing bill " + bState.currentBillNumber + "?")) return;
+    billSaveInFlight = true;
+    billLoadSequence += 1;
+    var controls = Array.from(document.querySelectorAll("main.page-shell input, main.page-shell select, main.page-shell textarea, main.page-shell button"));
+    var disabled = controls.map(function(el) { return el.disabled; });
+    controls.forEach(function(el) { el.disabled = true; });
     setSaveStatus("Saving bill…", "is-info");
-
-    // Last chance to catch a payment recorded between picking the customer and
-    // pressing Save. What goes in the payload is what the receipt prints and
-    // what the ledger keeps, so it has to be the current figure — but a Total
-    // Due that moves after the amount was read out to the customer is worth
-    // stopping for rather than swapping in quietly.
-    if (!bState.currentBillId) {
-      var moved = null;
-      try {
-        moved = await syncSelectedCustomerBalance();
-      } catch (_) { /* refreshSavedCustomers already reported the failure */ }
-
-      if (moved && !window.confirm(
-            "This customer's previous balance is now " + fmtMoney(moved.to) +
-            ", not " + fmtMoney(moved.from) + " — a payment or bill was " +
-            "recorded elsewhere in the meantime.\n\nThe bill has been updated " +
-            "to the current figure. Save it?")) {
-        setSaveStatus(
-          "Save cancelled. Previous balance updated to " + fmtMoney(moved.to) + ".",
-          "is-warn"
-        );
-        if (bEl.saveBillButton) bEl.saveBillButton.disabled = false;
-        return;
-      }
-    }
-
-    var payload = buildSavePayload();
-
+    var committed = false;
     try {
-      if (bState.currentBillId) {
-        // Update existing bill
-        payload.id = bState.currentBillId;
-        await requestApi("/api/bills", { method: "PUT", body: payload });
-        setSaveStatus("✅ Bill " + bState.currentBillNumber + " updated successfully.", "is-ok");
-        applyBillMode();
-
-        // The customer's balance is derived on the server from every bill and
-        // payment, so an edit needs no local adjustment — recomputing it here
-        // added the edited amount a second time. Only the per-bill snapshot is
-        // recorded, and the form keeps showing this bill's own previous
-        // balance, which an edit never changes.
-        var _newRecv    = receivedAmountValue();
-        var _newPrevBal = round2(parseFloat(payload.previousBalance) || 0);
-        setBillLedger(bState.currentBillId, _newPrevBal, _newRecv);
-      } else {
-        // Create new bill
-        var result = await requestApi("/api/bills", { method: "POST", body: payload });
-        bState.currentBillId     = result.bill.id;
-        bState.currentBillNumber = result.billNumber;
-
-        if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = result.billNumber;
-        setSaveStatus("✅ Bill " + result.billNumber + " saved successfully!", "is-ok");
-        applyBillMode();
-
-        // These rates are now the newest the shop has, so the next bill of the
-        // session should offer them without waiting for a reload.
-        rememberSoldPrices(bState.lineItems);
-      }
-
-      if (bEl.printBillButton) bEl.printBillButton.disabled = false;
-
-      // Carry forward balance — only on first save of each bill (not on edits/re-saves)
-      if (!bState.balanceCarriedForward) {
-        var custName  = normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
-        var custPhone = normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-        var received  = receivedAmountValue();
-        var _sub      = bState.lineItems.reduce(function (s, it) { return s + round2(it.sellPrice * it.quantity); }, 0);
-        var _gst      = parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0;
-        var grandTot  = Math.ceil(round2(round2(_sub) + round2(round2(_sub) * _gst / 100)));
-
-        if (custName) {
-          var custList = loadSavedCustomers();
-
-          // Resolve by the name actually on the bill, never by the cached
-          // index — a stale index (customer picked, then the name edited, or
-          // the list re-sorted by a refresh) would carry someone else's
-          // balance onto this bill and skip creating the real customer.
-          var idx = findCustomerIdx(custName);
-
-          // The previous balance that was just written to the bill row, reused
-          // verbatim. Reading it back off the customer cache instead let the
-          // two disagree: correct the Opening Balance by hand for an existing
-          // customer and the database kept the typed figure while this local
-          // snapshot kept the cached one, so the receipt printed one previous
-          // balance before a reload and another after it.
-          //
-          // For a customer not yet on file this is the Opening Balance field —
-          // the ONLY place a manually-entered opening amount lives. (The root
-          // bug once was idx < 0 returning 0 and discarding it outright.)
-          var prevBal = round2(parseFloat(payload.previousBalance) || 0);
-
-          // Snapshot prevBal + received for this bill so history view can reconstruct
-          // the exact receipt instead of using stale current-form state.
-          var _sid = bState.currentBillId;
-          if (_sid) {
-            setBillLedger(_sid, prevBal, received);
-          }
-
-          if (idx < 0) {
-            // New customer — create entry.
-            //
-            // prevBal is what they already owed before this first bill, typed
-            // into Opening Balance. It has to be stored as the customer's
-            // opening balance: the derived balance is built from opening plus
-            // bill totals less receipts, so an opening amount that is only
-            // recorded on the bill would drop straight out of it.
-            custList.push({
-              name: custName,
-              phone: custPhone || "",
-              balance: round2(prevBal + grandTot - received),
-              openingBalance: prevBal,
-              _dirty: true,
-            });
-            idx = custList.length - 1;
-          }
-
-          persistSavedCustomers(custList);
-          bState.currentCustomerIdx     = idx;
-          bState.balanceCarriedForward  = true;
-          // The bill on screen has not gone anywhere, so its Previous Balance
-          // stays what it was before the bill. Advancing it here (and blanking
-          // Received) made the bill's own amount show up twice in Total Due,
-          // and a re-save then wrote that doubled figure onto the bill.
-          renderCustomerSelect();
-          recalcPayment();
+      if (!bState.currentBillId && !pendingBillOperation) {
+        var moved = await syncSelectedCustomerBalance();
+        if (moved && !window.confirm("Previous balance is now " + fmtMoney(moved.to) + ". Save using this balance?")) {
+          setSaveStatus("Save cancelled; balance refreshed.", "is-warn"); return;
         }
       }
-
-      await loadBillHistory();
-      await refreshSavedCustomers();
-
+      var payload = buildSavePayload();
+      var customer = loadSavedCustomers().find(function(c) { return customerKey(c.name) === customerKey(payload.customerName); });
+      if (bState.currentBillId && !customer && customerKey(payload.customerName) !== customerKey(billIssuedName)) throw new Error("Save the new customer first, then select that customer to reassign this bill.");
+      payload.customerId = customer && customer.id || (bState.currentBillId ? billCustomerId : null);
+      if (bState.currentBillId) {
+        payload.id = bState.currentBillId;
+        payload.expectedUpdatedAt = billVersion;
+        payload.expectedVersion = billRevision;
+        if (payload.customerId && billCustomerId && payload.customerId !== billCustomerId) {
+          if (!window.confirm("Move this bill and its recorded receipt to another customer?")) {
+            setSaveStatus("Reassignment cancelled.", "is-warn"); return;
+          }
+          payload.confirmReassignment = true;
+          payload.expectedBalance = customer.balance;
+        }
+      } else {
+        payload.expectedBalance = customer ? customer.balance : payload.previousBalance;
+        if (!customer || !customer.id) payload.initialOpeningBalance = customer ? customer.openingBalance : payload.previousBalance;
+      }
+      var fingerprint = JSON.stringify(payload);
+      if (!pendingBillOperation) {
+        pendingBillOperation = { fingerprint: fingerprint, id: operationId(), payload: JSON.parse(JSON.stringify(payload)) };
+      } else if (pendingBillOperation.fingerprint !== fingerprint && !window.confirm("The previous save is unconfirmed. Retry the original submitted bill first? Reload the saved bill before making further changes.")) {
+        setSaveStatus("Resolve the previous save before submitting a changed bill.", "is-warn"); return;
+      }
+      payload = JSON.parse(JSON.stringify(pendingBillOperation.payload));
+      payload.operationId = pendingBillOperation.id;
+      var result = await requestApi("/api/bills", { method: payload.id ? "PUT" : "POST", body: payload });
+      var bill = result.bill;
+      if (!bill || !bill.id) throw new Error("Save response is incomplete; retry the same operation.");
+      committed = true;
+      bState.currentBillId = bill.id;
+      bState.currentBillNumber = bill.bill_number || result.billNumber;
+      billVersion = bill.updated_at;
+      billRevision = bill.version;
+      if (bEl.billDateValue) bEl.billDateValue.textContent = fmtDate(bill.created_at);
+      billCustomerId = bill.customer_id;
+      billIssuedName = bill.customer_name;
+      bState.balanceCarriedForward = true;
+      noteBillLedger(bill);
+      // A replay confirms the submitted snapshot, not edits made after a lost response.
+      bState.lineItems = payload.items.map(function(item) { return Object.assign({}, item, { _rowId: "row-" + (bState.nextRowId++) }); });
+      bEl.customerName.value = bill.customer_name;
+      bEl.customerPhone.value = bill.customer_phone || "";
+      bEl.notes.value = bill.notes || "";
+      bEl.gstPercent.value = bill.gst_percent;
+      bEl.receivedAmount.value = bill.amount_received;
+      bState.currentCustomerBalance = Number(bill.previous_balance) || 0;
+      bEl.openingBalance.value = bState.currentCustomerBalance || "";
+      renderLineItems(); recalcTotals();
+      if (!payload.id) rememberSoldPrices(payload.items);
+      pendingBillOperation = null;
+      if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bState.currentBillNumber;
+      setSaveStatus("Bill " + bState.currentBillNumber + " saved successfully.", "is-ok");
+      try { await loadBillHistory(); await refreshSavedCustomers(); }
+      catch (refreshError) { setBillingStatus("Bill saved. Refresh failed: " + refreshError.message, "is-warn"); }
     } catch (error) {
-      setSaveStatus("Save failed: " + (error.message || "Unknown error"), "is-error");
+      if (!committed && pendingBillOperation) {
+        if (error.status && error.status < 500 && !pendingBillOperation.uncertain) pendingBillOperation = null;
+        else if (!error.status || error.status >= 500) pendingBillOperation.uncertain = true;
+      }
+      setSaveStatus((committed ? "Bill saved, but display update failed: " : "Save not confirmed: ") + error.message, committed ? "is-ok" : "is-error");
     } finally {
-      if (bEl.saveBillButton) bEl.saveBillButton.disabled = false;
+      billSaveInFlight = false;
+      controls.forEach(function(el,i) { el.disabled = disabled[i]; });
+      applyBillMode();
+      if (bEl.printBillButton) bEl.printBillButton.disabled = !bState.currentBillId;
     }
   }
 
@@ -2168,9 +1995,9 @@
   }
 
   function buildReceiptHtml(overrides) {
-    var customer  = (overrides && overrides.customerName)  || normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
-    var phone     = (overrides && overrides.customerPhone) || normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
-    var notes     = (overrides && overrides.notes)         || normalizeString(bEl.notes         ? bEl.notes.value         : "");
+    var customer  = (overrides && overrides.customerName !== undefined) ? overrides.customerName : normalizeString(bEl.customerName  ? bEl.customerName.value  : "");
+    var phone     = (overrides && overrides.customerPhone !== undefined) ? overrides.customerPhone : normalizeString(bEl.customerPhone ? bEl.customerPhone.value : "");
+    var notes     = (overrides && overrides.notes !== undefined) ? overrides.notes : normalizeString(bEl.notes         ? bEl.notes.value         : "");
     var gstPct    = (overrides && overrides.gstPercent !== undefined) ? overrides.gstPercent : (parseFloat(bEl.gstPercent ? bEl.gstPercent.value : "0") || 0);
     var items     = (overrides && overrides.items) || bState.lineItems;
     var billNo    = (overrides && overrides.billNumber) || bState.currentBillNumber || "DRAFT";
@@ -2185,9 +2012,9 @@
     var timeStr  = issued.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
     var subtotal   = round2(items.reduce(function (s, it) {
-      return s + round2((it.sell_price !== undefined ? it.sell_price : it.sellPrice) * it.quantity);
+      return s + (it.line_total !== undefined ? Number(it.line_total) : Math.floor((Math.round(Number(it.sell_price !== undefined ? it.sell_price : it.sellPrice) * 100) * Math.round(Number(it.quantity) * 1000) + 500) / 1000) / 100);
     }, 0));
-    var gstAmt     = round2(subtotal * gstPct / 100);
+    var gstAmt     = Math.floor((Math.round(subtotal * 100) * Math.round(Number(gstPct) * 100) + 5000) / 10000) / 100;
     var preRound   = round2(subtotal + gstAmt);
     var grandTotal = Math.ceil(preRound);
     // Shown on the receipt whenever it is non-zero. Without it the customer
@@ -2212,7 +2039,7 @@
       var mrp   = (it.mrp !== null && it.mrp !== undefined) ? "&#8377;" + Number(it.mrp).toFixed(2) : "—";
       var qty   = it.quantity;
       var price = it.sell_price !== undefined ? it.sell_price : it.sellPrice;
-      var total = round2(price * qty);
+      var total = it.line_total !== undefined ? Number(it.line_total) : Math.floor((Math.round(Number(price) * 100) * Math.round(Number(qty) * 1000) + 500) / 1000) / 100;
       var bg    = idx % 2 === 0 ? "#ffffff" : "#f5faf9";
 
       // Batch and expiry are captured and stored against the line, but they are
@@ -2305,9 +2132,9 @@
             "<div style='display:flex;justify-content:space-between;padding:6px 12px;border-bottom:1px solid #dff0ed;font-size:13.5px;font-weight:700;color:#0d2a28;'>" +
               "<span>Bill Amount</span><span style='font-family:monospace;'>&#8377;" + grandTotal.toFixed(2) + "</span>" +
             "</div>" +
-            (prevBal > 0
+            (prevBal !== 0
               ? "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#8a5500;background:#fffbf2;'>" +
-                  "<span>Previous Balance</span><span style='font-family:monospace;'>&#8377;" + prevBal.toFixed(2) + "</span>" +
+                  "<span>" + (prevBal < 0 ? "Previous Credit" : "Previous Balance") + "</span><span style='font-family:monospace;'>&#8377;" + prevBal.toFixed(2) + "</span>" +
                 "</div>" +
                 "<div style='display:flex;justify-content:space-between;padding:5px 12px;border-bottom:1px solid #dff0ed;color:#3d6560;font-weight:700;'>" +
                   "<span>Total Due</span><span style='font-family:monospace;'>&#8377;" + totalDue.toFixed(2) + "</span>" +
@@ -2356,10 +2183,9 @@
     );
   }
 
-  function printBill() {
-    if (!bEl.printArea) return;
-    bEl.printArea.innerHTML = buildReceiptHtml(null);
-    window.print();
+  async function printBill() {
+    if (billSaveInFlight || !bState.currentBillId) return;
+    await loadAndPrintBill(bState.currentBillId);
   }
 
   // -------------------------------------------------------------------------
@@ -2393,8 +2219,15 @@
   // -------------------------------------------------------------------------
   // New Bill
   // -------------------------------------------------------------------------
-  function newBill() {
-    if (bState.lineItems.length) {
+  function newBill(savedSuccessfully) {
+    if (billSaveInFlight) return;
+    billLoadSequence += 1;
+    billVersion = null;
+    billRevision = null;
+    billCustomerId = null;
+    billIssuedName = null;
+    pendingBillOperation = null;
+    if (savedSuccessfully !== true && bState.lineItems.length) {
       if (!window.confirm("Start a new bill? Current bill will be discarded if not saved.")) {
         return;
       }
@@ -2409,6 +2242,7 @@
     if (bEl.notes)          bEl.notes.value          = "";
     if (bEl.gstPercent)     bEl.gstPercent.value     = "0";
     if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
+    if (bEl.billDateValue) bEl.billDateValue.textContent = todayLong();
     if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
     if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
     if (bEl.openingBalance)      bEl.openingBalance.value      = "";
@@ -2422,10 +2256,11 @@
 
     setSaveStatus("", "");
     setSaveCustomerStatus("", "");
+    notifyBillingChange("newBill");
     applyBillMode();
     renderLineItems();
     recalcTotals();
-    if (bEl.search) bEl.search.focus();
+    if (bEl.search && !document.body.classList.contains("phone-billing-active")) bEl.search.focus();
   }
 
   // -------------------------------------------------------------------------
@@ -2765,7 +2600,10 @@
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Importing…"; }
 
     try {
-      var data = await requestApi("/api/import-bills", { method: "POST", body: { rows: importParsedRows } });
+      var importFingerprint = JSON.stringify(importParsedRows);
+      if (!pendingImportOperation || pendingImportOperation.fingerprint !== importFingerprint) pendingImportOperation = { fingerprint: importFingerprint, id: operationId() };
+      var data = await requestApi("/api/import-bills", { method: "POST", body: { rows: importParsedRows, operationId: pendingImportOperation.id } });
+      pendingImportOperation = null;
       var msg = "✅ Imported: " + data.ok + " bill(s).";
       if (data.skipped) msg += "  Skipped (already exist): " + data.skipped + ".";
       if (data.errors)  msg += "  Errors: " + data.errors + ".";
@@ -3175,12 +3013,15 @@
   async function deleteBill(billId, billNumber) {
     if (!window.confirm("Delete bill " + billNumber + "? This cannot be undone.")) return;
     try {
-      await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "DELETE" });
+      if (billSaveInFlight) return;
+      var target = bState.billHistory.find(function(b) { return b.id === billId; });
+      await requestApi("/api/bills?id=" + encodeURIComponent(billId) + "&operationId=" + encodeURIComponent(operationId()) + (target && target.updated_at ? "&expectedUpdatedAt=" + encodeURIComponent(target.updated_at) : "") + (target && target.version ? "&expectedVersion=" + encodeURIComponent(target.version) : ""), { method: "DELETE" });
       // If the deleted bill is the one currently being edited, reset the form
       if (bState.currentBillId === billId) {
         bState.currentBillId     = null;
         bState.currentBillNumber = null;
         if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = "New Bill";
+    if (bEl.billDateValue) bEl.billDateValue.textContent = todayLong();
         if (bEl.printBillButton)   bEl.printBillButton.disabled = true;
         setSaveStatus("Deleted bill " + billNumber + ".", "is-info");
         applyBillMode();
@@ -3192,10 +3033,19 @@
   }
 
   async function loadBillForEdit(billId) {
+    if (billSaveInFlight) return;
+    var loadSequence = ++billLoadSequence;
     try {
       setBillingStatus("Loading bill for editing…", "is-info");
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill  = result.bill;
+      if (loadSequence !== billLoadSequence || billSaveInFlight) return;
+      pendingBillOperation = null;
+      billVersion = bill.updated_at;
+      billRevision = bill.version;
+      if (bEl.billDateValue) bEl.billDateValue.textContent = fmtDate(bill.created_at);
+      billCustomerId = bill.customer_id;
+      billIssuedName = bill.customer_name;
       noteBillLedger(bill);
       var items = result.items || [];
 
@@ -3233,7 +3083,7 @@
       var _storedPrev = (billPrev(bill.id) || 0);
       bState.currentCustomerBalance  = _storedPrev;
       bState.openingBalanceTouched   = false;
-      if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev > 0 ? String(_storedPrev) : "";
+      if (bEl.openingBalance) bEl.openingBalance.value = _storedPrev !== 0 ? String(_storedPrev) : "";
 
       // Mark the customer as already resolved so tryAutoFillCustomer doesn't
       // fire on blur and overwrite the opening balance with the customer's
@@ -3244,7 +3094,8 @@
           return c.name.toLowerCase() === bill.customer_name.toLowerCase();
         });
         if (_ci2 >= 0) bState.currentCustomerIdx = _ci2;
-        loadCustomerLastPrices(bill.customer_name);
+        var priceCustomer = _cl2.find(function(c) { return c.id === bill.customer_id; });
+        loadCustomerLastPrices(priceCustomer ? priceCustomer.name : bill.customer_name);
       }
 
       renderLineItems();
@@ -3373,7 +3224,7 @@
           bState.openingBalanceTouched  = false;
           if (bEl.openingBalance)      bEl.openingBalance.value      = "";
           if (bEl.savedCustomerSelect) bEl.savedCustomerSelect.value = "";
-          bState.customerLastPrices    = {};
+          bState.customerLastPrices    = Object.create(null);
           bState.customerLastPricesFor = null;
           recalcPayment();
         }
@@ -3404,7 +3255,7 @@
         bState.currentCustomerBalance = parseFloat(c.balance) || 0;
         bState.openingBalanceTouched  = false;
         if (bEl.openingBalance) {
-          bEl.openingBalance.value = bState.currentCustomerBalance > 0 ? bState.currentCustomerBalance : "";
+          bEl.openingBalance.value = bState.currentCustomerBalance !== 0 ? bState.currentCustomerBalance : "";
         }
         recalcPayment();
         syncSelectedCustomerBalanceSoon();
@@ -3417,7 +3268,13 @@
     if (bEl.search) {
       bEl.search.addEventListener("input", handleSearchInput);
       bEl.search.addEventListener("blur", function () {
-        setTimeout(function () { hideDropdown(); }, 200);
+        setTimeout(function () {
+          // A quick return to search must not close newly rendered results.
+          if (document.activeElement !== bEl.search &&
+              !(bEl.dropdown && bEl.dropdown.contains(document.activeElement))) {
+            hideDropdown();
+          }
+        }, 200);
       });
       bEl.search.addEventListener("keydown", function (e) {
         var dropdownOpen = bEl.dropdown && !bEl.dropdown.classList.contains("hidden");
@@ -3454,7 +3311,7 @@
     // GST / round-off / received amount recalculation
     if (bEl.gstPercent)     bEl.gstPercent.addEventListener("input",    recalcTotals);
     if (bEl.receivedAmount) {
-      bEl.receivedAmount.addEventListener("input", recalcPayment);
+      bEl.receivedAmount.addEventListener("input", function () { recalcPayment(); notifyBillingChange("received"); });
       // The totals already ignore a negative or unparseable entry; put the
       // field itself straight once the user leaves it, so what is on screen is
       // what the bill will carry.
@@ -3463,6 +3320,7 @@
         var typed = (bEl.receivedAmount.value || "").trim();
         if (typed !== "" && String(clean) !== typed) bEl.receivedAmount.value = String(clean);
         recalcPayment();
+        notifyBillingChange("received");
       });
     }
 
@@ -3491,11 +3349,13 @@
     renderLineItems();
     recalcTotals();
     loadBillHistory();
-    refreshSavedCustomers();
+    refreshSavedCustomers().catch(function () { /* visible error already displayed */ });
     loadSoldCounts();
 
     // A bill always starts with a medicine, so start with the cursor there.
-    setTimeout(function () { if (bEl.search) bEl.search.focus(); }, 0);
+    setTimeout(function () {
+      if (bEl.search && !document.body.classList.contains("phone-billing-active")) bEl.search.focus();
+    }, 0);
   }
 
   // -------------------------------------------------------------------------
@@ -3591,5 +3451,89 @@
   /** Called by app.js on every renderPage() — keeps header in sync */
   window.__renderBillingPage = function () {
     // No-op: header session is managed by app.js renderHeaderSession()
+  };
+  // The phone screens use the same bill, customer events and save path as the
+  // counter UI. Item edits stay in a draft until the user saves that item.
+  window.MedicineBilling = {
+    ready: function () { return bState.initialized && isAdmin(); },
+    snapshot: function () {
+      return {
+        items: bState.lineItems.map(function (item) { return Object.assign({}, item); }),
+        customers: loadSavedCustomers().map(function (customer) { return Object.assign({}, customer); }),
+        id: bState.currentBillId,
+        number: bState.currentBillNumber || "New bill",
+        date: bEl.billDateValue ? bEl.billDateValue.textContent : "",
+        customerName: bEl.customerName.value,
+        customerPhone: bEl.customerPhone.value,
+        notes: bEl.notes.value,
+        gstPercent: bEl.gstPercent.value,
+        received: receivedAmountValue(),
+        previousBalance: bState.currentCustomerBalance || 0,
+        subtotal: bEl.subtotal.textContent,
+        tax: bEl.gstAmount.textContent,
+        total: bEl.grandTotal.textContent,
+        totalAmount: Number(bEl.grandTotal.textContent.replace(/[^0-9.-]/g, "")),
+        balance: bEl.balanceDue.textContent,
+        roundOff: bEl.roundOffAmount.textContent,
+        saving: bEl.saveBillButton.disabled,
+        status: bEl.saveStatus.textContent,
+        statusTone: bEl.saveStatus.className,
+        customerStatus: bEl.saveCustomerStatus.textContent,
+        error: bEl.status.classList.contains("is-error") ? bEl.status.textContent : "",
+      };
+    },
+    setField: function (field, value, eventName) {
+      if (billSaveInFlight) return;
+      var fields = { customerName: bEl.customerName, customerPhone: bEl.customerPhone,
+        notes: bEl.notes, gstPercent: bEl.gstPercent, received: bEl.receivedAmount,
+        openingBalance: bEl.openingBalance, savedCustomer: bEl.savedCustomerSelect };
+      var input = fields[field];
+      if (!input) return;
+      input.value = value;
+      input.dispatchEvent(new Event(eventName || "input", { bubbles: true }));
+    },
+    search: function (query) { return rankSearchResults(state.items, query.toLowerCase().trim()).slice(0, 40); },
+    draft: function (medicineId) {
+      var medicine = state.items.find(function (item) { return item.id === medicineId; });
+      if (!medicine) return null;
+      var key = (medicine.medicineName || "").toLowerCase().trim();
+      var chosen = pickSellPrice(medicine, bState.customerLastPrices[key], bState.soldCounts[key]);
+      var purchase = medicine.purchasePrice != null ? medicine.purchasePrice : medicine.rate;
+      return { medicineId: medicine.id, medicineName: medicine.medicineName, quantity: 1,
+        sellPrice: Number(chosen.sellPrice) || 0, purchasePrice: purchase == null ? null : Number(purchase),
+        mrp: medicine.mrp, markupPercent: computeMarkup(purchase, chosen.sellPrice),
+        priceNote: priceNoteFor(chosen), location: medicine.location || "" };
+    },
+    commit: function (draft) {
+      if (billSaveInFlight) return false;
+      if (!draft || !Number.isFinite(Number(draft.quantity)) || Number(draft.quantity) <= 0 ||
+          !Number.isFinite(Number(draft.sellPrice)) || Number(draft.sellPrice) < 0) return false;
+      var item = draft._rowId && bState.lineItems.find(function (line) { return line._rowId === draft._rowId; });
+      if (draft._rowId && !item) return false;
+      if (!item) {
+        var medicine = state.items.find(function (line) { return line.id === draft.medicineId; });
+        if (!medicine) return false;
+        addLineItem(medicine);
+        item = bState.lineItems[bState.lineItems.length - 1];
+      }
+      item.quantity = Number(draft.quantity);
+      if (item.sellPrice !== Number(draft.sellPrice)) item.priceNote = "";
+      item.sellPrice = Number(draft.sellPrice);
+      item.mrp = draft.mrp === "" || draft.mrp == null ? null : Number(draft.mrp);
+      item.markupPercent = computeMarkup(item.purchasePrice, item.sellPrice);
+      renderLineItems();
+      recalcTotals();
+      return true;
+    },
+    remove: function(id) { if (!billSaveInFlight) removeLineItem(id); },
+    editBill: loadBillForEdit,
+    newBill: newBill,
+    save: async function (andNew) {
+      await saveBill();
+      var success = bEl.saveStatus.classList.contains("is-ok");
+      if (success && andNew) newBill(true);
+      return success;
+    },
+    receipt: function () { if (bState.currentBillId) return viewBillInModal(bState.currentBillId); },
   };
 })();

@@ -659,12 +659,26 @@ async function requestApi(path, options = {}) {
     try {
       payload = JSON.parse(text);
     } catch {
+      if (response.ok) {
+        const error = new Error("The server reply was incomplete. The save is unconfirmed; retry the same operation.");
+        error.status = 502;
+        error.code = "INVALID_API_RESPONSE";
+        throw error;
+      }
       payload = {};
     }
+  } else if (response.ok && response.status !== 204) {
+    const error = new Error("The server reply was empty. The save is unconfirmed; retry the same operation.");
+    error.status = 502;
+    error.code = "INVALID_API_RESPONSE";
+    throw error;
   }
 
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed (${response.status}).`);
+    const error = new Error(payload.error || `Request failed (${response.status}).`);
+    error.status = response.status;
+    error.code = payload.code;
+    throw error;
   }
 
   return payload;

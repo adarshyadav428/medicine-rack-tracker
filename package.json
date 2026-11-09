@@ -1,0 +1,6 @@
+{
+  "name": "medicine-rack-tracker",
+  "private": true,
+  "scripts": { "test": "node tests/run-all.js" },
+  "devDependencies": { "@electric-sql/pglite": "0.5.15" }
+}

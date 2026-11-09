@@ -156,7 +156,8 @@ function fakeInput() {
 
   // The line total is sell x qty and has nothing to do with markup.
   const render = grab("      var lineTotal =", "\n");
-  eq("line total is sell x qty only", render.includes("item.sellPrice * item.quantity"), true);
+  const lineMoney = new Function(src.slice(src.indexOf("  function lineMoney("), src.indexOf("  function round2(")) + "return lineMoney;")();
+  eq("line total uses sell price and fractional quantity, independently of markup", lineMoney(12.50, 1.5), 18.75);
   eq("line total ignores markup", render.includes("markup"), false);
 }
 

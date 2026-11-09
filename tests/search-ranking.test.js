@@ -8,11 +8,10 @@
  *
  * The scorers are lifted out of billing.js the same way batch-expiry.test.js
  * lifts normalizeExpiry; the soldcounts endpoint runs against the real
- * api/bills.js through the fake Supabase used elsewhere.
+ * api/bills.js through the staged PostgreSQL RPC fixture.
  */
 const fs = require("fs");
 const path = require("path");
-const Module = require("module");
 
 const PROJECT = path.resolve(__dirname, "..");
 const src = fs.readFileSync(path.join(PROJECT, "billing.js"), "utf8");
@@ -158,85 +157,68 @@ function rank(api, names, query, extra = {}) {
 // ---------------------------------------------------------------------------
 // The soldcounts endpoint
 // ---------------------------------------------------------------------------
-const real = require(path.join(PROJECT, "lib/supabase-server.js"));
-const db = { bills: [], bill_items: [] };
-
-const fake = {
-  ...real,
-  getServerConfig: () => ({
-    enabled: true, projectUrl: "https://fake", anonKey: "a", serviceRoleKey: "s",
-    tableName: "medicines", roleTable: "user_roles", adminEmails: ["admin@test"],
-  }),
-  requireAuthContext: async () => ({ user: { id: "u1", email: "admin@test", role: "admin" } }),
-  callSupabaseRest: async (config, pathStr) => {
-    const [table, qs] = pathStr.split("?");
-    const params = new URLSearchParams(qs || "");
-    let rows = [...(db[table] || [])];
-    const order = params.get("order");
-    if (order && order.startsWith("created_at.desc")) {
-      rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-    }
-    const offset = parseInt(params.get("offset") || "0", 10);
-    const limit = parseInt(params.get("limit") || "1000", 10);
-    return rows.slice(offset, offset + limit);
-  },
-};
-
-const origLoad = Module._load;
-Module._load = function (request, parent, isMain) {
-  if (request.includes("supabase-server")) return fake;
-  return origLoad.apply(this, arguments);
-};
-const billsApi = require(path.join(PROJECT, "api/bills.js"));
-Module._load = origLoad;
-
-function call(query) {
-  return new Promise((resolve) => {
-    const req = { method: "GET", query, headers: {}, url: "/api/bills" };
-    const res = {
-      statusCode: 200,
-      setHeader() {},
-      end(body) { resolve({ status: this.statusCode, body: JSON.parse(body || "{}") }); },
-      writeHead(code) { this.statusCode = code; return this; },
-    };
-    billsApi(req, res);
-  });
-}
+const { createFixture } = require("./helpers/financial-fixture");
 
 (async () => {
-  db.bill_items = [
-    { medicine_name: "Dolo 650", sell_price: null, created_at: "2026-07-30" },
-    { medicine_name: "dolo 650", sell_price: "24.50", created_at: "2026-07-28" },
-    { medicine_name: "Crocin", sell_price: "31", created_at: "2026-07-20" },
-    { medicine_name: "  Dolo 650  ", sell_price: "19", created_at: "2026-06-01" },
-    { medicine_name: "", created_at: "2026-06-01" },
-    { medicine_name: null, created_at: "2026-06-01" },
-  ];
+  const fixture = await createFixture();
+  try {
+    await fixture.createCustomer("Counter");
+    const customerId = (await fixture.pg.query("SELECT id FROM public.customers WHERE name_key='counter'")).rows[0].id;
+    const rows = [
+      { name: "Dolo 650", price: 25.5, at: "2026-07-30T00:00:00Z" },
+      { name: "dolo 650", price: 24.5, at: "2026-07-28T00:00:00Z" },
+      { name: "Crocin", price: 31, at: "2026-07-20T00:00:00Z" },
+      { name: "  Dolo 650  ", price: 19, at: "2026-06-01T00:00:00Z" },
+      { name: "", price: 0, at: "2026-06-01T00:00:00Z" },
+    ];
+    const ids = [];
+    // Seed legacy, schema-valid rows directly. API creation intentionally rejects
+    // blank names; reads must still tolerate old empty-string medicine names.
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const header = (await fixture.pg.query(
+        "INSERT INTO public.bills(bill_number,customer_id,customer_name,subtotal,grand_total,created_by,created_at) VALUES($1,$2,'Counter',$3,$4,'fixture',$5) RETURNING id",
+        ["COUNT-" + index, customerId, row.price, Math.ceil(row.price), row.at]
+      )).rows[0];
+      ids.push(header.id);
+      await fixture.pg.query(
+        "INSERT INTO public.bill_items(bill_id,medicine_name,quantity,sell_price,line_total,created_at) VALUES($1,$2,1,$3,$3,$4)",
+        [header.id, row.name, row.price, row.at]
+      );
+    }
+    let result = await fixture.request("bills", "GET", { query: { soldcounts: "1" } });
+    const body = result.json;
+    eq("soldcounts responds 200", result.status, 200);
+    eq("counted case-insensitively", body.counts["dolo 650"].count, 3);
+    eq("other medicine counted separately", body.counts["crocin"].count, 1);
+    eq("blank legacy names are skipped", Object.keys(body.counts).sort(), ["crocin", "dolo 650"]);
+    eq("last sold uses the newest bill date", body.counts["dolo 650"].lastSoldAt.slice(0, 10), "2026-07-30");
+    eq("latest recorded sale supplies its rate", body.counts["dolo 650"].lastSellPrice, 25.5);
+    eq("last sell price for a single sale", body.counts["crocin"].lastSellPrice, 31);
+    eq("scanned count includes all persisted legacy lines", body.scanned, 5);
+    eq("not truncated on a small shop", body.truncated, false);
 
-  const { status, body } = await call({ soldcounts: "1" });
-  eq("soldcounts responds 200", status, 200);
-  eq("counted case-insensitively", body.counts["dolo 650"].count, 3);
-  eq("other medicine counted separately", body.counts["crocin"].count, 1);
-  eq("blank names are skipped", Object.keys(body.counts).sort(), ["crocin", "dolo 650"]);
-  eq("last sold is the newest, not the first row seen",
-    body.counts["dolo 650"].lastSoldAt, "2026-07-30");
-  // The counter needs the rate it actually went out at, not the newest row's
-  // blank — so a missing price falls through to the next sale.
-  eq("last sell price skips the blank and takes the next sale",
-    body.counts["dolo 650"].lastSellPrice, 24.5);
-  eq("last sell price for a single sale", body.counts["crocin"].lastSellPrice, 31);
-  eq("scanned count reported", body.scanned, 6);
-  eq("not truncated on a small shop", body.truncated, false);
+    let invalidPriceRejected = false;
+    try {
+      await fixture.pg.query(
+        "INSERT INTO public.bill_items(bill_id,medicine_name,quantity,sell_price,line_total) VALUES($1,'Invalid',1,NULL,0)",
+        [ids[0]]
+      );
+    } catch (error) { invalidPriceRejected = error.code === "23502"; }
+    eq("real schema rejects the null prices accepted by the old fake", invalidPriceRejected, true);
 
-  db.bill_items = [];
-  const empty = await call({ soldcounts: "1" });
-  eq("no sales yet is an empty map", empty.body.counts, {});
+    const edit = await fixture.updateBill(ids[3], {
+      items: [{ medicineName: "  Dolo 650  ", quantity: 1, sellPrice: 99 }],
+    });
+    eq("editing an older bill succeeds", edit.status, 200);
+    result = await fixture.request("bills", "GET", { query: { soldcounts: "1" } });
+    eq("editing an old line does not make its price the newest sale", result.json.counts["dolo 650"].lastSellPrice, 25.5);
 
-  // The badge and the weighting must agree on the key shape, or a medicine is
-  // ranked up while showing no badge.
-  eq("badge reads the same map",
-    src.includes("bState.soldCounts[medicineLower]"), true);
-
-  console.log(fails ? `\n${fails} FAILED` : "\nall search-ranking assertions passed");
-  process.exit(fails ? 1 : 0);
-})();
+    await fixture.pg.exec("TRUNCATE public.bill_items,public.bills CASCADE");
+    const empty = await fixture.request("bills", "GET", { query: { soldcounts: "1" } });
+    eq("no sales yet is an empty map", empty.json.counts, {});
+    eq("badge reads the same map", src.includes("bState.soldCounts[medicineLower]"), true);
+  } finally { await fixture.close(); }
+  console.log(fails ? "\n" + fails + " FAILED" : "\nall search-ranking assertions passed");
+  process.exitCode = fails ? 1 : 0;
+})().catch((error) => { console.error(error); process.exitCode = 1; });

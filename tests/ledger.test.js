@@ -128,14 +128,14 @@ const recvFor = (id) => received[id] || 0;
     eq("99.2 counts as 100", chain.finalBalance, 100);
   }
 
-  console.log("\n--- a past snapshot is never negative ---");
+  console.log("\n--- a past snapshot preserves customer credit ---");
   {
     received.d1 = 0;
-    // Customer is in credit today; the bill before it must still read 0, not -50.
+    // A 100 bill left 50 due, so the customer had 50 credit before the bill.
     const backward = Ledger.chainBackward(
       Ledger.buildTimeline([bill("d1", 1, 100)], [], "desc"), 50, recvFor
     );
-    eq("floored at zero", backward[0].previousBalance, 0);
+    eq("credit is retained", backward[0].previousBalance, -50);
   }
 
   console.log("\n--- an empty ledger is safe ---");

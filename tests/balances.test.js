@@ -1,284 +1,53 @@
-/** Exercises the repo's api/bills.js + api/customers.js against a fake Supabase. */
-const path = require("path");
-const Module = require("module");
-
-const PROJECT = path.resolve(__dirname, "..");
-const real = require(path.join(PROJECT, "lib/supabase-server.js"));
-
-const db = { bills: [], bill_items: [], payments: [], customers: [], medicines: [] };
-let seq = 0;
-const uid = (p) => `${p}-${++seq}`;
-
-function parseQuery(pathStr) {
-  const [table, qs] = pathStr.split("?");
-  return { table, params: new URLSearchParams(qs || "") };
-}
-
-function matches(row, params) {
-  for (const [key, raw] of params.entries()) {
-    if (["select", "order", "limit", "offset", "on_conflict"].includes(key)) continue;
-    if (raw.startsWith("eq.")) {
-      if (String(row[key]) !== raw.slice(3)) return false;
-    } else if (raw.startsWith("like.")) {
-      if (!String(row[key] || "").startsWith(raw.slice(5).replace(/\*/g, ""))) return false;
-    } else if (raw.startsWith("in.(")) {
-      if (!raw.slice(4, -1).split(",").map(decodeURIComponent).includes(String(row[key]))) return false;
-    } else if (raw === "not.is.null") {
-      if (row[key] === null || row[key] === undefined) return false;
-    }
-  }
-  return true;
-}
-
-const fake = {
-  ...real,
-  getServerConfig: () => ({
-    enabled: true, projectUrl: "https://fake", anonKey: "a", serviceRoleKey: "s",
-    tableName: "medicines", roleTable: "user_roles", adminEmails: ["admin@test"],
-  }),
-  requireAuthContext: async () => ({ user: { id: "u1", email: "admin@test", role: "admin" } }),
-  callSupabaseRest: async (config, pathStr, options = {}) => {
-    const { table, params } = parseQuery(pathStr);
-    const rows = db[table];
-    if (!rows) throw new Error("unknown table " + table);
-    const method = options.method || "GET";
-
-    if (method === "GET") {
-      let out = rows.filter((r) => matches(r, params));
-      const offset = parseInt(params.get("offset") || "0", 10);
-      const limit = parseInt(params.get("limit") || "100000", 10);
-      const order = params.get("order") || "";
-      if (order) {
-        const [col, dir] = order.split(".");
-        out = out.slice().sort((a, b) => {
-          const av = a[col], bv = b[col];
-          const c = String(av ?? "").localeCompare(String(bv ?? ""));
-          return dir === "desc" ? -c : c;
-        });
-      }
-      return out.slice(offset, offset + limit);
-    }
-
-    if (method === "POST") {
-      const body = Array.isArray(options.body) ? options.body : [options.body];
-      const conflict = params.get("on_conflict");
-      const merge = /merge-duplicates/.test(options.prefer || "");
-      const out = [];
-      for (const b of body) {
-        if (conflict && merge) {
-          const existing = rows.find((r) => String(r[conflict]) === String(b[conflict]));
-          if (existing) { Object.assign(existing, b); out.push(existing); continue; }
-        }
-        const row = { id: uid(table), created_at: new Date().toISOString(), ...b };
-        rows.push(row); out.push(row);
-      }
-      return out;
-    }
-
-    if (method === "PATCH") {
-      const t = rows.filter((r) => matches(r, params));
-      t.forEach((r) => Object.assign(r, options.body));
-      return t;
-    }
-
-    if (method === "DELETE") {
-      const removed = rows.filter((r) => matches(r, params));
-      db[table] = rows.filter((r) => !matches(r, params));
-      return removed;
-    }
-    throw new Error("unhandled " + method);
-  },
-};
-
-const origLoad = Module._load;
-Module._load = function (request) {
-  if (/supabase-server$/.test(request)) return fake;
-  return origLoad.apply(this, arguments);
-};
-
-const billsApi = require(path.join(PROJECT, "api/bills.js"));
-const customersApi = require(path.join(PROJECT, "api/customers.js"));
-
-function invoke(fn, method, { query = {}, body = null } = {}) {
-  return new Promise((resolve) => {
-    const req = { method, query, body, headers: {} };
-    const res = {
-      statusCode: 200, headers: {},
-      setHeader(k, v) { this.headers[k] = v; },
-      end(t) { resolve({ status: this.statusCode, json: JSON.parse(t || "{}") }); },
-    };
-    fn(req, res);
-  });
-}
-const bills = (m, o) => invoke(billsApi, m, o);
-const custs = (m, o) => invoke(customersApi, m, o);
-
-let fails = 0;
-function eq(label, actual, expected) {
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) fails++;
-  console.log(`${ok ? "PASS" : "FAIL"}  ${label}` +
-    (ok ? "" : `\n        expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`));
-}
-
-const item = (qty, price) => ([{ medicineName: "Paracetamol", sellPrice: price, quantity: qty }]);
-
-(async () => {
-  console.log("--- bill 1: Ramesh ₹300, pays ₹100 ---");
-  let r = await bills("POST", {
-    body: { customerName: "Ramesh", customerPhone: "98765", previousBalance: 0,
-            amountReceived: 100, items: item(30, 10) },
-  });
-  eq("grand_total", r.json.bill.grand_total, 300);
-  eq("previous_balance stored", r.json.bill.previous_balance, 0);
-  eq("amount_received stored", r.json.bill.amount_received, 100);
-  eq("balance_due stored", r.json.bill.balance_due, 200);
-
-  console.log("\n--- customer list derives the balance ---");
-  r = await custs("GET");
-  let ramesh = r.json.customers.find((c) => c.name === "Ramesh");
-  eq("derived balance", ramesh.balance, 200);
-  eq("bill counted", ramesh.billCount, 1);
-  eq("implicit entry flagged", ramesh.unsaved, true);
-
-  console.log("\n--- saving the customer keeps the derived balance ---");
-  await custs("POST", { body: { name: "Ramesh", phone: "98765" } });
-  r = await custs("GET");
-  ramesh = r.json.customers.find((c) => c.name === "Ramesh");
-  eq("still 200 after saving", ramesh.balance, 200);
-  eq("no longer implicit", ramesh.unsaved, undefined);
-
-  console.log("\n--- bill 2 carries 200 forward, pays nothing ---");
-  r = await bills("POST", {
-    body: { customerName: "Ramesh", customerPhone: "98765", previousBalance: 200,
-            amountReceived: 0, items: item(15, 10) },
-  });
-  eq("balance_due = 200 + 150", r.json.bill.balance_due, 350);
-  r = await custs("GET");
-  eq("derived balance 350", r.json.customers.find((c) => c.name === "Ramesh").balance, 350);
-
-  console.log("\n--- a standalone payment of 150 ---");
-  db.payments.push({ id: uid("pay"), customer_name: "Ramesh", amount: 150,
-                     created_at: new Date().toISOString() });
-  r = await custs("GET");
-  eq("payment subtracted once, not twice",
-     r.json.customers.find((c) => c.name === "Ramesh").balance, 200);
-
-  console.log("\n--- opening balance is the anchor ---");
-  await custs("POST", { body: { name: "Sita", phone: "777", openingBalance: 500 } });
-  r = await custs("GET");
-  eq("opening only", r.json.customers.find((c) => c.name === "Sita").balance, 500);
-
-  await bills("POST", {
-    body: { customerName: "Sita", customerPhone: "777", previousBalance: 500,
-            amountReceived: 200, items: item(10, 10) },
-  });
-  r = await custs("GET");
-  eq("500 + 100 - 200", r.json.customers.find((c) => c.name === "Sita").balance, 400);
-
-  console.log("\n--- a plain phone edit must not wipe the opening balance ---");
-  await custs("POST", { body: { name: "Sita", phone: "888" } });
-  r = await custs("GET");
-  let sita = r.json.customers.find((c) => c.name === "Sita");
-  eq("opening balance survives", sita.openingBalance, 500);
-  eq("phone updated", sita.phone, "888");
-  eq("balance unchanged", sita.balance, 400);
-
-  console.log("\n--- name matching is case/space insensitive ---");
-  await bills("POST", {
-    body: { customerName: "  sita  ", previousBalance: 400, amountReceived: 0,
-            items: item(5, 10) },
-  });
-  r = await custs("GET");
-  const sitas = r.json.customers.filter((c) => c.name.toLowerCase().trim() === "sita");
-  eq("still one Sita", sitas.length, 1);
-  eq("balance 400 + 50", sitas[0].balance, 450);
-
-  console.log("\n--- bulk ledger repair rewrites snapshots ---");
-  const rBills = db.bills.filter((b) => b.customer_name === "Ramesh");
-  r = await bills("PUT", {
-    body: { ledgerUpdates: [
-      { id: rBills[0].id, previousBalance: 0,  amountReceived: 100, grandTotal: 300 },
-      { id: rBills[1].id, previousBalance: 200, amountReceived: 50, grandTotal: 150 },
-    ] },
-  });
-  eq("two bills updated", r.json.updated, 2);
-  eq("second bill received rewritten", rBills[1].amount_received, 50);
-  eq("second bill balance_due recomputed", rBills[1].balance_due, 300);
-  r = await custs("GET");
-  eq("repair flows into the derived balance",
-     r.json.customers.find((c) => c.name === "Ramesh").balance, 150);
-
-  console.log("\n--- editing a bill updates its stored ledger ---");
-  await bills("PUT", {
-    body: { id: rBills[0].id, customerName: "Ramesh", previousBalance: 0,
-            amountReceived: 300, items: item(30, 10) },
-  });
-  eq("received updated to 300", rBills[0].amount_received, 300);
-  r = await custs("GET");
-  eq("balance drops by the extra 200",
-     r.json.customers.find((c) => c.name === "Ramesh").balance, -50);
-
-  console.log("\n--- deleting a bill removes it from the balance ---");
-  await bills("DELETE", { query: { id: rBills[1].id } });
-  r = await custs("GET");
-  eq("only bill 1 left: 300 - 300 - 150 payment",
-     r.json.customers.find((c) => c.name === "Ramesh").balance, -150);
-
-  console.log("\n--- bulk import of legacy localStorage balances ---");
-  r = await custs("PUT", {
-    body: { customers: [
-      { name: "Old Customer", phone: "111", openingBalance: 1200 },
-      { name: "old customer", phone: "111", openingBalance: 999 }, // dupe, ignored
-    ] },
-  });
-  eq("deduped on import", r.json.imported, 1);
-  r = await custs("GET");
-  eq("imported opening balance",
-     r.json.customers.find((c) => c.name === "Old Customer").balance, 1200);
-
-  console.log("\n--- a new customer's opening balance is not lost ---");
-  // Mirrors the billing page: customer created with an opening balance at the
-  // same moment as their first bill.
-  await custs("POST", { body: { name: "Newcomer", phone: "555", openingBalance: 800 } });
-  await bills("POST", { body: { customerName: "Newcomer", customerPhone: "555",
-    previousBalance: 800, amountReceived: 100, items: item(20, 10) } });
-  r = await custs("GET");
-  const nc = r.json.customers.find((c) => c.name === "Newcomer");
-  eq("opening balance stored", nc.openingBalance, 800);
-  eq("balance = 800 + 200 - 100", nc.balance, 900);
-
-  console.log("\n--- re-saving a bill must not add it a second time ---");
-  // The billing page used to advance the customer's balance after each save
-  // and feed that back into the still-open bill, so the bill's own amount was
-  // counted twice — on screen, and again on the next save.
-  await custs("POST", { body: { name: "Vijay", phone: "222", openingBalance: 0 } });
-  r = await bills("POST", { body: { customerName: "Vijay", previousBalance: 0,
-    amountReceived: 0, items: item(10, 10) } });
-  const vBill = r.json.bill.id;
-  r = await custs("GET");
-  eq("after the first save", r.json.customers.find((c) => c.name === "Vijay").balance, 100);
-
-  // Re-save with no changes: previousBalance is still this bill's own prev (0).
-  await bills("PUT", { body: { id: vBill, customerName: "Vijay",
-    previousBalance: 0, amountReceived: 0, items: item(10, 10) } });
-  r = await custs("GET");
-  eq("re-save leaves it at 100", r.json.customers.find((c) => c.name === "Vijay").balance, 100);
-  eq("bill's previous_balance not inflated",
-     db.bills.find((b) => b.id === vBill).previous_balance, 0);
-
-  // Adding a medicine on an edit adds only that medicine.
-  await bills("PUT", { body: { id: vBill, customerName: "Vijay",
-    previousBalance: 0, amountReceived: 0,
-    items: [{ medicineName: "Paracetamol", sellPrice: 10, quantity: 10 },
-            { medicineName: "Crocin", sellPrice: 10, quantity: 5 }] } });
-  r = await custs("GET");
-  eq("edit adds 50, not 150", r.json.customers.find((c) => c.name === "Vijay").balance, 150);
-
-  console.log("\n--- validation ---");
-  eq("rejects nameless customer", (await custs("POST", { body: { name: "" } })).status, 400);
-  eq("rejects empty import", (await custs("PUT", { body: { customers: [] } })).status, 400);
-
-  console.log(`\n${fails === 0 ? "ALL TESTS PASSED" : fails + " TEST(S) FAILED"}`);
-  process.exit(fails ? 1 : 0);
-})();
+"use strict";
+const {createFixture}=require("./helpers/financial-fixture"),{check}=require("./helpers/check");
+const item=(price,quantity=1)=>[{medicineName:"Test",sellPrice:price,quantity}];
+(async()=>{
+ const f=await createFixture();
+ try{
+  let c=(await f.createCustomer("Ramesh",200)).json.customer;
+  check("opening anchor stored",c.balance,200);
+  let b1=await f.createBill("Ramesh",item(1000),{amountReceived:300});
+  check("new bill succeeds",b1.status,200);check("first bill previous balance",b1.json.bill.previous_balance,200);check("received persisted",b1.json.bill.amount_received,300);check("first consolidated balance",b1.json.customer.balance,900);
+  let pay=await f.request("payments","POST",{body:{customer_id:c.id,amount:200,operationId:f.operationId()}});
+  check("standalone receipt succeeds",pay.status,200);check("both receipt paths consolidate",pay.json.customer.balance,700);
+  let b2=await f.createBill("Ramesh",item(400),{amountReceived:100});
+  check("next bill snapshot includes standalone receipt",b2.json.bill.previous_balance,700);check("full requested sequence ends at 1000",b2.json.customer.balance,1000);
+  c=await f.customer("Ramesh");
+  const metadata=await f.request("customers","POST",{body:{id:c.id,name:"Ramesh",phone:"888",operationId:f.operationId()}});
+  check("phone edit succeeds",metadata.status,200);check("phone edit preserves anchor",metadata.json.customer.openingBalance,200);check("phone edit preserves debt",metadata.json.customer.balance,1000);
+  const renamed=await f.request("customers","POST",{body:{id:c.id,originalName:"Ramesh",name:"Renamed",phone:"888",operationId:f.operationId()}});
+  check("rename preserves stable identity",renamed.json.customer.id,c.id);check("rename preserves debt",renamed.json.customer.balance,1000);
+  const scoped=await f.request("bills","GET",{query:{customerId:c.id}});
+  check("rename preserves linked history",scoped.json.bills.length,2);check("rename preserves issued customer snapshot",scoped.json.bills[0].customer_name,"Ramesh");
+  check("old name alias resolves same identity",(await f.customer("  ramesh ")).id,c.id);
+  const archived=await f.request("customers","DELETE",{query:{id:c.id,operationId:f.operationId()}});
+  check("delete archives the profile",archived.json.customer.archived,true);check("archive preserves opening anchor",archived.json.customer.openingBalance,200);check("archive preserves all debt",archived.json.customer.balance,1000);
+  check("archived profile excluded from active picker",(await f.request("customers","GET")).json.customers.length,0);
+  check("archived receipt write rejected",(await f.request("payments","POST",{body:{customer_id:c.id,amount:1,operationId:f.operationId()}})).status,409);
+  const restored=await f.request("customers","POST",{body:{id:c.id,name:"Renamed",phone:"888",restore:true,expectedVersion:archived.json.customer.version,operationId:f.operationId()}});
+  check("restore preserves identity",restored.json.customer.id,c.id);check("restore preserves balance",restored.json.customer.balance,1000);
+  c=restored.json.customer;
+  const adjustment={id:c.id,name:c.name,phone:c.phone,openingBalance:123-(c.balance-c.openingBalance),expectedBalance:c.balance,expectedOpeningBalance:c.openingBalance,expectedVersion:c.version,operationId:f.operationId()};
+  const adjusted=await f.request("customers","POST",{body:adjustment});
+  check("guarded adjustment sets intended derived balance",adjusted.json.customer.balance,123);
+  check("stale adjustment rejected",(await f.request("customers","POST",{body:{...adjustment,operationId:f.operationId()}})).status,409);
+  check("manual bill opening cannot silently diverge",(await f.createBill("Renamed",item(100),{previousBalance:999})).status,409);
+  check("re-save does not double-count",(await f.updateBill(b2.json.bill.id)).json.customer.balance,123);
+  const edit=await f.updateBill(b1.json.bill.id,{amountReceived:500});
+  check("receipt edit recomputes once",edit.json.customer.balance,-77);
+  const removed=await f.request("payments","DELETE",{query:{id:pay.json.payment.id,customerId:c.id,operationId:f.operationId()}});
+  check("deleting payment restores its contribution",removed.json.customer.balance,123);
+  const current=(await f.request("bills","GET",{query:{id:b2.json.bill.id}})).json.bill;
+  check("deleting bill keeps authoritative anchor",(await f.request("bills","DELETE",{query:{id:current.id,expectedUpdatedAt:current.updated_at,expectedVersion:current.version,operationId:f.operationId()}})).json.customer.balance,-177);
+  const newcomer=await f.createBill("Newcomer",item(100),{initialOpeningBalance:200});
+  check("new opening and first bill commit atomically",newcomer.json.customer.balance,300);check("new opening is durable",newcomer.json.customer.openingBalance,200);
+  await f.createBill("Legacy",item(1000),{amountReceived:200});
+  c=await f.customer("Legacy");
+  const legacy={customers:[{name:"Legacy",phone:"",balance:800,expectedBalance:c.balance,expectedOpeningBalance:c.openingBalance,expectedVersion:c.version}],mode:"reconcile",operationId:f.operationId()};
+  const imported=await f.request("customers","PUT",{body:legacy});
+  check("legacy running balance is reconciled not added",imported.json.customers[0].balance,800);check("existing activity backed out from opening",imported.json.customers[0].openingBalance,0);
+  check("legacy replay is exactly once",(await f.request("customers","PUT",{body:legacy})).json.imported,1);
+  check("unsafe old legacy import rejected",(await f.request("customers","PUT",{body:{customers:[{name:"X",openingBalance:800}],operationId:f.operationId()}})).status,409);
+  check("missing customer name rejected",(await f.request("customers","POST",{body:{name:"",operationId:f.operationId()}})).status,400);
+ }finally{await f.close();}
+})().catch(e=>{console.error("FAIL",e);process.exitCode=1;});

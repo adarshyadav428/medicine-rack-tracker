@@ -1,0 +1,146 @@
+#phone-billing { display: none; }
+#phone-billing [hidden] { display: none !important; }
+
+/* The phone keeps the website's design tokens and its existing billing engine. */
+@media screen and (max-width: 980px) and (pointer: coarse) {
+  body.phone-billing-active {
+    padding: 0;
+    color: var(--ink);
+    background: radial-gradient(circle at 100% 0, #dff3f180, transparent 42%), var(--bg);
+    font-family: var(--font-sans);
+    letter-spacing: normal;
+  }
+  body.phone-billing-active > .site-header,
+  body.phone-billing-active > .page-shell,
+  body.phone-billing-active > .bg-layer,
+  body.phone-billing-active > .transition-curtain { display: none; }
+  body.phone-billing-active #phone-billing { display: block; min-height: 100dvh; }
+  #phone-billing button, #phone-billing input { font: inherit; }
+  #phone-billing button { cursor: pointer; touch-action: manipulation; }
+  #phone-billing button:disabled { cursor: default; opacity: 0.5; }
+  #phone-billing button:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+
+  #phone-billing .phone-sale-header {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-height: 76px;
+    padding: calc(12px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 12px max(14px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--line);
+    background: #ffffffed;
+    backdrop-filter: blur(12px);
+  }
+  .phone-header-copy { min-width: 0; flex: 1; }
+  .phone-header-copy > span { display: flex; align-items: center; gap: 6px; font-size: 0.6rem; letter-spacing: 0.1em; font-weight: 700; text-transform: uppercase; color: var(--brand); }
+  .phone-header-copy > span::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+  .phone-sale-header h1 { margin: 3px 0 0; font-size: 1.08rem; line-height: 1.35; font-weight: 800; color: var(--ink); }
+  .phone-icon { display: grid; place-items: center; width: 42px; min-height: 44px; flex-shrink: 0; border: 1px solid #cce4df; border-radius: 12px; color: var(--brand-strong); background: var(--brand-soft); font-size: 1.7rem !important; }
+  #phone-billing[data-screen="sale"] .phone-icon { font-size: 1.1rem !important; }
+  .phone-history-link { min-height: 44px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 12px; padding: 8px 11px; font-size: 0.72rem !important; font-weight: 600 !important; }
+  .phone-menu { position: fixed; z-index: 60; top: calc(80px + env(safe-area-inset-top)); left: 14px; right: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-soft); border-radius: var(--radius-lg); padding: 6px; }
+  .phone-menu button, .phone-menu a { display: block; text-align: left; width: 100%; padding: 14px; background: none; border: 0; border-radius: 10px; color: var(--ink); text-decoration: none; min-height: 44px; font-size: 0.85rem; }
+  .phone-menu button:hover, .phone-menu a:hover { background: var(--brand-soft); }
+  .phone-screen { padding-bottom: calc(106px + env(safe-area-inset-bottom)); }
+
+  .phone-invoice-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 13px 15px; margin: 14px; border: 1px solid #cce4df; border-radius: var(--radius-lg); background: linear-gradient(135deg, #f7fcfb, var(--brand-soft)); font-size: 0.78rem; }
+  .phone-invoice-strip > div { display: grid; gap: 5px; min-width: 0; }
+  .phone-invoice-strip > div + div { border-left: 1px solid #c4ded9; padding-left: 14px; }
+  .phone-invoice-strip small { color: var(--brand); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .phone-invoice-strip strong { color: var(--brand-strong); font-family: var(--font-mono); font-size: 0.76rem; overflow-wrap: anywhere; }
+  #phone-date { color: var(--muted); font-size: 0.67rem; line-height: 1.5; }
+  .phone-sale-customer, .phone-billed-section, .phone-sale-payment, .phone-item-fields, .phone-item-totals { padding: 16px; margin: 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--surface); box-shadow: 0 3px 12px #11273005; }
+  .phone-sale-customer { border-top: 3px solid var(--brand); }
+  .phone-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+  .phone-card-heading h2, .phone-payment-heading { margin: 0; font-size: 0.9rem; font-weight: 700; }
+  .phone-party-balance { display: grid; gap: 4px; text-align: right; color: var(--muted); font-size: 0.65rem; }
+  .phone-party-balance strong { font-size: 0.75rem; font-family: var(--font-mono); font-weight: 700; color: var(--brand-strong); }
+  #phone-billing .phone-field { display: block; margin: 12px 0; width: 100%; min-width: 0; border: 0; font-weight: 400; text-transform: none; letter-spacing: normal; }
+  #phone-billing .phone-field > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.75rem; font-weight: 600; line-height: 1.45; }
+  #phone-billing .phone-field input { display: block; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; width: 100%; max-width: 100%; min-height: 48px; font-size: 16px; color: var(--ink); background: var(--surface); box-shadow: none; outline: none; }
+  #phone-billing .phone-field input:focus { border-color: #62a99f; box-shadow: var(--ring); }
+  #phone-billing .phone-field input::placeholder { color: #88999f; font-size: 0.82rem; }
+  #phone-billing .phone-field input:disabled { background: var(--bg); color: var(--muted); }
+  .phone-sale-options, .phone-item-details { font-size: 0.73rem; color: var(--muted); }
+  .phone-sale-options summary, .phone-item-details summary { padding: 10px 0; min-height: 40px; cursor: pointer; }
+  .phone-section-band { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink); background: none; padding: 0; font-size: 0.85rem; font-weight: 700; margin: 0 0 14px; }
+  .phone-section-band > span { display: grid; place-items: center; min-width: 26px; height: 26px; border-radius: 9px; background: var(--brand-soft); color: var(--brand-strong); font-family: var(--font-mono); font-size: 0.7rem; }
+  .phone-billed-item { display: block; width: 100%; padding: 12px; margin: 9px 0; border: 1px solid var(--line); border-left: 3px solid #8fc6bc; border-radius: 12px; background: var(--surface-alt); color: var(--ink); text-align: left; }
+  .phone-billed-item:active { border-color: var(--brand); background: var(--brand-soft); }
+  .phone-item-title, .phone-item-calculation { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .phone-item-title { font-weight: 700; font-size: 0.87rem; line-height: 1.5; }
+  .phone-item-title > span { overflow-wrap: anywhere; }
+  .phone-item-title small { display: inline-grid; place-items: center; min-width: 19px; height: 19px; margin-right: 3px; font-size: 0.6rem; color: var(--brand-strong); background: var(--brand-soft); border-radius: 6px; font-family: var(--font-mono); font-weight: 700; }
+  .phone-item-title > strong { white-space: nowrap; font-family: var(--font-mono); font-size: 0.84rem; font-weight: 700; color: var(--brand-strong); }
+  .phone-item-calculation { font-size: 0.73rem; color: var(--muted); margin-top: 10px; }
+  .phone-item-calculation > span:first-child { font-family: var(--font-mono); }
+  .phone-edit-hint { white-space: nowrap; font-weight: 600; color: var(--brand); }
+  .phone-bill-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 16px 0; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 0.7rem; color: var(--muted); }
+  .phone-bill-stats span:nth-child(even) { text-align: right; }
+  .phone-bill-stats b { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 400; }
+  .phone-add-items { display: flex; gap: 8px; align-items: center; justify-content: center; width: 100%; min-height: 48px; border: 1px dashed #83bab0; border-radius: 12px; background: #f1faf7; color: var(--brand-strong); font-size: 0.82rem !important; font-weight: 700 !important; }
+  .phone-add-items > span { font-size: 1.25rem; line-height: 1; }
+  .phone-empty { padding: 16px 12px; color: var(--muted); font-size: 0.76rem; line-height: 1.7; text-align: center; }
+  .phone-payment-heading { font-size: 0.85rem; margin-bottom: 14px; }
+  .phone-sale-total { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px; margin: 0 0 14px; border-radius: 12px; background: linear-gradient(135deg, var(--brand), var(--brand-strong)); color: #fff; }
+  .phone-sale-total > span { font-size: 0.67rem; font-weight: 600; }
+  .phone-sale-total > strong { font-family: var(--font-mono); font-size: 1.2rem; overflow-wrap: anywhere; }
+  .phone-payment-switch { display: flex; gap: 6px; border-radius: 12px; padding: 4px; border: 1px solid var(--line); background: var(--bg); }
+  .phone-payment-switch button { flex: 1; border: 0; min-height: 40px; padding: 8px; border-radius: 9px; color: var(--muted); background: transparent; font-size: 0.72rem !important; font-weight: 600 !important; }
+  .phone-payment-switch button[aria-pressed="true"] { background: var(--surface); color: var(--brand-strong); box-shadow: 0 2px 6px #1020270f; }
+  .phone-payment-switch button[aria-pressed="true"]::before { content: "●"; color: var(--brand); margin-right: 6px; font-size: 0.6rem; }
+  .phone-balance-line { display: flex; justify-content: space-between; gap: 12px; border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 4px; color: var(--muted); font-size: 0.67rem; }
+  .phone-balance-line strong { color: #9a5a00; font-family: var(--font-mono); font-size: 0.73rem; white-space: nowrap; }
+  .phone-two-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .phone-edit-message { margin: 12px 14px; padding: 12px; background: #fff6e7; border: 1px solid #efdec4; color: #946326; font-size: 0.73rem; line-height: 1.65; border-radius: 12px; }
+  #phone-billing .phone-feedback { margin: 10px 14px; font-size: 0.75rem; line-height: 1.65; border: 0; border-radius: 5px; padding: 0; background: transparent; overflow-wrap: anywhere; }
+  #phone-billing .phone-feedback:empty { display: none; }
+  #phone-billing .phone-feedback.is-warn, #phone-billing .phone-feedback.is-error { color: var(--danger); }
+  #phone-billing .phone-feedback.is-ok { color: var(--brand-strong); }
+
+  .phone-sale-footer { position: fixed; z-index: 50; bottom: var(--phone-keyboard-offset, 0px); left: 0; right: 0; display: grid; grid-template-columns: 1fr 1.2fr 44px; gap: 8px; padding: 12px max(14px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: #fffffff5; border-top: 1px solid var(--line); box-shadow: 0 -6px 24px #11273008; backdrop-filter: blur(12px); }
+  #phone-billing[data-screen="search"] .phone-sale-footer { grid-template-columns: 1fr; }
+  #phone-billing[data-screen="item"] .phone-sale-footer { grid-template-columns: 1fr 1.2fr; }
+  .phone-sale-footer button { min-height: 48px; border: 1px solid transparent; border-radius: 12px; font-size: 0.75rem !important; font-weight: 700 !important; padding: 10px; }
+  .phone-sale-footer .phone-secondary { background: var(--surface); color: var(--brand-strong); border-color: #b9d8d1; }
+  .phone-primary { background: linear-gradient(135deg, var(--brand), var(--brand-strong)); color: #fff; box-shadow: 0 4px 10px #075f5926; }
+  .phone-sale-footer .phone-receipt { background: var(--brand-soft); border-color: #c9e2dc; color: var(--brand-strong); font-size: 1.3rem !important; }
+
+  #phone-search-screen { padding: 0 14px calc(100px + env(safe-area-inset-bottom)); }
+  .phone-screen-intro { font-size: 0.76rem; line-height: 1.7; color: var(--muted); margin: 18px 2px; }
+  #phone-billing .phone-search-field { position: sticky; top: calc(76px + env(safe-area-inset-top)); background: var(--bg); z-index: 4; padding: 10px 2px; margin: 0; }
+  .phone-search-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 2px; font-size: 0.75rem; }
+  .phone-search-heading span { color: var(--muted); font-size: 0.65rem; }
+  .phone-search-results { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+  .phone-search-item { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--line); background: var(--surface); text-align: left; padding: 16px 14px; color: var(--ink); }
+  .phone-search-item:last-child { border: 0; }
+  .phone-search-item:active { background: var(--brand-soft); }
+  .phone-search-item > strong { display: block; font-size: 0.84rem; font-weight: 700; margin-bottom: 8px; overflow-wrap: anywhere; }
+  .phone-search-item > span { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.65rem; color: var(--muted); font-family: var(--font-mono); }
+  .phone-search-item > span > span + span { color: var(--brand); }
+  .phone-search-rack { padding: 2px 6px; background: var(--brand-soft); border-radius: 5px; }
+  .phone-location-chip { display: inline-block; margin: 0 0 6px; padding: 4px 8px; color: var(--brand-strong); background: var(--brand-soft); border-radius: 6px; font-size: 0.7rem; font-family: var(--font-mono); }
+  .phone-location-chip:empty { display: none; }
+  .phone-item-fields { border-top: 3px solid var(--brand); }
+  #phone-billing .phone-selected-name { margin-top: 0; }
+  .phone-selected-name strong { display: block; padding: 12px; border: 1px solid #c8e1da; background: #f0f9f6; border-radius: 10px; color: var(--brand-strong); font-size: 0.9rem; font-weight: 700; overflow-wrap: anywhere; }
+  #phone-billing .phone-item-fields input[type="number"] { font-family: var(--font-mono); }
+  .phone-item-fields .phone-two-fields { margin-top: 4px; }
+  .phone-price-note { padding: 8px 10px; border-radius: 8px; background: #fff6e8; color: #8f5a1f; font-size: 0.65rem; line-height: 1.6; }
+  .phone-price-note:empty { display: none; }
+  .phone-item-details { padding-top: 4px; border-top: 1px dashed var(--line); }
+  .phone-item-details p { font-size: 0.72rem; }
+  .phone-item-details p strong { font-family: var(--font-mono); color: var(--brand-strong); }
+  .phone-item-totals { background: linear-gradient(135deg, #f8fcfb, var(--brand-soft)); border-color: #c8e1da; }
+  .phone-item-totals h2 { font-size: 0.75rem; padding: 0; margin: 0 0 16px; font-weight: 700; color: var(--brand-strong); }
+  .phone-item-totals > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.7rem; color: var(--muted); }
+  .phone-item-totals strong { font-family: var(--font-mono); font-size: 1.2rem; color: var(--brand-strong); }
+  .phone-remove-item { display: block; margin: 18px auto; min-height: 44px; padding: 10px 16px; border: 1px solid #ebcdd0; background: #fff5f5; color: var(--danger); border-radius: 10px; font-size: 0.75rem !important; }
+  body.phone-billing-active.phone-billing-history > main.page-shell { display: block; margin: 14px auto; padding-bottom: 30px; }
+  body.phone-billing-history main.page-shell > :not(#bill-history-section) { display: none !important; }
+  body.phone-billing-history #bill-history-section { animation: none; transform: none; opacity: 1; }
+}
+
+@media print { #phone-billing { display: none !important; } }

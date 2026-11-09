@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c7a73" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Adarsh Bills" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <title>Adarsh Medicals | Billing</title>
     <meta name="description" content="Create and manage medicine bills for Adarsh Medicals — Thekma, Azamgarh." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12,6 +17,8 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css?v=20260807-custrequired" />
+    <link rel="stylesheet" href="mobile.css?v=20261031-compact" />
+    <link rel="stylesheet" href="phone-billing.css?v=20261031-adarsh" />
   </head>
   <body data-page="billing">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -41,6 +48,7 @@
     </header>
 
     <main class="page-shell">
+
 
       <!-- ── Page hero banner ───────────────────────────────────────── -->
       <section class="billing-page-hero fade-up">
@@ -208,7 +216,7 @@
 
           <div id="bill-items-table-wrap" class="hidden">
             <div class="bill-table-scroll">
-              <table class="bill-items-table">
+              <table class="bill-items-table" role="table" aria-label="Bill medicines">
                 <thead>
                   <tr>
                     <th style="min-width:160px;">Medicine</th>
@@ -340,6 +348,12 @@
 
         <p id="bill-save-status" class="status-message" style="margin-top:0.72rem;"></p>
       </section>
+
+      <details class="phone-install-help">
+        <summary>Use on your iPhone</summary>
+        <p>In Safari, tap Share, then Add to Home Screen. If shown, turn on Open as Web App, then tap Add. Open Adarsh Bills and sign in with your usual account.</p>
+        <p>Internet is required to load inventory and save bills. Saved bills and customers use the same shop database as your PC.</p>
+      </details>
 
       <!-- ── Bill history ───────────────────────────────────────────── -->
       <section class="panel fade-up delay-3" id="bill-history-section">
@@ -473,9 +487,10 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" crossorigin="anonymous"></script>
     <script src="sync-config.js"></script>
-    <script src="ledger.js?v=20260802-ledger"></script>
+    <script src="ledger.js?v=20261108-ledger-integrity"></script>
     <script src="medicine-sales.js?v=20260806-salesmemory"></script>
-    <script src="app.js?v=20260806-salesmemory"></script>
-    <script src="billing.js?v=20260807-custrequired"></script>
+    <script src="app.js?v=20261108-ledger-integrity"></script>
+    <script src="billing.js?v=20261108-ledger-integrity"></script>
+    <script src="phone-billing.js?v=20261108-ledger-integrity"></script>
   </body>
 </html>
