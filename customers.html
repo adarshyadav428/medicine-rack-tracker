@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c7a73" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Adarsh Bills" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <title>Adarsh Medicals | Customers</title>
     <meta name="description" content="Customer profiles, outstanding balances, and payment history — Adarsh Medicals." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12,6 +17,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css?v=20260605-customers" />
+    <link rel="stylesheet" href="mobile.css?v=20261031-compact" />
   </head>
   <body data-page="customers">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -177,7 +183,7 @@
     </main>
 
     <script src="sync-config.js"></script>
-    <script src="app.js?v=20260605-customers"></script>
-    <script src="customers.js?v=20260807-balancesync"></script>
+    <script src="app.js?v=20261108-ledger-integrity"></script>
+    <script src="customers.js?v=20261108-ledger-integrity"></script>
   </body>
 </html>

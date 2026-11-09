@@ -1,9 +1,10 @@
 # Tests
 
-Run everything:
+Install the pinned embedded PostgreSQL test dependency, then run the Node suites:
 
 ```bash
-node tests/run-all.js
+npm ci
+npm test
 ```
 
 Or a single file:
@@ -12,16 +13,17 @@ Or a single file:
 node tests/balances.test.js
 ```
 
-No dependencies and no install step — plain Node, no test framework.
+Tests use plain Node assertions plus pinned @electric-sql/pglite for actual PostgreSQL transaction/constraint checks. No live credentials or migrations are required.
 
 ## How they work
 
-The API handlers are `require`d directly, with `lib/supabase-server` swapped for
-an in-memory fake via a `Module._load` hook. The fake understands enough
-PostgREST syntax to be meaningful: `eq.`, `ilike.`, `like.`, `in.()`,
-`limit`/`offset` paging, `on_conflict` with `merge-duplicates`, and the unique
-constraint on `bill_number`. Nothing touches a real database, so the suite is
-safe to run at any time.
+Financial handlers run through `tests/helpers/financial-fixture.js`, which applies
+source schema and the staged atomic-ledger migration to an ephemeral PGlite
+database. Real RPC transactions, rollback, operation replay, versions, stable
+customer identity, full invoice reads, and permissions are exercised. The Auth
+service is mocked for those functional tests; this is not deployed Auth/RLS
+verification. Other isolated suites still use purpose-specific local fixtures.
+No test accesses the live shop database.
 
 `pdf-import.test.js` is different — it lifts the parsing functions out of
 `billing.js` by source extraction and runs them directly, because those
@@ -53,9 +55,29 @@ column layouts including this app's own receipt format; names containing
 digits; parsed zeros not being rewritten; and that a reprinted receipt carries
 the bill's own date rather than today's.
 
+## Browser checks
+
+The separate `phone-billing.browser.cjs` suite checks the phone Sale → Search →
+Item editor flow against a local fixture API. It covers customer auto-fill and
+balances, draft cancellation, quantity validation, Cash/Credit and partial
+payments, failed saves, history edits, Save & New, and desktop isolation. It
+does not access the live shop database.
+
+Run it with Playwright available to Node:
+
+```sh
+node tests/phone-billing.browser.cjs
+```
+
+For an externally installed Playwright package, set `PLAYWRIGHT_MODULE` to its
+module path. Optionally set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an existing
+Chromium executable. Screenshots are saved under the system temporary directory
+in `medicine-mobile-qa`. Real iPhone keyboard and share-sheet behavior still
+needs checking on the device.
+
 ## What is NOT covered
 
-These run in Node, so anything needing a browser is untested:
+The Node-only `*.test.js` suites do not cover browser integration:
 
 - pdf.js loading from the CDN
 - `navigator.share` on a phone
@@ -69,3 +91,27 @@ Changes to those paths still need checking by hand in the app.
 Drop a `*.test.js` file in this folder. `run-all.js` picks it up automatically.
 Print `PASS`/`FAIL` at the start of a line and exit non-zero on failure — copy
 the `eq()` helper from an existing file.
+
+## New integrity regressions
+
+- `financial-contract.test.js`: real PostgreSQL rollback, receipt replay,
+  operation conflicts, opening anchors, archive preservation, and RPC permissions.
+- `billing-integrity.test.js` / `api-response.test.js`: receipt isolation,
+  decimal boundaries, customer-owned pricing caches, and unconfirmed replies.
+- `customers-page.test.js`: stable selection, late response ownership, explicit
+  account adjustments, archive/restore, legacy reconciliation and safe retry state.
+- `ledger-order.test.js`: microsecond timestamps, durable tie ordering and credits.
+
+Additional browser suites (Playwright and a Chromium executable required):
+
+```sh
+node tests/billing-save.browser.cjs
+node tests/customers-page.browser.cjs
+```
+
+The first checks draft locks, persisted printing and exact lost-response replay.
+The second runs actual browser assets, API handlers and the staged PostgreSQL
+RPCs, including the opening200 → debt900 → payment200 → debt700 → next bill →
+debt1000 sequence and reload/second-session consistency. Browser suites use only
+local test servers. Set PLAYWRIGHT_MODULE and PLAYWRIGHT_CHROMIUM_EXECUTABLE when
+using an externally installed Playwright/browser.

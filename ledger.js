@@ -26,6 +26,32 @@
     return isNaN(n) ? 0 : n;
   }
 
+  // Postgres timestamps retain microseconds, while Date only retains
+  // milliseconds. Keep the remaining fraction so two distinct cash movements
+  // within the same millisecond are not silently reordered.
+  function timestampParts(value) {
+    var text = String(value || "");
+    var ms = new Date(value).getTime();
+    var match = /\d{2}:\d{2}:\d{2}\.(\d+)/.exec(text);
+    return {
+      ms: isFinite(ms) ? ms : 0,
+      fraction: match ? match[1].slice(3).replace(/0+$/, "") : "",
+    };
+  }
+
+  function compareTimestamps(a, b) {
+    if (a.ms !== b.ms) return a.ms < b.ms ? -1 : 1;
+    var length = Math.max(a.fraction.length, b.fraction.length);
+    var left = a.fraction.padEnd(length, "0");
+    var right = b.fraction.padEnd(length, "0");
+    return left === right ? 0 : (left < right ? -1 : 1);
+  }
+
+  function sequenceKey(value) {
+    var key = String(value === null || value === undefined ? "" : value);
+    return /^\d+$/.test(key) ? key.replace(/^0+(?=\d)/, "") : null;
+  }
+
   /**
    * Merge a customer's bills and payments into one chronological list.
    * `direction` is "asc" (oldest first) or "desc" (newest first).
@@ -33,19 +59,44 @@
   function buildTimeline(bills, payments, direction) {
     var events = [];
 
+    function add(event, id, sequence) {
+      events.push({
+        event: event,
+        timestamp: timestampParts(event.at),
+        id: String(id || ""),
+        sequence: sequenceKey(sequence),
+        index: events.length,
+      });
+    }
+
     (bills || []).forEach(function (b) {
-      events.push({ type: "bill", at: b.created_at, bill: b });
+      add({ type: "bill", at: b.created_at, bill: b }, b.id, b.ledger_sequence);
     });
 
     (payments || []).forEach(function (p) {
-      events.push({ type: "payment", at: p.created_at, amount: toNum(p.amount) });
+      add({ type: "payment", at: p.created_at, amount: toNum(p.amount) }, p.id, p.ledger_sequence);
     });
 
     events.sort(function (x, y) {
-      var diff = new Date(x.at) - new Date(y.at);
+      var diff = compareTimestamps(x.timestamp, y.timestamp);
+      if (!diff && x.sequence !== null && y.sequence !== null && x.sequence !== y.sequence) {
+        diff = x.sequence.length === y.sequence.length
+          ? (x.sequence < y.sequence ? -1 : 1)
+          : x.sequence.length - y.sequence.length;
+      }
+      // At exactly the same instant retain the existing bill-before-payment
+      // convention when no distinct durable ledger sequence is available.
+      // IDs make each source's order deterministic. Reverse
+      // that complete order for backward walks, rather than sorting ties the
+      // same way in both directions and reconstructing different snapshots.
+      if (!diff && x.event.type !== y.event.type) {
+        diff = x.event.type === "bill" ? -1 : 1;
+      }
+      if (!diff && x.id !== y.id) diff = x.id < y.id ? -1 : 1;
+      if (!diff) diff = x.index - y.index;
       return direction === "desc" ? -diff : diff;
     });
-    return events;
+    return events.map(function (entry) { return entry.event; });
   }
 
   /**
@@ -94,8 +145,8 @@
    * previous-balance each bill was raised against.
    *
    * Returns [{ id, previousBalance, amountReceived, grandTotal }] in the order
-   * walked (newest first). Snapshots are floored at zero: a customer is never
-   * shown as having owed a negative amount on a past receipt.
+   * walked (newest first). Negative snapshots preserve customer credit, just
+   * as the forward walk and the current account balance do.
    */
   function chainBackward(events, currentBalance, recvFor) {
     var running = round2(toNum(currentBalance));
@@ -116,7 +167,7 @@
 
       out.push({
         id: bill.id,
-        previousBalance: Math.max(0, prev),
+        previousBalance: prev,
         amountReceived: received,
         grandTotal: grandTotal,
       });

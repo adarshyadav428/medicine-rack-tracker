@@ -1,7 +1,6 @@
 /**
- * customers.js — Customer profiles page for Adarsh Medicals
- *
- * Depends on app.js globals: isAdmin, isAuthenticated, requestApi, normalizeString
+ * Customer accounts. Financial values come from the server; local state owns
+ * selection and drafts, never a running balance that can be written implicitly.
  */
 (function () {
   "use strict";
@@ -9,673 +8,747 @@
   if (document.body.dataset.page !== "customers") return;
 
   var CUSTOMERS_KEY = "medicineRackTracker.customers.v1";
-
+  var IMPORT_DONE_KEY = "medicineRackTracker.balancesImported.v1";
+  var customerCache = [];
+  var pendingOperations = new Map();
+  var completedOperations = new Set();
   var cState = {
     initialized: false,
-    selectedIdx: null,
-    allBills: null,      // null = not yet fetched
-    allPayments: {},     // keyed by customer name lowercased, cached after first fetch
+    selectedKey: null,
     searchQuery: "",
+    customerReadSeq: 0,
+    profileSeq: 0,
+    historySeq: 0,
+    profileLoading: false,
+    historyOwner: null,
+    historyPayments: [],
+    editSnapshot: null,
+    editInFlight: false,
+    paymentInFlight: false,
+    deleteInFlight: false,
+    refreshQueued: false,
   };
-
   var cEl = {
-    status:             document.getElementById("customers-status"),
-    searchInput:        document.getElementById("cust-search"),
-    listContainer:      document.getElementById("cust-list"),
-    profilePanel:       document.getElementById("cust-profile-panel"),
-    profileEmpty:       document.getElementById("cust-profile-empty"),
-    profileContent:     document.getElementById("cust-profile-content"),
-    profileName:        document.getElementById("cust-profile-name"),
-    profilePhone:       document.getElementById("cust-profile-phone"),
-    profileBalance:     document.getElementById("cust-profile-balance"),
-    profileClose:       document.getElementById("cust-profile-close"),
-    editBtn:            document.getElementById("cust-edit-btn"),
-    editForm:           document.getElementById("cust-edit-form"),
-    editNameInput:      document.getElementById("cust-edit-name-input"),
-    editPhoneInput:     document.getElementById("cust-edit-phone-input"),
-    editBalanceInput:   document.getElementById("cust-edit-balance-input"),
-    editSaveBtn:        document.getElementById("cust-edit-save-btn"),
-    editCancelBtn:      document.getElementById("cust-edit-cancel-btn"),
-    editStatus:         document.getElementById("cust-edit-status"),
-    deleteBtn:          document.getElementById("cust-delete-btn"),
-    payAmount:          document.getElementById("cust-pay-amount"),
-    payNote:            document.getElementById("cust-pay-note"),
-    payBtn:             document.getElementById("cust-pay-btn"),
-    payStatus:          document.getElementById("cust-pay-status"),
-    billsContainer:     document.getElementById("cust-bills-container"),
+    status: document.getElementById("customers-status"),
+    searchInput: document.getElementById("cust-search"),
+    listContainer: document.getElementById("cust-list"),
+    profilePanel: document.getElementById("cust-profile-panel"),
+    profileEmpty: document.getElementById("cust-profile-empty"),
+    profileContent: document.getElementById("cust-profile-content"),
+    profileName: document.getElementById("cust-profile-name"),
+    profilePhone: document.getElementById("cust-profile-phone"),
+    profileBalance: document.getElementById("cust-profile-balance"),
+    profileClose: document.getElementById("cust-profile-close"),
+    editBtn: document.getElementById("cust-edit-btn"),
+    editForm: document.getElementById("cust-edit-form"),
+    editNameInput: document.getElementById("cust-edit-name-input"),
+    editPhoneInput: document.getElementById("cust-edit-phone-input"),
+    editBalanceInput: document.getElementById("cust-edit-balance-input"),
+    editSaveBtn: document.getElementById("cust-edit-save-btn"),
+    editCancelBtn: document.getElementById("cust-edit-cancel-btn"),
+    editStatus: document.getElementById("cust-edit-status"),
+    deleteBtn: document.getElementById("cust-delete-btn"),
+    payAmount: document.getElementById("cust-pay-amount"),
+    payNote: document.getElementById("cust-pay-note"),
+    payBtn: document.getElementById("cust-pay-btn"),
+    payStatus: document.getElementById("cust-pay-status"),
+    billsContainer: document.getElementById("cust-bills-container"),
   };
 
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
-  // Customers live in the `customers` table; each balance is derived by the
-  // server from that customer's bills and payments. This array is a read cache
-  // so the synchronous callers below keep working unchanged.
-  var customerCache = [];
-
-  function loadCustomers() {
-    return customerCache;
+  function nameKey(name) { return String(name || "").trim().toLowerCase(); }
+  function customerKey(c) { return c && c.id ? "id:" + c.id : "name:" + nameKey(c && c.name); }
+  function selectedCustomer() {
+    return customerCache.find(function (c) { return customerKey(c) === cState.selectedKey; }) || null;
   }
-
-  /** Cache locally, then persist name / phone / opening balance. */
-  function saveCustomers(list) {
-    customerCache = Array.isArray(list) ? list : [];
-
-    customerCache.forEach(function (c) {
-      if (!c || !c.name || !String(c.name).trim()) return;
-      if (c._clean && !c._dirty) return;
-      c._dirty = false;
-      c._clean = true;
-
-      var body = { name: c.name, phone: c.phone || "" };
-      if (c.openingBalance !== undefined && c.openingBalance !== null) {
-        body.openingBalance = c.openingBalance;
-      }
-
-      requestApi("/api/customers", { method: "POST", body: body })
-        .catch(function () { c._clean = false; });
-    });
+  function sameCustomer(a, b) {
+    return !!a && !!b && (a.id && b.id ? a.id === b.id : nameKey(a.name) === nameKey(b.name));
   }
-
-  /** Load the list and the server-derived balances. */
-  async function refreshCustomers() {
-    var result = await requestApi("/api/customers", { method: "GET" });
-    customerCache = (result.customers || []).map(function (c) {
-      return {
-        id: c.id,
-        name: c.name,
-        phone: c.phone || "",
-        balance: parseFloat(c.balance) || 0,
-        openingBalance: parseFloat(c.openingBalance) || 0,
-        billCount: c.billCount || 0,
-        totalBilled: parseFloat(c.totalBilled) || 0,
-        totalReceived: parseFloat(c.totalReceived) || 0,
-        totalPayments: parseFloat(c.totalPayments) || 0,
-        _clean: true,
-      };
-    });
-    return customerCache;
+  function isSelected(c) { return sameCustomer(c, selectedCustomer()); }
+  function findCustomer(reference) {
+    return customerCache.find(function (c) { return sameCustomer(c, reference); }) || null;
   }
-
   function round2(n) { return Math.round(n * 100) / 100; }
-
-  function fmtMoney(n) {
-    var v = parseFloat(n) || 0;
-    return "₹" + v.toFixed(2);
+  function moneyValue(value) {
+    var text = String(value == null ? "" : value).trim();
+    if (!/^-?\d+(?:\.\d{1,2})?$/.test(text)) return null;
+    var number = Number(text);
+    return Number.isFinite(number) && Math.abs(number) <= 99999999.99 ? round2(number) : null;
   }
-
+  function fmtMoney(n) { return "₹" + Number(n || 0).toFixed(2); }
   function escHtml(s) {
-    return (s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
-
   function fmtDate(iso) {
-    if (!iso) return "—";
+    var date = new Date(iso);
+    return Number.isFinite(date.getTime())
+      ? date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })
+      : "—";
+  }
+  function status(el, message, tone) {
+    if (!el) return;
+    el.textContent = message || "";
+    el.className = "status-message" + (tone ? " " + tone : "");
+  }
+  function setPageStatus(message, tone) { status(cEl.status, message, tone); }
+  function setPayStatus(message, tone) { status(cEl.payStatus, message, tone); }
+  function setEditStatus(message, tone) { status(cEl.editStatus, message, tone); }
+  function normalizeCustomer(c) {
+    return {
+      id: c.id || c.customer_id || c.customerId || null,
+      name: String(c.name || "").trim(),
+      phone: String(c.phone || ""),
+      balance: Number(c.balance) || 0,
+      openingBalance: Number(c.openingBalance !== undefined ? c.openingBalance : c.opening_balance) || 0,
+      billCount: Number(c.billCount) || 0,
+      totalBilled: Number(c.totalBilled) || 0,
+      totalReceived: Number(c.totalReceived) || 0,
+      totalPayments: Number(c.totalPayments) || 0,
+      version: c.version !== undefined ? c.version : (c.updatedAt || c.updated_at || null),
+      archived: !!c.archived,
+    };
+  }
+  function installCustomer(snapshot, original) {
+    var saved = normalizeCustomer(snapshot);
+    var idx = customerCache.findIndex(function (c) { return sameCustomer(c, original || saved); });
+    var wasSelected = original ? isSelected(original) : isSelected(saved);
+    if (idx < 0) customerCache.push(saved);
+    else customerCache[idx] = saved;
+    customerCache.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    if (wasSelected) cState.selectedKey = customerKey(saved);
+    return saved;
+  }
+  async function refreshCustomers() {
+    var seq = ++cState.customerReadSeq;
+    var result = await requestApi("/api/customers?includeArchived=1", { method: "GET" });
+    if (seq !== cState.customerReadSeq) return customerCache;
+    var selected = selectedCustomer();
+    customerCache = (result.customers || []).map(normalizeCustomer);
+    if (selected) {
+      var resolved = findCustomer(selected);
+      cState.selectedKey = resolved ? customerKey(resolved) : null;
+    }
+    return customerCache;
+  }
+  function uuid() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (char) {
+      var value = Math.floor(Math.random() * 16);
+      return (char === "x" ? value : ((value & 3) | 8)).toString(16);
+    });
+  }
+  async function fingerprint(value) {
+    var text = JSON.stringify(value);
+    if (window.crypto && window.crypto.subtle && typeof TextEncoder !== "undefined") {
+      var digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(digest)).map(function (n) { return n.toString(16).padStart(2, "0"); }).join("");
+    }
+    // Storage holds only an opaque fingerprint and operation ID, not names or notes.
+    var hash = 2166136261;
+    for (var i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    return String(hash >>> 0) + ":" + text.length;
+  }
+  async function operationId(scope, payload) {
+    // Memory preserves same-screen retries if browser storage is unavailable.
+    // Reload recovery depends on retaining this opaque reference in site storage.
+    var signature = await fingerprint(payload);
+    var key = "medicineRackTracker.pending." + scope + ".v1." + signature;
+    var pending = pendingOperations.get(key);
+    if (!pending) {
+      try { pending = JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+    }
+    if (!pending || pending.fingerprint !== signature || completedOperations.has(pending.id)) pending = { fingerprint: signature, id: uuid() };
+    pending.scope = scope;
+    pending.storageKey = key;
+    pendingOperations.set(key, pending);
+    try { localStorage.setItem(key, JSON.stringify({ fingerprint: signature, id: pending.id })); } catch (_) {}
+    return pending.id;
+  }
+  function finishOperation(scope, id) {
+    var pending;
+    pendingOperations.forEach(function (candidate) {
+      if (candidate.scope === scope && candidate.id === id) pending = candidate;
+    });
+    if (!pending || pending.id !== id) return;
+    completedOperations.add(id);
+    pendingOperations.delete(pending.storageKey);
     try {
-      return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-    } catch (_) { return iso; }
+      var stored = JSON.parse(localStorage.getItem(pending.storageKey) || "null");
+      if (stored && stored.id === id) localStorage.removeItem(pending.storageKey);
+    } catch (_) {}
   }
-
-  function setPageStatus(msg, tone) {
-    if (!cEl.status) return;
-    cEl.status.textContent = msg || "";
-    cEl.status.className = "status-message" + (tone ? " " + tone : "");
+  function balanceClass(n) { return n > 0 ? "is-due" : n < 0 ? "is-credit" : "is-clear"; }
+  function balanceLabel(n) {
+    return n > 0 ? "Due: " + fmtMoney(n) : n < 0 ? "Credit: " + fmtMoney(-n) : "Cleared";
   }
-
-  function setPayStatus(msg, tone) {
-    if (!cEl.payStatus) return;
-    cEl.payStatus.textContent = msg || "";
-    cEl.payStatus.className = "status-message" + (tone ? " " + tone : "");
+  function updateBalanceDisplay(balance) {
+    if (!cEl.profileBalance) return;
+    cEl.profileBalance.textContent = fmtMoney(balance);
+    cEl.profileBalance.className = "cust-profile-balance-value " + balanceClass(balance);
   }
-
-  function setEditStatus(msg, tone) {
-    if (!cEl.editStatus) return;
-    cEl.editStatus.textContent = msg || "";
-    cEl.editStatus.className = "status-message" + (tone ? " " + tone : "");
+  function renderProfile(c) {
+    if (!c || !isSelected(c)) return;
+    if (cEl.profileName) cEl.profileName.textContent = c.name + (c.archived ? " (archived)" : "");
+    if (cEl.profilePhone) cEl.profilePhone.textContent = c.phone || "—";
+    updateBalanceDisplay(c.balance);
+    updateButtons();
   }
-
-  function balanceClass(bal) {
-    if (bal > 0) return "is-due";
-    if (bal < 0) return "is-credit";
-    return "is-clear";
+  function updateButtons() {
+    var c = selectedCustomer();
+    if (cEl.payBtn) {
+      cEl.payBtn.disabled = !c || c.archived || cState.profileLoading || cState.paymentInFlight || cState.editInFlight || cState.deleteInFlight;
+      cEl.payBtn.textContent = cState.paymentInFlight ? "Saving…" : "✔ Apply Payment";
+    }
+    if (cEl.editBtn) cEl.editBtn.disabled = !c || c.archived || cState.profileLoading || cState.editInFlight;
+    if (cEl.editSaveBtn) cEl.editSaveBtn.disabled = !!(c && c.archived) || cState.editInFlight || cState.paymentInFlight || cState.deleteInFlight;
+    if (cEl.editCancelBtn) cEl.editCancelBtn.disabled = cState.editInFlight;
+    if (cEl.deleteBtn) {
+      cEl.deleteBtn.disabled = !c || cState.profileLoading || cState.deleteInFlight || cState.paymentInFlight || cState.editInFlight;
+      cEl.deleteBtn.textContent = c && c.archived ? "Restore" : "Archive";
+    }
   }
-
-  function balanceLabel(bal) {
-    if (bal > 0) return "Due: " + fmtMoney(bal);
-    if (bal < 0) return "Credit: " + fmtMoney(Math.abs(bal));
-    return "Cleared";
-  }
-
-  // -------------------------------------------------------------------------
-  // Customer list
-  // -------------------------------------------------------------------------
-
   function renderCustomerList() {
     if (!cEl.listContainer) return;
-    var list = loadCustomers();
-    var q = cState.searchQuery.toLowerCase();
-    var filtered = q
-      ? list.filter(function (c) {
-          return (c.name || "").toLowerCase().indexOf(q) >= 0 ||
-                 (c.phone || "").indexOf(q) >= 0;
-        })
-      : list;
-
-    if (!list.length) {
-      cEl.listContainer.innerHTML =
-        '<p class="cust-empty">No customers saved yet.<br>' +
-        'Add them from the <a href="billing.html" data-nav>Billing</a> page.</p>';
-      return;
-    }
-
+    var query = cState.searchQuery.toLowerCase();
+    var filtered = customerCache.filter(function (c) {
+      if (c.archived && !query && !isSelected(c)) return false;
+      return !query || c.name.toLowerCase().indexOf(query) >= 0 || c.phone.indexOf(query) >= 0;
+    });
     if (!filtered.length) {
-      cEl.listContainer.innerHTML = '<p class="cust-empty">No customers match your search.</p>';
+      cEl.listContainer.innerHTML = '<p class="cust-empty">' +
+        (query ? "No customers match your search." : customerCache.length
+          ? "No active customers. Search by name to view an archived account."
+          : 'No customers saved yet.<br>Add them from the <a href="billing.html" data-nav>Billing</a> page.') + "</p>";
       return;
     }
-
     cEl.listContainer.innerHTML = filtered.map(function (c) {
-      var realIdx = list.indexOf(c);
-      var bal = parseFloat(c.balance) || 0;
-      return (
-        '<div class="cust-card' + (cState.selectedIdx === realIdx ? " is-active" : "") +
-        '" data-idx="' + realIdx + '" role="button" tabindex="0">' +
-          '<div class="cust-card-main">' +
-            '<span class="cust-card-name">' + escHtml(c.name) + '</span>' +
-            (c.phone ? '<span class="cust-card-phone">' + escHtml(c.phone) + '</span>' : '') +
-          '</div>' +
-          '<span class="cust-balance-badge ' + balanceClass(bal) + '">' + balanceLabel(bal) + '</span>' +
-        '</div>'
-      );
+      return '<div class="cust-card' + (isSelected(c) ? " is-active" : "") +
+        '" data-key="' + escHtml(customerKey(c)) + '" role="button" tabindex="0">' +
+        '<div class="cust-card-main"><span class="cust-card-name">' + escHtml(c.name) +
+        (c.archived ? " (archived)" : "") + "</span>" +
+        (c.phone ? '<span class="cust-card-phone">' + escHtml(c.phone) + "</span>" : "") +
+        '</div><span class="cust-balance-badge ' + balanceClass(c.balance) + '">' +
+        balanceLabel(c.balance) + "</span></div>";
     }).join("");
-
     cEl.listContainer.querySelectorAll(".cust-card").forEach(function (card) {
-      card.addEventListener("click", function () {
-        openProfile(parseInt(card.dataset.idx, 10));
-      });
-      card.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") openProfile(parseInt(card.dataset.idx, 10));
+      card.addEventListener("click", function () { openProfile(card.dataset.key); });
+      card.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openProfile(card.dataset.key);
+        }
       });
     });
   }
-
-  // -------------------------------------------------------------------------
-  // Profile panel
-  // -------------------------------------------------------------------------
-
   function showProfileContent(show) {
-    if (cEl.profileEmpty)   cEl.profileEmpty.classList.toggle("hidden", show);
+    if (cEl.profileEmpty) cEl.profileEmpty.classList.toggle("hidden", show);
     if (cEl.profileContent) cEl.profileContent.classList.toggle("hidden", !show);
   }
-
-  function updateBalanceDisplay(bal) {
-    if (!cEl.profileBalance) return;
-    cEl.profileBalance.textContent = fmtMoney(bal);
-    cEl.profileBalance.className = "cust-profile-balance-value " + balanceClass(bal);
+  function hideEditForm() {
+    cState.editSnapshot = null;
+    if (cEl.editForm) cEl.editForm.classList.add("hidden");
+    if (cEl.editBtn) cEl.editBtn.textContent = "✏ Edit";
   }
-
-  async function openProfile(idx) {
-    var list = loadCustomers();
-    var c = list[idx];
+  async function openProfile(key, preserveForms) {
+    var c = customerCache.find(function (row) { return customerKey(row) === key; });
     if (!c) return;
-
-    cState.selectedIdx = idx;
-
-    if (cEl.profileName)  cEl.profileName.textContent  = c.name  || "";
-    if (cEl.profilePhone) cEl.profilePhone.textContent = c.phone || "—";
-    updateBalanceDisplay(parseFloat(c.balance) || 0);
-
-    // Reset pay form and clear payment cache for this customer so history refreshes
-    if (cEl.payAmount) cEl.payAmount.value = "";
-    if (cEl.payNote)   cEl.payNote.value   = "";
-    setPayStatus("", "");
-    delete cState.allPayments[(c.name || "").toLowerCase()];
-
-    // Hide edit form if open
-    hideEditForm();
-
+    cState.selectedKey = key;
+    var seq = ++cState.profileSeq;
+    ++cState.historySeq;
+    cState.historyOwner = null;
+    cState.historyPayments = [];
+    cState.profileLoading = true;
+    if (!preserveForms) {
+      hideEditForm();
+      if (cEl.payAmount) cEl.payAmount.value = "";
+      if (cEl.payNote) cEl.payNote.value = "";
+      setPayStatus("", "");
+    }
     showProfileContent(true);
+    renderProfile(c);
     renderCustomerList();
-
-    await loadAndRenderBills(c.name);
+    if (cEl.billsContainer) cEl.billsContainer.innerHTML = '<p class="status-message is-info">Refreshing account…</p>';
+    try {
+      await refreshCustomers();
+      if (seq !== cState.profileSeq) return;
+      var fresh = selectedCustomer();
+      if (!fresh) {
+        closeProfile();
+        setPageStatus("This customer is no longer available. Refresh the list.", "is-warn");
+        return;
+      }
+      renderProfile(fresh);
+      renderCustomerList();
+      await loadAndRenderBills(fresh, seq);
+    } catch (error) {
+      if (seq !== cState.profileSeq) return;
+      setPageStatus("Could not refresh this account: " + (error.message || "Unknown error"), "is-error");
+      if (cEl.billsContainer) cEl.billsContainer.innerHTML = '<p class="status-message is-error">Account freshness could not be confirmed. Reopen the profile to retry.</p>';
+    } finally {
+      if (seq === cState.profileSeq) {
+        cState.profileLoading = false;
+        updateButtons();
+        if (cState.refreshQueued) {
+          cState.refreshQueued = false;
+          refreshSelectedProfile();
+        }
+      }
+    }
   }
-
   function closeProfile() {
-    cState.selectedIdx = null;
+    cState.selectedKey = null;
+    ++cState.profileSeq;
+    ++cState.historySeq;
+    cState.historyOwner = null;
+    cState.historyPayments = [];
+    cState.profileLoading = false;
+    hideEditForm();
     showProfileContent(false);
     renderCustomerList();
+    updateButtons();
   }
-
-  // -------------------------------------------------------------------------
-  // Edit customer inline
-  // -------------------------------------------------------------------------
-
-  function showEditForm() {
-    var list = loadCustomers();
-    var c = list[cState.selectedIdx];
-    if (!c) return;
-    if (cEl.editNameInput)    cEl.editNameInput.value    = c.name    || "";
-    if (cEl.editPhoneInput)   cEl.editPhoneInput.value   = c.phone   || "";
-    if (cEl.editBalanceInput) cEl.editBalanceInput.value = parseFloat(c.balance) || 0;
-    setEditStatus("", "");
-    if (cEl.editForm) cEl.editForm.classList.remove("hidden");
-    if (cEl.editBtn)  cEl.editBtn.textContent = "Cancel";
-  }
-
-  function hideEditForm() {
-    if (cEl.editForm) cEl.editForm.classList.add("hidden");
-    if (cEl.editBtn)  cEl.editBtn.textContent = "✏ Edit";
-  }
-
-  function saveEdit() {
-    var name  = (cEl.editNameInput    ? cEl.editNameInput.value    : "").trim();
-    var phone = (cEl.editPhoneInput   ? cEl.editPhoneInput.value   : "").trim();
-    var bal   = parseFloat(cEl.editBalanceInput ? cEl.editBalanceInput.value : "0") || 0;
-
-    if (!name) { setEditStatus("Name is required.", "is-warn"); return; }
-
-    var list = loadCustomers();
-    // Check for duplicate name (excluding current)
-    var dup = list.findIndex(function (c, i) {
-      return i !== cState.selectedIdx && c.name.toLowerCase() === name.toLowerCase();
-    });
-    if (dup >= 0) { setEditStatus("Another customer with this name already exists.", "is-warn"); return; }
-
-    var current = list[cState.selectedIdx];
-
-    // The balance shown is derived: opening balance + everything billed, less
-    // everything received. To make it read as the figure just typed, adjust
-    // the opening balance by the difference — overwriting it outright would
-    // silently discard every bill and payment on the account.
-    var activity = round2((parseFloat(current.balance) || 0) -
-                          (parseFloat(current.openingBalance) || 0));
-
-    current.name           = name;
-    current.phone          = phone;
-    current.openingBalance = round2(bal - activity);
-    current.balance        = bal;
-    current._dirty         = true;
-    saveCustomers(list);
-
-    if (cEl.profileName)  cEl.profileName.textContent  = name;
-    if (cEl.profilePhone) cEl.profilePhone.textContent = phone || "—";
-    updateBalanceDisplay(bal);
-
-    hideEditForm();
-    setEditStatus("", "");
-    renderCustomerList();
-  }
-
-
-  // -------------------------------------------------------------------------
-  // Record payment
-  // -------------------------------------------------------------------------
-
-  // Guards against a second POST for the same cash. Disabling the button is
-  // not enough on its own: Enter in the amount field calls straight through and
-  // never looks at it, so two quick presses recorded the payment twice and took
-  // the customer's balance down by double what they actually handed over.
-  var paymentInFlight = false;
-
-  async function recordPayment() {
-    if (paymentInFlight) return;
-
-    var amt = round2(parseFloat(cEl.payAmount ? cEl.payAmount.value : "0"));
-    if (!isFinite(amt) || amt <= 0) {
-      setPayStatus("Enter a valid payment amount.", "is-warn");
+  function refreshSelectedProfile(queueIfLoading) {
+    if (cState.profileLoading) {
+      if (queueIfLoading === true) cState.refreshQueued = true;
       return;
     }
-
-    var list = loadCustomers();
-    var c = list[cState.selectedIdx];
-    if (!c) return;
-
-    paymentInFlight = true;
-    if (cEl.payBtn) { cEl.payBtn.disabled = true; cEl.payBtn.textContent = "Saving…"; }
-
+    if (cState.paymentInFlight || cState.editInFlight || cState.deleteInFlight) return;
+    var c = selectedCustomer();
+    if (c) return openProfile(customerKey(c), true);
+    return refreshCustomers().then(renderCustomerList).catch(function (error) {
+      setPageStatus("Could not refresh customers: " + error.message, "is-warn");
+    });
+  }
+  function showEditForm() {
+    var c = selectedCustomer();
+    if (!c || c.archived || cState.profileLoading) return;
+    cState.editSnapshot = { customer: Object.assign({}, c), balanceDirty: false };
+    if (cEl.editNameInput) cEl.editNameInput.value = c.name;
+    if (cEl.editPhoneInput) cEl.editPhoneInput.value = c.phone;
+    if (cEl.editBalanceInput) cEl.editBalanceInput.value = String(c.balance);
+    setEditStatus("", "");
+    if (cEl.editForm) cEl.editForm.classList.remove("hidden");
+    if (cEl.editBtn) cEl.editBtn.textContent = "Cancel";
+  }
+  async function saveEdit() {
+    if (cState.editInFlight || cState.paymentInFlight || cState.deleteInFlight) return;
+    var draft = cState.editSnapshot;
+    if (!draft || !isSelected(draft.customer) || selectedCustomer().archived) return;
+    var name = String(cEl.editNameInput ? cEl.editNameInput.value : "").trim();
+    var phone = String(cEl.editPhoneInput ? cEl.editPhoneInput.value : "").trim();
+    if (!name) { setEditStatus("Name is required.", "is-warn"); return; }
+    if (customerCache.some(function (c) { return !sameCustomer(c, draft.customer) && nameKey(c.name) === nameKey(name); })) {
+      setEditStatus("Another customer with this name already exists.", "is-warn");
+      return;
+    }
+    var body = { id: draft.customer.id, originalName: draft.customer.name, name: name, phone: phone };
+    cState.editInFlight = true;
+    setEditStatus("Saving changes…", "is-info");
+    updateButtons();
+    var op;
     try {
-      var note = cEl.payNote ? cEl.payNote.value.trim() : "";
-      var result = await requestApi("/api/payments", {
-        method: "POST",
-        body: { customer_name: c.name, customer_phone: c.phone || "", amount: amt, note: note },
-      });
-
-      var prevBal = parseFloat(c.balance) || 0;
-      var newBal  = round2(prevBal - amt);
-      updateBalanceDisplay(newBal); // optimistic; the refresh below confirms it
-
-      try {
+      if (draft.balanceDirty) {
+        var desired = moneyValue(cEl.editBalanceInput ? cEl.editBalanceInput.value : "");
+        if (desired === null) throw new Error("Enter a valid balance with no more than two decimal places.");
         await refreshCustomers();
-        var fresh = customerCache.find(function (x) {
-          return x.name.toLowerCase().trim() === c.name.toLowerCase().trim();
-        });
-        if (fresh) {
-          newBal = fresh.balance;
-          updateBalanceDisplay(newBal);
+        if (cState.editSnapshot !== draft || !isSelected(draft.customer)) return;
+        var fresh = findCustomer(draft.customer);
+        if (!fresh || Math.abs(fresh.balance - draft.customer.balance) > 0.005 ||
+            Math.abs(fresh.openingBalance - draft.customer.openingBalance) > 0.005 ||
+            (draft.customer.version != null && fresh.version !== draft.customer.version)) {
+          throw new Error("This account changed while Edit was open. Cancel and reopen Edit to review the current balance.");
         }
-      } catch (_) { /* keep the optimistic figure */ }
-
-      if (cEl.payAmount) cEl.payAmount.value = "";
-      if (cEl.payNote)   cEl.payNote.value   = "";
-
-      // Update cached payments so history refreshes without re-fetch
-      var custKey = c.name.toLowerCase();
-      if (cState.allPayments[custKey]) {
-        cState.allPayments[custKey].unshift(result.payment);
-      } else {
-        delete cState.allPayments[custKey];
+        body.openingBalance = round2(desired - (draft.customer.balance - draft.customer.openingBalance));
+        body.expectedBalance = draft.customer.balance;
+        body.expectedOpeningBalance = draft.customer.openingBalance;
+        if (draft.customer.version != null) body.expectedVersion = draft.customer.version;
       }
-
-      setPayStatus("✓ Payment of " + fmtMoney(amt) + " saved. New balance: " + fmtMoney(newBal), "is-ok");
-      renderCustomerList();
-      await loadAndRenderBills(c.name);
-    } catch (err) {
-      setPayStatus("Could not save payment: " + (err.message || "unknown error"), "is-warn");
+      op = await operationId("customer-edit", body);
+      body.operationId = op;
+      var result = await requestApi("/api/customers", { method: "POST", body: body });
+      if (!result.customer) throw new Error("The server did not confirm the customer save. Retry without changing the form.");
+      finishOperation("customer-edit", op);
+      if (cState.editSnapshot !== draft || !isSelected(draft.customer)) {
+        await refreshCustomers();
+        renderCustomerList();
+        setPageStatus("Customer changes for " + name + " were saved.", "is-ok");
+        return;
+      }
+      var saved;
+      try {
+        if (Number.isFinite(Number(result.customer.balance))) saved = installCustomer(result.customer, draft.customer);
+        else {
+          await refreshCustomers();
+          saved = findCustomer({ id: result.customer.id || draft.customer.id, name: name });
+        }
+        if (cState.editSnapshot === draft && saved) {
+          cState.selectedKey = customerKey(saved);
+          renderProfile(saved);
+          hideEditForm();
+          setPageStatus("Customer changes saved.", "is-ok");
+          renderCustomerList();
+          await loadAndRenderBills(saved, cState.profileSeq);
+        }
+      } catch (refreshError) {
+        if (cState.editSnapshot === draft) {
+          hideEditForm();
+          setPageStatus("Customer changes were saved, but the account could not be refreshed: " + refreshError.message, "is-warn");
+        }
+      }
+    } catch (error) {
+      if (cState.editSnapshot === draft) setEditStatus("Could not save changes: " + (error.message || "Unknown error"), "is-warn");
     } finally {
-      paymentInFlight = false;
-      if (cEl.payBtn) { cEl.payBtn.disabled = false; cEl.payBtn.textContent = "✔ Apply Payment"; }
+      cState.editInFlight = false;
+      updateButtons();
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Delete customer
-  // -------------------------------------------------------------------------
-
-  function deleteCustomer() {
-    var list = loadCustomers();
-    var c = list[cState.selectedIdx];
-    if (!c) return;
-    if (!window.confirm('Delete customer "' + c.name + '"? This cannot be undone.')) return;
-    requestApi("/api/customers?name=" + encodeURIComponent(c.name), { method: "DELETE" })
-      .catch(function () {});
-    list.splice(cState.selectedIdx, 1);
-    customerCache = list;
-    closeProfile();
-  }
-
-  // -------------------------------------------------------------------------
-  // Bill history
-  // -------------------------------------------------------------------------
-
-  async function loadAndRenderBills(customerName) {
-    if (!cEl.billsContainer) return;
-    cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading…</p>';
-
+  async function loadAndRenderBills(customer, profileSeq) {
+    if (!cEl.billsContainer || !isSelected(customer)) return false;
+    var requestSeq = ++cState.historySeq;
+    var owner = customerKey(customer);
+    cState.historyOwner = null;
+    cState.historyPayments = [];
+    cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading history…</p>';
+    var params = "customer=" + encodeURIComponent(customer.name);
+    if (customer.id) params += "&customerId=" + encodeURIComponent(customer.id);
     try {
-      if (cState.allBills === null) {
-        var result = await requestApi("/api/bills?all=1", { method: "GET" });
-        cState.allBills = result.bills || [];
-      }
-
-      var nameLower = (customerName || "").toLowerCase().trim();
-
-      if (!cState.allPayments[nameLower]) {
-        var pResult = await requestApi(
-          "/api/payments?customer=" + encodeURIComponent(customerName),
-          { method: "GET" }
-        );
-        cState.allPayments[nameLower] = pResult.payments || [];
-      }
-
-      var bills = cState.allBills.filter(function (b) {
-        return (b.customer_name || "").toLowerCase().trim() === nameLower;
-      });
-      var payments = cState.allPayments[nameLower];
-
-      renderHistory(bills, payments);
-    } catch (err) {
-      cEl.billsContainer.innerHTML =
-        '<p class="status-message is-error">Could not load history: ' +
-        escHtml(err.message || "Unknown error") + "</p>";
+      var pair = await Promise.all([
+        requestApi("/api/bills?" + params, { method: "GET" }),
+        requestApi("/api/payments?" + params, { method: "GET" }),
+      ]);
+      if (requestSeq !== cState.historySeq || profileSeq !== cState.profileSeq || !isSelected(customer)) return false;
+      var bills = Array.isArray(pair[0].bills) ? pair[0].bills : [];
+      var payments = Array.isArray(pair[1].payments) ? pair[1].payments : [];
+      cState.historyOwner = owner;
+      cState.historyPayments = payments;
+      renderHistory(bills, payments, customer);
+      return true;
+    } catch (error) {
+      if (requestSeq !== cState.historySeq || profileSeq !== cState.profileSeq || !isSelected(customer)) return false;
+      cEl.billsContainer.innerHTML = '<p class="status-message is-error">Could not load history: ' +
+        escHtml(error.message || "Unknown error") + "</p>";
+      return false;
     }
   }
-
-  function renderHistory(bills, payments) {
-    if (!cEl.billsContainer) return;
-
-    // Merge bills and payments into a single timeline sorted newest-first
-    var entries = [];
-    bills.forEach(function (b) {
-      entries.push({ type: "bill", date: b.created_at, data: b });
+  function renderHistory(bills, payments, customer) {
+    var entries = bills.map(function (b) { return { type: "bill", date: b.created_at, id: b.id, data: b }; })
+      .concat(payments.map(function (p) { return { type: "payment", date: p.created_at, id: p.id, data: p }; }));
+    entries.sort(function (a, b) {
+      var byDate = String(b.date || "").localeCompare(String(a.date || ""));
+      if (byDate) return byDate;
+      var left = String(a.data.ledger_sequence || "0").replace(/^0+(?=\d)/, "");
+      var right = String(b.data.ledger_sequence || "0").replace(/^0+(?=\d)/, "");
+      var bySequence = right.length - left.length || right.localeCompare(left);
+      return bySequence || String(b.id || "").localeCompare(String(a.id || ""));
     });
-    (payments || []).forEach(function (p) {
-      entries.push({ type: "payment", date: p.created_at, data: p });
-    });
-    entries.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
-
     if (!entries.length) {
       cEl.billsContainer.innerHTML = '<p class="cust-empty">No bills or payments found for this customer.</p>';
       return;
     }
-
-    var rows = entries.map(function (e) {
-      if (e.type === "bill") {
-        var b = e.data;
-        var grandTotal = parseFloat(b.grand_total) || 0;
-        var gstAmt     = parseFloat(b.gst_amount)  || 0;
-        var subtotal   = parseFloat(b.subtotal)     || 0;
-        return (
-          "<tr>" +
-            '<td><span class="bill-history-number">' + escHtml(b.bill_number || "—") + "</span></td>" +
-            "<td>" + fmtDate(b.created_at) + "</td>" +
-            '<td class="num-col">' + fmtMoney(subtotal) + "</td>" +
-            '<td class="num-col">' + (gstAmt > 0 ? fmtMoney(gstAmt) : "—") + "</td>" +
-            '<td class="num-col"><strong>' + fmtMoney(grandTotal) + "</strong></td>" +
-            "<td></td>" +
-          "</tr>"
-        );
-      } else {
-        var p = e.data;
-        var note = p.note ? " · " + escHtml(p.note) : "";
-        return (
-          '<tr class="payment-row">' +
-            '<td><span class="payment-history-label">💳 Payment' + note + "</span></td>" +
-            "<td>" + fmtDate(p.created_at) + "</td>" +
-            '<td class="num-col" colspan="2" style="color:#64748b;font-size:0.82rem;">Amount received</td>' +
-            '<td class="num-col" style="color:#16a34a;font-weight:600;">−' + fmtMoney(p.amount) + "</td>" +
-            '<td><button class="btn btn-danger btn-xs" data-del-payment="' + escHtml(p.id) +
-              '" data-amount="' + escHtml(String(p.amount)) +
-              '" title="Delete this payment" type="button">🗑️</button></td>' +
-          "</tr>"
-        );
+    var rows = entries.map(function (entry) {
+      var data = entry.data;
+      if (entry.type === "bill") {
+        var received = Number(data.amount_received) || 0;
+        var total = Number(data.grand_total) || 0;
+        return '<tr><td><span class="bill-history-number">' + escHtml(data.bill_number || "—") +
+          "</span></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
+          fmtMoney(data.subtotal) + '</td><td class="num-col">' + fmtMoney(data.gst_amount) +
+          '</td><td class="num-col">' + fmtMoney(total) + '</td><td class="num-col">' +
+          fmtMoney(received) + '</td><td class="num-col"><strong>' + fmtMoney(round2(total - received)) +
+          "</strong></td><td></td></tr>";
       }
+      var amount = Number(data.amount) || 0;
+      return '<tr class="payment-row"><td><span class="payment-history-label">💳 Payment' +
+        (data.note ? " · " + escHtml(data.note) : "") + "</span></td><td>" + fmtDate(data.created_at) +
+        '</td><td>—</td><td>—</td><td>—</td><td class="num-col">' + fmtMoney(amount) +
+        '</td><td class="num-col">−' + fmtMoney(amount) + '</td><td><button class="btn btn-danger btn-xs" data-del-payment="' +
+        escHtml(data.id) + '" data-amount="' + escHtml(String(amount)) +
+        '" title="Delete this payment" type="button"' + (customer.archived ? " disabled" : "") + '>🗑️</button></td></tr>';
     }).join("");
-
-    cEl.billsContainer.innerHTML =
-      '<div class="bill-table-scroll">' +
-        '<table class="bill-items-table">' +
-          "<thead><tr>" +
-            "<th>Bill / Payment</th>" +
-            "<th>Date</th>" +
-            '<th class="num-col">Subtotal</th>' +
-            '<th class="num-col">GST</th>' +
-            '<th class="num-col">Total / Paid</th>' +
-            "<th></th>" +
-          "</tr></thead>" +
-          "<tbody>" + rows + "</tbody>" +
-        "</table>" +
-      "</div>";
-
-    cEl.billsContainer.querySelectorAll("[data-del-payment]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        deletePayment(btn.dataset.delPayment, btn.dataset.amount);
-      });
+    cEl.billsContainer.innerHTML = '<div class="bill-table-scroll"><table class="bill-items-table"><thead><tr>' +
+      "<th>Bill / Payment</th><th>Date</th><th>Subtotal</th><th>GST</th><th>Bill total</th><th>Received</th><th>Net change</th><th></th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+    cEl.billsContainer.querySelectorAll("[data-del-payment]").forEach(function (button) {
+      button.addEventListener("click", function () { deletePayment(button.dataset.delPayment, button.dataset.amount, customer); });
     });
   }
 
-  /** Remove a payment entered by mistake and re-derive the balance. */
-  async function deletePayment(paymentId, amountLabel) {
-    if (!paymentId) return;
-    if (!window.confirm(
-      "Delete this payment of " + fmtMoney(amountLabel) +
-      "? The customer's balance will go back up by that amount."
-    )) return;
-
-    setPayStatus("Deleting payment…", "is-info");
-
+  async function refreshAfterPayment(customer, result) {
+    if (result.customer && Number.isFinite(Number(result.customer.balance))) installCustomer(result.customer, customer);
+    else await refreshCustomers();
+    renderCustomerList();
+    var fresh = findCustomer(result.customer || customer);
+    if (fresh && isSelected(fresh)) {
+      renderProfile(fresh);
+      return loadAndRenderBills(fresh, cState.profileSeq);
+    }
+    return true;
+  }
+  async function recordPayment() {
+    if (cState.paymentInFlight || cState.editInFlight || cState.deleteInFlight || cState.profileLoading) return;
+    var c = selectedCustomer();
+    if (!c || c.archived) return;
+    var amount = moneyValue(cEl.payAmount ? cEl.payAmount.value : "");
+    if (amount === null || amount <= 0) { setPayStatus("Enter a positive amount with no more than two decimal places.", "is-warn"); return; }
+    var note = String(cEl.payNote ? cEl.payNote.value : "").trim();
+    var profileSeq = cState.profileSeq;
+    var body = { amount: amount, note: note };
+    if (c.id) body.customer_id = c.id;
+    else { body.customer_name = c.name; body.customer_phone = c.phone; }
+    cState.paymentInFlight = true;
+    updateButtons();
+    var result, op;
     try {
-      await requestApi("/api/payments?id=" + encodeURIComponent(paymentId), { method: "DELETE" });
-
-      var list = loadCustomers();
-      var c = list[cState.selectedIdx];
-
-      // Drop the cached payments for this customer so the history re-fetches.
-      if (c) delete cState.allPayments[c.name.toLowerCase().trim()];
-
+      op = await operationId("payment", body);
+      body.operationId = op;
+      result = await requestApi("/api/payments", { method: "POST", body: body });
+      if (!result.payment || !result.payment.id) throw new Error("The server did not confirm this receipt.");
+      finishOperation("payment", op);
+    } catch (error) {
+      if (profileSeq === cState.profileSeq && isSelected(c)) setPayStatus("Payment was not confirmed: " + (error.message || "Unknown error") +
+        ". Retry the same entry to check it safely; do not enter it as a new payment.", "is-warn");
+      cState.paymentInFlight = false;
+      updateButtons();
+      return;
+    }
+    if (profileSeq !== cState.profileSeq || !isSelected(c)) {
+      cState.paymentInFlight = false;
+      updateButtons();
+      setPageStatus("Payment of " + fmtMoney(amount) + " for " + c.name + " was saved.", "is-ok");
+      await refreshSelectedProfile(true);
+      return;
+    }
+    // The write is confirmed. Display/refresh failures cannot turn it into a failed payment.
+    if (isSelected(c)) {
+      if (cEl.payAmount && moneyValue(cEl.payAmount.value) === amount) cEl.payAmount.value = "";
+      if (cEl.payNote && String(cEl.payNote.value).trim() === note) cEl.payNote.value = "";
+      setPayStatus("✓ Payment of " + fmtMoney(amount) + " saved.", "is-ok");
+    }
+    try {
+      var complete = await refreshAfterPayment(c, result);
+      if (!complete && isSelected(c)) setPayStatus("Payment of " + fmtMoney(amount) +
+        " was saved. History could not be refreshed; reopen this account to retry the refresh.", "is-warn");
+    } catch (error) {
+      if (isSelected(c)) setPayStatus("Payment of " + fmtMoney(amount) +
+        " was saved, but the account could not be refreshed: " + error.message, "is-warn");
+    } finally {
+      cState.paymentInFlight = false;
+      updateButtons();
+    }
+  }
+  async function deletePayment(id, amountLabel, customer) {
+    if (cState.deleteInFlight || cState.paymentInFlight || cState.editInFlight || !customer || customer.archived || !isSelected(customer) ||
+        cState.historyOwner !== customerKey(customer) || !cState.historyPayments.some(function (p) { return p.id === id; })) return;
+    if (!window.confirm("Delete this payment of " + fmtMoney(amountLabel) + "? The customer's balance will increase by that amount.")) return;
+    cState.deleteInFlight = true;
+    updateButtons();
+    var op, result, profileSeq = cState.profileSeq;
+    try {
+      op = await operationId("payment-delete", { id: id, customerId: customer.id, customer: customer.name });
+      var query = "id=" + encodeURIComponent(id) + "&operationId=" + encodeURIComponent(op);
+      if (customer.id) query += "&customerId=" + encodeURIComponent(customer.id);
+      result = await requestApi("/api/payments?" + query, { method: "DELETE" });
+      finishOperation("payment-delete", op);
+    } catch (error) {
+      if (profileSeq === cState.profileSeq && isSelected(customer)) setPayStatus("Payment deletion was not confirmed: " + error.message + ". Retry to check safely.", "is-warn");
+      cState.deleteInFlight = false;
+      updateButtons();
+      return;
+    }
+    if (profileSeq !== cState.profileSeq || !isSelected(customer)) {
+      cState.deleteInFlight = false;
+      updateButtons();
+      setPageStatus("Payment for " + customer.name + " was deleted.", "is-ok");
+      await refreshSelectedProfile(true);
+      return;
+    }
+    if (isSelected(customer)) setPayStatus("Payment deleted.", "is-ok");
+    try {
+      var complete = await refreshAfterPayment(customer, result);
+      if (!complete && isSelected(customer)) setPayStatus("Payment was deleted. History could not be refreshed.", "is-warn");
+    } catch (error) {
+      if (isSelected(customer)) setPayStatus("Payment was deleted, but the account could not be refreshed: " + error.message, "is-warn");
+    } finally {
+      cState.deleteInFlight = false;
+      updateButtons();
+    }
+  }
+  async function deleteCustomer() {
+    var c = selectedCustomer();
+    if (!c || cState.deleteInFlight || cState.paymentInFlight || cState.editInFlight) return;
+    if (c.archived) return restoreCustomer(c);
+    if (!window.confirm('Archive customer "' + c.name + '"? Their balance, bills and payments will be kept.')) return;
+    cState.deleteInFlight = true;
+    updateButtons();
+    var op;
+    try {
+      op = await operationId("customer-archive", { id: c.id, name: c.name });
+      var query = c.id ? "id=" + encodeURIComponent(c.id) : "name=" + encodeURIComponent(c.name);
+      await requestApi("/api/customers?" + query + "&operationId=" + encodeURIComponent(op), { method: "DELETE" });
+      finishOperation("customer-archive", op);
+    } catch (error) {
+      if (isSelected(c)) setPayStatus("Could not archive customer: " + error.message, "is-warn");
+      cState.deleteInFlight = false;
+      updateButtons();
+      return;
+    }
+    if (isSelected(c)) closeProfile();
+    try {
       await refreshCustomers();
       renderCustomerList();
-
-      var fresh = c && loadCustomers().find(function (x) {
-        return x.name.toLowerCase().trim() === c.name.toLowerCase().trim();
-      });
-      if (fresh) updateBalanceDisplay(fresh.balance);
-
-      setPayStatus("Payment deleted.", "is-ok");
-      if (c) await loadAndRenderBills(c.name);
-    } catch (err) {
-      setPayStatus("Could not delete payment: " + (err.message || "unknown error"), "is-warn");
+      setPageStatus("Customer archived. Their financial history and balance are preserved.", "is-ok");
+    } catch (error) {
+      setPageStatus("Customer was archived, but the list could not be refreshed: " + error.message, "is-warn");
+    } finally {
+      cState.deleteInFlight = false;
+      updateButtons();
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Init
-  // -------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
-  // One-time import of balances that used to live in this browser
-  //
-  // Balances now live in the database. Any customer still carrying a balance in
-  // this browser's localStorage is offered as an import so nothing is lost when
-  // switching over. Runs once per browser.
-  // -------------------------------------------------------------------------
-  var IMPORT_DONE_KEY = "medicineRackTracker.balancesImported.v1";
+  async function restoreCustomer(customer) {
+    if (!window.confirm('Restore customer "' + customer.name + '" for billing and payments? Their balance and history will be unchanged.')) return;
+    cState.deleteInFlight = true;
+    updateButtons();
+    var body = { id: customer.id, originalName: customer.name, name: customer.name,
+      phone: customer.phone, restore: true };
+    if (customer.version != null) body.expectedVersion = customer.version;
+    var op, result;
+    try {
+      op = await operationId("customer-restore", body);
+      body.operationId = op;
+      result = await requestApi("/api/customers", { method: "POST", body: body });
+      if (!result.customer) throw new Error("The server did not confirm the restore. Refresh to check this account.");
+      finishOperation("customer-restore", op);
+    } catch (error) {
+      if (isSelected(customer)) setPayStatus("Restore was not confirmed: " + error.message, "is-warn");
+      cState.deleteInFlight = false;
+      updateButtons();
+      return;
+    }
+    try {
+      await refreshCustomers();
+      renderCustomerList();
+      var fresh = findCustomer(customer);
+      if (fresh && isSelected(fresh)) {
+        renderProfile(fresh);
+        setPayStatus("Customer restored. Their balance and history are unchanged.", "is-ok");
+        await loadAndRenderBills(fresh, cState.profileSeq);
+      }
+      setPageStatus("Customer restored for billing and payments.", "is-ok");
+    } catch (error) {
+      setPageStatus("Customer was restored, but the account could not be refreshed: " + error.message, "is-warn");
+    } finally {
+      cState.deleteInFlight = false;
+      updateButtons();
+    }
+  }
 
   function readLegacyCustomers() {
-    try { return JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]"); } catch (_) { return []; }
+    try {
+      var list = JSON.parse(localStorage.getItem(CUSTOMERS_KEY) || "[]");
+      return Array.isArray(list) ? list : null;
+    } catch (_) { return null; }
   }
-
-  function offerLocalImport() {
+  async function offerLocalImport() {
     if (localStorage.getItem(IMPORT_DONE_KEY)) return;
-
-    var legacy = readLegacyCustomers().filter(function (c) {
-      return c && String(c.name || "").trim() && (parseFloat(c.balance) || 0) !== 0;
-    });
-    if (!legacy.length) {
-      try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
+    var legacyRows = readLegacyCustomers();
+    if (!legacyRows) {
+      setPageStatus("Saved browser balances could not be read. They have been kept for manual review.", "is-warn");
       return;
     }
-
-    // Only import customers whose balance the database doesn't already explain,
-    // so running this twice can't double anyone's opening amount.
-    var pending = legacy.filter(function (c) {
-      var match = customerCache.find(function (x) {
-        return x.name.toLowerCase().trim() === String(c.name).toLowerCase().trim();
+    var seen = new Map();
+    var conflicts = new Set();
+    var invalid = 0;
+    var pending = [];
+    legacyRows.forEach(function (legacy) {
+      var key = nameKey(legacy && legacy.name);
+      var balance = moneyValue(legacy && legacy.balance);
+      if (!key || balance === null) { invalid += 1; return; }
+      if (seen.has(key)) {
+        if (seen.get(key) !== balance) { conflicts.add(key); invalid += 1; }
+        return;
+      }
+      seen.set(key, balance);
+      if (balance === 0) return;
+      var match = customerCache.find(function (c) { return nameKey(c.name) === key; });
+      if (match && (match.archived || match.openingBalance !== 0 || Math.abs(match.balance - balance) < 0.005)) return;
+      pending.push({
+        name: match ? match.name : String(legacy.name).trim(), phone: match && match.phone ? match.phone : String(legacy.phone || ""),
+        balance: balance,
+        expectedBalance: match ? match.balance : 0,
+        expectedOpeningBalance: match ? match.openingBalance : 0,
+        expectedVersion: match ? match.version : null,
       });
-      return !match || match.openingBalance === 0;
     });
+    pending = pending.filter(function (entry) { return !conflicts.has(nameKey(entry.name)); });
     if (!pending.length) {
+      if (invalid) {
+        setPageStatus("Some saved browser balances are invalid or conflict. They have been kept for manual review.", "is-warn");
+        return;
+      }
       try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
       return;
     }
-
-    var total = pending.reduce(function (sum, c) { return sum + (parseFloat(c.balance) || 0); }, 0);
-
-    if (!window.confirm(
-      "This browser still has saved balances for " + pending.length + " customer(s), " +
-      "totalling " + fmtMoney(total) + ".\n\n" +
-      "Import them into the database as opening balances so every device sees them?\n\n" +
-      "Do this on ONE device only — importing again elsewhere would add the amounts twice."
-    )) {
-      return; // ask again next time
+    var preview = pending.slice(0, 10).map(function (c) {
+      return c.name + ": current " + fmtMoney(c.expectedBalance) + " → saved " + fmtMoney(c.balance);
+    }).join("\n");
+    if (!window.confirm("Review these saved browser balances:\n\n" + preview +
+        (pending.length > 10 ? "\n…and " + (pending.length - 10) + " more." : "") +
+        "\n\nReconcile these accounts to the saved amounts? Bills and receipts will be kept, and existing activity will not be added twice. " +
+        "Continue only if the saved amounts are the intended CURRENT balances.")) return;
+    var body = { customers: pending, mode: "reconcile" }, op;
+    try {
+      op = await operationId("legacy-balances", body);
+      body.operationId = op;
+      var result = await requestApi("/api/customers", { method: "PUT", body: body });
+      finishOperation("legacy-balances", op);
+      if (!invalid) { try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {} }
+      setPageStatus("Reconciled saved balances for " + (result.imported || pending.length) + " customer(s)." +
+        (invalid ? " Invalid or conflicting saved balances remain for manual review." : ""), invalid ? "is-warn" : "is-ok");
+      await refreshCustomers();
+      renderCustomerList();
+    } catch (error) {
+      setPageStatus("Balance reconciliation was not confirmed: " + error.message + ". Refresh and review the current accounts before retrying.", "is-error");
     }
-
-    requestApi("/api/customers", {
-      method: "PUT",
-      body: {
-        customers: pending.map(function (c) {
-          return {
-            name: c.name,
-            phone: c.phone || "",
-            // The old running balance becomes the opening anchor; bills already
-            // in the database then chain forward from it.
-            openingBalance: parseFloat(c.balance) || 0,
-          };
-        }),
-      },
-    })
-      .then(function (result) {
-        try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {}
-        setPageStatus("✅ Imported balances for " + result.imported + " customer(s).", "is-ok");
-        return refreshCustomers().then(renderCustomerList);
-      })
-      .catch(function (err) {
-        setPageStatus("Import failed: " + (err.message || "Unknown error"), "is-error");
-      });
   }
-
   function initCustomersPage() {
     if (cState.initialized) return;
     cState.initialized = true;
-
-    if (!isAdmin()) {
-      setPageStatus("Admin access required to view customer profiles.", "is-error");
-      return;
-    }
-
+    if (!isAdmin()) { setPageStatus("Admin access required to view customer profiles.", "is-error"); return; }
     setPageStatus("Loading customers…", "is-info");
-    renderCustomerList();
-
-    refreshCustomers()
-      .then(function () {
-        setPageStatus("", "");
-        renderCustomerList();
-        offerLocalImport();
-      })
-      .catch(function (err) {
-        setPageStatus(
-          "Could not load customers: " + (err.message || "Unknown error") +
-            " — if this is the first run, make sure add-db-balances.sql has been applied.",
-          "is-error"
-        );
-      });
-
-    if (cEl.searchInput) {
-      cEl.searchInput.addEventListener("input", function () {
-        cState.searchQuery = cEl.searchInput.value || "";
-        renderCustomerList();
-      });
-    }
-
-    if (cEl.profileClose) {
-      cEl.profileClose.addEventListener("click", closeProfile);
-    }
-
-    if (cEl.editBtn) {
-      cEl.editBtn.addEventListener("click", function () {
-        if (cEl.editForm && !cEl.editForm.classList.contains("hidden")) {
-          hideEditForm();
-        } else {
-          showEditForm();
-        }
-      });
-    }
-
-    if (cEl.editSaveBtn)   cEl.editSaveBtn.addEventListener("click", saveEdit);
+    refreshCustomers().then(function () {
+      setPageStatus("", "");
+      renderCustomerList();
+      updateButtons();
+      return offerLocalImport();
+    }).catch(function (error) {
+      setPageStatus("Could not load customers: " + error.message, "is-error");
+    });
+    if (cEl.searchInput) cEl.searchInput.addEventListener("input", function () {
+      cState.searchQuery = cEl.searchInput.value || "";
+      renderCustomerList();
+    });
+    if (cEl.profileClose) cEl.profileClose.addEventListener("click", closeProfile);
+    if (cEl.editBtn) cEl.editBtn.addEventListener("click", function () {
+      if (cEl.editForm && !cEl.editForm.classList.contains("hidden")) hideEditForm();
+      else showEditForm();
+    });
+    if (cEl.editBalanceInput) cEl.editBalanceInput.addEventListener("input", function () {
+      if (cState.editSnapshot) cState.editSnapshot.balanceDirty = true;
+    });
+    if (cEl.editSaveBtn) cEl.editSaveBtn.addEventListener("click", saveEdit);
     if (cEl.editCancelBtn) cEl.editCancelBtn.addEventListener("click", hideEditForm);
-    if (cEl.payBtn)        cEl.payBtn.addEventListener("click", recordPayment);
-    if (cEl.deleteBtn)     cEl.deleteBtn.addEventListener("click", deleteCustomer);
-
-    if (cEl.payAmount) {
-      cEl.payAmount.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") recordPayment();
-      });
-    }
+    if (cEl.payBtn) cEl.payBtn.addEventListener("click", recordPayment);
+    if (cEl.deleteBtn) cEl.deleteBtn.addEventListener("click", deleteCustomer);
+    if (cEl.payAmount) cEl.payAmount.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") { event.preventDefault(); recordPayment(); }
+    });
+    window.addEventListener("focus", refreshSelectedProfile);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") refreshSelectedProfile();
+    });
+    updateButtons();
   }
-
-  window.__onCustomersReady = function () {
-    initCustomersPage();
-  };
+  window.__onCustomersReady = initCustomersPage;
 })();

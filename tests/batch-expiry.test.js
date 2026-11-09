@@ -8,7 +8,6 @@
  */
 const fs = require("fs");
 const path = require("path");
-const Module = require("module");
 
 const PROJECT = path.resolve(__dirname, "..");
 const src = fs.readFileSync(path.join(PROJECT, "billing.js"), "utf8");
@@ -40,79 +39,7 @@ function eq(label, actual, expected) {
     (ok ? "" : `\n        expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`));
 }
 
-// ---------------------------------------------------------------------------
-// Fake Supabase, so the API half runs against the real api/bills.js
-// ---------------------------------------------------------------------------
-const real = require(path.join(PROJECT, "lib/supabase-server.js"));
-const db = { bills: [], bill_items: [], payments: [], customers: [], medicines: [] };
-let seq = 0;
-
-const fake = {
-  ...real,
-  getServerConfig: () => ({
-    enabled: true, projectUrl: "https://fake", anonKey: "a", serviceRoleKey: "s",
-    tableName: "medicines", roleTable: "user_roles", adminEmails: ["admin@test"],
-  }),
-  requireAuthContext: async () => ({ user: { id: "u1", email: "admin@test", role: "admin" } }),
-  callSupabaseRest: async (config, pathStr, options = {}) => {
-    const [table, qs] = pathStr.split("?");
-    const params = new URLSearchParams(qs || "");
-    const rows = db[table];
-    if (!rows) throw new Error("unknown table " + table);
-    const method = options.method || "GET";
-
-    const match = (r) => {
-      for (const [key, raw] of params.entries()) {
-        if (["select", "order", "limit", "offset", "on_conflict"].includes(key)) continue;
-        if (raw.startsWith("eq.") && String(r[key]) !== raw.slice(3)) return false;
-        if (raw.startsWith("like.") &&
-            !String(r[key] || "").startsWith(raw.slice(5).replace(/\*/g, ""))) return false;
-      }
-      return true;
-    };
-
-    if (method === "GET") return rows.filter(match);
-    if (method === "POST") {
-      const body = Array.isArray(options.body) ? options.body : [options.body];
-      return body.map((b) => {
-        const row = { id: `${table}-${++seq}`, created_at: new Date().toISOString(), ...b };
-        rows.push(row);
-        return row;
-      });
-    }
-    if (method === "PATCH") {
-      const t = rows.filter(match);
-      t.forEach((r) => Object.assign(r, options.body));
-      return t;
-    }
-    if (method === "DELETE") {
-      const removed = rows.filter(match);
-      db[table] = rows.filter((r) => !match(r));
-      return removed;
-    }
-    throw new Error("unhandled " + method);
-  },
-};
-
-const origLoad = Module._load;
-Module._load = function (request) {
-  if (/supabase-server$/.test(request)) return fake;
-  return origLoad.apply(this, arguments);
-};
-
-const billsApi = require(path.join(PROJECT, "api/bills.js"));
-
-function bills(method, { query = {}, body = null } = {}) {
-  return new Promise((resolve) => {
-    const req = { method, query, body, headers: {} };
-    const res = {
-      statusCode: 200, headers: {},
-      setHeader(k, v) { this.headers[k] = v; },
-      end(t) { resolve({ status: this.statusCode, json: JSON.parse(t || "{}") }); },
-    };
-    billsApi(req, res);
-  });
-}
+const { createFixture } = require("./helpers/financial-fixture");
 
 (async () => {
   console.log("--- expiry typed off a strip normalises to MM/YY ---");
@@ -138,47 +65,37 @@ function bills(method, { query = {}, body = null } = {}) {
   eq("blank", toMonthYear(""), "");
   eq("non-date passes through", toMonthYear("11/27"), "11/27");
 
-  console.log("\n--- a saved bill carries batch and expiry ---");
-  let r = await bills("POST", {
-    body: {
-      customerName: "Ramesh",
-      amountReceived: 0,
-      items: [
-        { medicineName: "Calpol 500", sellPrice: 10, quantity: 3,
-          batchNo: "B2231", expiry: "11/27" },
-        { medicineName: "Crocin", sellPrice: 20, quantity: 1 },
-      ],
-    },
-  });
+  const fixture = await createFixture();
+  try {
+  console.log("\n--- the staged atomic API persists batch and expiry ---");
+  let r = await fixture.createBill("Ramesh", [
+    { medicineName: "Calpol 500", sellPrice: 10, quantity: 3, batchNo: "B2231", expiry: "11/27" },
+    { medicineName: "Crocin", sellPrice: 20, quantity: 1 },
+  ], { amountReceived: 0 });
   eq("bill saved", r.status, 200);
-
-  const saved = db.bill_items.filter((i) => i.bill_id === r.json.bill.id)
-    .sort((a, b) => a.sort_order - b.sort_order);
+  const billId = r.json.bill.id;
+  const saved = (await fixture.pg.query(
+    "SELECT * FROM public.bill_items WHERE bill_id=$1 ORDER BY sort_order", [billId]
+  )).rows;
   eq("batch stored", saved[0].batch_no, "B2231");
   eq("expiry stored", saved[0].expiry, "11/27");
   eq("an unrecorded batch is null, not empty string", saved[1].batch_no, null);
   eq("an unrecorded expiry is null", saved[1].expiry, null);
 
   console.log("\n--- reading the bill back returns them ---");
-  r = await bills("GET", { query: { id: r.json.bill.id } });
+  r = await fixture.request("bills", "GET", { query: { id: billId } });
   const back = r.json.items.sort((a, b) => a.sort_order - b.sort_order);
   eq("batch round-trips", back[0].batch_no, "B2231");
   eq("expiry round-trips", back[0].expiry, "11/27");
 
   console.log("\n--- editing a bill can add a batch to an existing line ---");
-  const billId = back[0].bill_id;
-  await bills("PUT", {
-    body: {
-      id: billId,
-      customerName: "Ramesh",
-      amountReceived: 0,
-      items: [
-        { medicineName: "Calpol 500", sellPrice: 10, quantity: 3,
-          batchNo: "B9999", expiry: "01/28" },
-      ],
-    },
-  });
-  const edited = db.bill_items.filter((i) => i.bill_id === billId);
+  r = await fixture.updateBill(billId, { items: [
+    { medicineName: "Calpol 500", sellPrice: 10, quantity: 3, batchNo: "B9999", expiry: "01/28" },
+  ] });
+  eq("versioned edit succeeds", r.status, 200);
+  const edited = (await fixture.pg.query(
+    "SELECT * FROM public.bill_items WHERE bill_id=$1", [billId]
+  )).rows;
   eq("one line after edit", edited.length, 1);
   eq("batch updated", edited[0].batch_no, "B9999");
   eq("expiry updated", edited[0].expiry, "01/28");
@@ -195,6 +112,8 @@ function bills(method, { query = {}, body = null } = {}) {
   eq("receipt does not print a batch number", receipt.includes("B.No"), false);
   eq("receipt does not print an expiry", receipt.includes("Exp: "), false);
 
+  } finally { await fixture.close(); }
+
   console.log(fails ? `\n${fails} FAILED` : "\nall batch/expiry assertions passed");
   process.exit(fails ? 1 : 0);
-})();
+})().catch((error) => { console.error(error); process.exitCode = 1; });

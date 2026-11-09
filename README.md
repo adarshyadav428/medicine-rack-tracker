@@ -22,9 +22,12 @@ The frontend uses HTML, CSS, and vanilla JavaScript. Vercel runs the Node.js han
 From the repository root, run:
 
 ```sh
-node tests/run-all.js
+npm ci
+npm test
 ```
 
-The suite uses local fixtures for the database, so it needs no credentials or package install. See [the test guide](tests/README.md) for coverage and individual commands.
+The financial API tests run the staged migration in isolated embedded PostgreSQL (PGlite). The pinned test dependency is installed by npm ci; no live database credentials are needed. See [the test guide](tests/README.md) for coverage and individual commands.
 
 To run the app with a backend, use your own Supabase project and copy [`.env.example`](.env.example) to `.env.local` for local Vercel development. The SQL files in this repo are incremental changes for an existing database; they don't create the full schema from scratch.
+
+Billing now requires the staged atomic-ledger migration and matching API/frontend deployment. Read [billing integrity rollout and finding coverage](docs/billing-integrity-fixes.md) before upgrading an existing shop. Production data is not repaired or migrated automatically.
