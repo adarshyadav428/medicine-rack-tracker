@@ -841,6 +841,18 @@ async function refreshItemsFromCloud() {
 }
 
 function renderHeaderSession() {
+  var profitLink = document.querySelector('.site-nav a[data-profit-link]');
+  var canViewProfit = isAdmin() && state.auth.user && state.auth.user.canViewProfit === true;
+  var accessLink = document.querySelector('.site-nav a[href="access.html"]');
+  if (canViewProfit && !profitLink && accessLink) {
+    profitLink = document.createElement("a");
+    profitLink.href = "profit.html";
+    profitLink.dataset.profitLink = "true";
+    profitLink.textContent = "Profit";
+    accessLink.insertAdjacentElement("afterend", profitLink);
+  } else if (!canViewProfit && profitLink) {
+    profitLink.remove();
+  }
   if (elements.headerUser) {
     if (isAuthenticated()) {
       elements.headerUser.textContent = `${state.auth.user.email} (${state.auth.role})`;

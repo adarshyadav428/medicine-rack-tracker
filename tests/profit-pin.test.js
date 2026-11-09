@@ -4,12 +4,14 @@
  */
 const path = require("path");
 const Module = require("module");
+process.env.PROFIT_OWNER_EMAIL = "admin@test";
 
 const PROJECT = path.resolve(__dirname, "..");
 const real = require(path.join(PROJECT, "lib/supabase-server.js"));
 
 const db = { bills: [], bill_items: [], app_settings: [] };
 let seq = 0;
+let dbRequests = 0;
 
 function parseQuery(pathStr) {
   const [table, qs] = pathStr.split("?");
@@ -27,6 +29,7 @@ function matches(row, params) {
 const fake = {
   ...real,
   callSupabaseRest: async (config, pathStr, options = {}) => {
+    dbRequests++;
     const { table, params } = parseQuery(pathStr);
     const rows = db[table];
     if (!rows) throw new Error("unknown table " + table);
@@ -54,6 +57,7 @@ const fake = {
 
 // Auth is stubbed out; these tests are about the PIN layer sitting on top of it.
 let currentRole = "admin";
+let currentEmail = "admin@test";
 fake.getServerConfig = () => ({
   enabled: true, projectUrl: "https://fake", anonKey: "a",
   serviceRoleKey: "service-role-secret", tableName: "medicines",
@@ -64,7 +68,7 @@ fake.requireAuthContext = async (req, res, config, options = {}) => {
     fake.sendJson(res, 403, { error: "Admin access required." });
     return null;
   }
-  return { user: { id: "u1", email: "admin@test", role: currentRole } };
+  return { user: { id: "u1", email: currentEmail, role: currentRole } };
 };
 
 const origLoad = Module._load;
@@ -193,6 +197,18 @@ function eq(label, actual, expected) {
   db.app_settings.find((s) => s.key === "profit_pin_fails").value =
     JSON.stringify({ count: 0, lockedUntil: 0 });
   eq("new PIN works", (await pin("POST", { body: { pin: "5678" } })).status, 200);
+
+  console.log("\n--- another admin cannot view profit or manage its PIN ---");
+  currentEmail = "other-admin@test";
+  const requestsBefore = dbRequests;
+  eq("profit refused even with the owner's unlock cookie", (await profit("GET", { query: { period: "all" } })).status, 403);
+  for (const method of ["GET", "POST", "PUT", "DELETE"]) {
+    const denied = await pin(method, { body: { pin: "5678", currentPin: "5678", newPin: "9999" } });
+    eq(method + " PIN route refuses another admin", [denied.status, denied.json.code], [403, "PROFIT_OWNER_REQUIRED"]);
+  }
+  eq("denied admin never reaches confidential database reads/writes", dbRequests, requestsBefore);
+  currentEmail = "admin@test";
+  eq("owner still has access", (await profit("GET", { query: { period: "all" } })).status, 200);
 
   console.log("\n--- a non-admin never gets as far as the PIN ---");
   currentRole = "staff";

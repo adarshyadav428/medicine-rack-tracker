@@ -3700,6 +3700,7 @@
     ready: function () { return bState.initialized && isAdmin(); },
     snapshot: function () {
       return {
+        canViewProfit: isAdmin() && !!state.auth.user && state.auth.user.canViewProfit === true,
         items: bState.lineItems.map(function (item) { return Object.assign({}, item); }),
         customers: loadSavedCustomers().map(function (customer) { return Object.assign({}, customer); }),
         id: bState.currentBillId,

@@ -7,8 +7,8 @@
  *   PUT  { currentPin, newPin }  -> change an existing PIN
  *   DELETE                       -> lock this session again
  *
- * Every route is admin-only on top of the PIN itself, so the PIN is a second
- * gate rather than the only one.
+ * Every route requires the configured owner account with an active admin role.
+ * The PIN is a second gate for that owner.
  */
 const {
   allowMethods,
@@ -34,6 +34,7 @@ const {
   validatePinFormat,
   verifyPin,
 } = require("../lib/profit-pin");
+const {requireProfitOwner} = require("../lib/profit-access");
 
 function setUnlockCookie(res, token) {
   appendSetCookies(res, [createCookie(UNLOCK_COOKIE, token, UNLOCK_TTL_SECONDS)]);
@@ -51,6 +52,8 @@ module.exports = async (req, res) => {
   try {
     const authContext = await requireAuthContext(req, res, config, { adminOnly: true });
     if (!authContext) return;
+    if (!requireProfitOwner(authContext,res)) return;
+    res.setHeader("Cache-Control","no-store");
 
     const email = authContext.user.email;
     const storedHash = await getStoredPinHash(config);

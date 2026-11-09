@@ -107,6 +107,7 @@ Additional browser suites (Playwright and a Chromium executable required):
 ```sh
 node tests/billing-save.browser.cjs
 node tests/customers-page.browser.cjs
+node tests/profit-owner-range.browser.cjs
 ```
 
 The first checks draft locks, persisted printing and exact lost-response replay.
@@ -115,3 +116,14 @@ RPCs, including the opening200 → debt900 → payment200 → debt700 → next b
 debt1000 sequence and reload/second-session consistency. Browser suites use only
 local test servers. Set PLAYWRIGHT_MODULE and PLAYWRIGHT_CHROMIUM_EXECUTABLE when
 using an externally installed Playwright/browser.
+
+The profit browser suite runs the real auth response, profit and PIN handlers
+against a local REST fixture. It checks desktop/phone owner navigation, denial
+for another admin, inclusive IST dates on a browser in another timezone, invalid
+ranges, late responses and server-side locking. Screenshots go to the temporary
+`medicine-profit-owner-qa` directory. It does not verify deployed RLS policies.
+
+Profit ownership defaults to the primary admin in `supabase-rbac-setup.sql`.
+To use another account, set the server-only `PROFIT_OWNER_EMAIL`; that account
+must also have an active admin role. Other admins cannot use the profit or PIN
+endpoints. No new SQL migration is needed for this owner/date-range change.
