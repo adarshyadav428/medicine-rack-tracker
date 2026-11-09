@@ -34,6 +34,10 @@
     customerLastPrices: Object.create(null),        // { medicineName.toLowerCase(): { sellPrice, markupPercent } }
     soldCounts: Object.create(null),                // { medicineName.toLowerCase(): { count, lastSoldAt } }
     customerLastPricesFor: null,   // lowercase customer name these prices belong to
+    customerPriceStatus: "idle",
+    customerPriceRequest: null,
+    globalPriceStatus: "idle",
+    globalPriceRequest: null,
   };
 
   // -------------------------------------------------------------------------
@@ -831,33 +835,104 @@
 
   // Fetch and cache the last sell price for each medicine sold to a customer.
   // Fires async (fire-and-forget) so it never blocks the UI.
-  function loadCustomerLastPrices(custName) {
+  function loadCustomerLastPrices(custName, options) {
     var cname = normalizeString(custName);
     if (!cname) {
       bState.customerLastPrices    = Object.create(null);
       bState.customerLastPricesFor = null;
-      return;
+      bState.customerPriceRequest = null;
+      bState.customerPriceStatus = "none";
+      priceHistoryChanged();
+      return Promise.resolve();
     }
     var key = cname.toLowerCase();
-    if (bState.customerLastPricesFor === key) return; // already cached for this customer
-
-    // Mark immediately so parallel calls don't fire duplicate requests
+    if (bState.customerPriceRequest && bState.customerPriceRequest.key === key) return bState.customerPriceRequest.promise;
+    if (!(options && options.force) && bState.customerLastPricesFor === key && bState.customerPriceStatus === "ready") return Promise.resolve();
+    if (bState.customerLastPricesFor !== key) bState.customerLastPrices = Object.create(null);
     bState.customerLastPricesFor = key;
-    bState.customerLastPrices = Object.create(null);
-
-    requestApi("/api/bills?lastprices=1&customer=" + encodeURIComponent(cname), { method: "GET" })
+    bState.customerPriceStatus = "loading";
+    var owner = { key: key, promise: null };
+    bState.customerPriceRequest = owner;
+    priceHistoryChanged();
+    // Selecting a different customer also refreshes the shop-wide comparison.
+    if (typeof loadSoldCounts === "function") loadSoldCounts({ force: true });
+    owner.promise = requestApi("/api/bills?lastprices=1&customer=" + encodeURIComponent(cname), { method: "GET" })
       .then(function (result) {
-        // Only apply if the customer hasn't changed while the request was in flight
-        if (bState.customerLastPricesFor === key) {
-          bState.customerLastPrices = Object.assign(Object.create(null), result.priceMap || {});
+        if (!result || !result.priceMap || typeof result.priceMap !== "object" || Array.isArray(result.priceMap)) throw new Error("Incomplete customer price history");
+        // Request identity also rejects an old Alice reply after Alice → Bob → Alice.
+        if (bState.customerPriceRequest === owner && bState.customerLastPricesFor === key) {
+          bState.customerLastPrices = Object.assign(Object.create(null), result.priceMap);
+          bState.customerPriceStatus = "ready";
         }
       })
       .catch(function () {
-        if (bState.customerLastPricesFor === key) {
-          bState.customerLastPrices = Object.create(null);
-          bState.customerLastPricesFor = null;
+        if (bState.customerPriceRequest === owner) {
+          // Keep a same-customer reference, but label it unavailable/stale.
+          bState.customerPriceStatus = "error";
+        }
+      }).finally(function () {
+        if (bState.customerPriceRequest === owner) {
+          bState.customerPriceRequest = null;
+          priceHistoryChanged();
         }
       });
+    return owner.promise;
+  }
+
+  function priceHistoryChanged() {
+    if (typeof notifyBillingChange === "function") notifyBillingChange("priceHistory");
+  }
+
+  function priceCustomerName() {
+    var name = normalizeString(bEl.customerName.value);
+    if (bState.currentBillId && name === billIssuedName && billCustomerId) {
+      var customer = loadSavedCustomers().find(function (c) { return c.id === billCustomerId; });
+      if (customer) return customer.name;
+    }
+    return name;
+  }
+
+  function refreshPriceHistory(options) {
+    if (options && options.invalidate) {
+      // Reads started before a confirmed write cannot become the new reference.
+      bState.customerPriceRequest = null;
+      bState.globalPriceRequest = null;
+    }
+    return Promise.all([
+      loadCustomerLastPrices(priceCustomerName(), options),
+      loadSoldCounts(options)
+    ]);
+  }
+
+  function getPriceInfo(medicineId) {
+    var medicine = state.items.find(function (item) { return item.id === medicineId; });
+    if (!medicine) return null;
+    function recorded(value) {
+      if (value === null || value === undefined || value === "") return null;
+      var number = Number(value);
+      return Number.isFinite(number) && number >= 0 ? number : null;
+    }
+    var key = normalizeString(medicine.medicineName).toLowerCase();
+    var customerName = priceCustomerName();
+    var ownsCustomer = bState.customerLastPricesFor === customerName.toLowerCase();
+    var customerPrice = ownsCustomer ? bState.customerLastPrices[key] : null;
+    var sold = bState.soldCounts[key];
+    var chosen = pickSellPrice(medicine, customerPrice, sold);
+    return {
+      mrp: recorded(medicine.mrp),
+      purchasePrice: recorded(medicine.purchasePrice != null ? medicine.purchasePrice : medicine.rate),
+      inventoryRate: recorded(medicine.sellingPrice != null ? medicine.sellingPrice : medicine.sellPrice),
+      suggestedRate: chosen.sellPrice,
+      source: chosen.source,
+      customerLastRate: customerPrice ? recorded(customerPrice.sellPrice) : null,
+      latestSoldRate: sold ? recorded(sold.lastSellPrice) : null,
+      latestSoldAt: sold && sold.lastSoldAt || null,
+      customerStatus: !customerName ? "none" : ownsCustomer ? bState.customerPriceStatus || "idle" : "idle",
+      globalStatus: bState.globalPriceStatus || "idle",
+      stock: recorded(medicine.quantity),
+      seller: medicine.seller || "",
+      location: medicine.location || ""
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -991,14 +1066,30 @@
    * Sold-counts are a ranking hint, so a failure here is silent — the search
    * still works, it just loses the history weighting.
    */
-  function loadSoldCounts() {
-    requestApi("/api/bills?soldcounts=1", { method: "GET" })
+  function loadSoldCounts(options) {
+    if (bState.globalPriceRequest) return bState.globalPriceRequest.promise;
+    if (!(options && options.force) && bState.globalPriceStatus === "ready") return Promise.resolve();
+    var owner = { promise: null };
+    bState.globalPriceRequest = owner;
+    bState.globalPriceStatus = "loading";
+    priceHistoryChanged();
+    owner.promise = requestApi("/api/bills?soldcounts=1", { method: "GET" })
       .then(function (result) {
-        bState.soldCounts = (result && result.counts) || {};
+        if (!result || !result.counts || typeof result.counts !== "object" || Array.isArray(result.counts)) throw new Error("Incomplete sale price history");
+        if (bState.globalPriceRequest === owner) {
+          bState.soldCounts = Object.assign(Object.create(null), result.counts);
+          bState.globalPriceStatus = "ready";
+        }
       })
       .catch(function () {
-        bState.soldCounts = {};
+        if (bState.globalPriceRequest === owner) bState.globalPriceStatus = "error";
+      }).finally(function () {
+        if (bState.globalPriceRequest === owner) {
+          bState.globalPriceRequest = null;
+          priceHistoryChanged();
+        }
       });
+    return owner.promise;
   }
 
   /**
@@ -1345,7 +1436,13 @@
     if (typeof window.showMedicineSalesModal !== "function") return;
     window.showMedicineSalesModal(medicineName, {
       onOpenBill: function (billId) { viewBillInModal(billId); },
-      onClose: function () { if (bEl.search) bEl.search.focus(); },
+      onClose: function () {
+        if (document.body.classList.contains("phone-billing-active")) {
+          var phone = document.getElementById("phone-billing");
+          var focus = document.getElementById(phone && phone.dataset.screen === "item" ? "phone-item-qty" : "phone-item-search");
+          if (focus) focus.focus({ preventScroll: true });
+        } else if (bEl.search) bEl.search.focus();
+      },
     });
   }
 
@@ -2031,6 +2128,7 @@
       setBillSyncStatus("Bill saved. It can now be opened from History on your other devices.", false);
       if (!payload.id) rememberSoldPrices(payload.items);
       pendingBillOperation = null;
+      refreshPriceHistory({ force: true, invalidate: true });
       if (bEl.billNumberPreview) bEl.billNumberPreview.textContent = bState.currentBillNumber;
       setSaveStatus("Bill " + bState.currentBillNumber + " saved successfully.", "is-ok");
       try { await loadBillHistory(); await refreshSavedCustomers(); }
@@ -3466,10 +3564,16 @@
     if (syncReload) syncReload.addEventListener("click", function () {
       if (bState.currentBillId) loadBillForEdit(bState.currentBillId);
     });
-    setInterval(syncSavedBills, 15000);
+    setInterval(syncSavedBills, 2000);
     window.addEventListener("focus", syncSavedBills);
+    window.addEventListener("focus", function () { if (isAdmin()) refreshPriceHistory({ force: true }); });
     window.addEventListener("online", syncSavedBills);
-    document.addEventListener("visibilitychange", function () { if (!document.hidden) syncSavedBills(); });
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) {
+        syncSavedBills();
+        if (isAdmin()) refreshPriceHistory({ force: true });
+      }
+    });
 
     // A bill always starts with a medicine, so start with the cursor there.
     setTimeout(function () {
@@ -3620,12 +3724,19 @@
       input.dispatchEvent(new Event(eventName || "input", { bubbles: true }));
     },
     search: function (query) { return rankSearchResults(state.items, query.toLowerCase().trim()).slice(0, 40); },
+    priceInfo: getPriceInfo,
+    refreshPriceHistory: refreshPriceHistory,
+    lineTotal: lineMoney,
+    salesHistory: function (medicineId) {
+      var medicine = state.items.find(function (item) { return item.id === medicineId; });
+      if (medicine) return openMedicineSalesModal(medicine.medicineName);
+    },
     draft: function (medicineId) {
       var medicine = state.items.find(function (item) { return item.id === medicineId; });
       if (!medicine) return null;
-      var key = (medicine.medicineName || "").toLowerCase().trim();
-      var chosen = pickSellPrice(medicine, bState.customerLastPrices[key], bState.soldCounts[key]);
-      var purchase = medicine.purchasePrice != null ? medicine.purchasePrice : medicine.rate;
+      var info = getPriceInfo(medicineId);
+      var chosen = { sellPrice: info.suggestedRate, source: info.source, soldAt: info.source === "history" ? info.latestSoldAt : null };
+      var purchase = info.purchasePrice;
       return { medicineId: medicine.id, medicineName: medicine.medicineName, quantity: 1,
         sellPrice: Number(chosen.sellPrice) || 0, purchasePrice: purchase == null ? null : Number(purchase),
         mrp: medicine.mrp, markupPercent: computeMarkup(purchase, chosen.sellPrice),

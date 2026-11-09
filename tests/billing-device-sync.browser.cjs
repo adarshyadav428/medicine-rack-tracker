@@ -86,6 +86,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await phone.locator("#phone-item-qty").fill("0.0001"); await phone.locator("#phone-save").click();
     check("phone rejects unsupported item precision before adding", [await phone.locator("#phone-billing").getAttribute("data-screen"), (await snapshot(phone)).items[0].quantity], ["item", 3]);
     await phone.locator("#phone-item-qty").fill("3");
+    await phone.locator(".phone-item-details summary").click();
     await phone.locator("#phone-item-batch").fill("PHONE-B123"); await phone.locator("#phone-item-expiry").fill("11/27");
     await phone.locator("#phone-save").click();
     await phone.locator("#phone-received").fill("-5"); await phone.locator("#phone-save").click();
@@ -159,7 +160,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     check("final account remains consolidated", Number((await fixture.customer("Alice")).balance), 430);
 
     await fixture.updateBill(billId, { notes: "Periodic remote update" });
-    await pc.waitForFunction(() => window.MedicineBilling.snapshot().notes === "Periodic remote update", null, { timeout: 20000 });
+    await pc.waitForFunction(() => window.MedicineBilling.snapshot().notes === "Periodic remote update", null, { timeout: 6000 });
     check("visible page automatically polls for saved changes", (await snapshot(pc)).notes, "Periodic remote update");
     await pc.locator("#bill-history-search").fill("NO-MATCH");
     await pc.waitForFunction(() => document.querySelector("#bill-history-container").textContent.includes("No bills match"));
@@ -172,6 +173,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await phone.locator("#phone-received").focus();
     await fixture.updateBill(billId, { amountReceived: 80 });
     await refresh(phone);
+    await phone.waitForFunction(() => window.MedicineBilling.snapshot().received === 80 && document.querySelector("#phone-received").value === "80", null, { timeout: 6000 });
     check("remote partial payment replaces a previous Paid in full mode exactly", (await snapshot(phone)).received, 80);
     check("saved remote changes update a focused untouched phone field", await phone.locator("#phone-received").inputValue(), "80");
 
@@ -189,9 +191,21 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await accountPhone.locator("#cust-pay-amount").fill("20");
     await accountPhone.locator("#cust-pay-btn").click();
     await accountPhone.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹400.00" && !document.querySelector("#cust-pay-btn").disabled);
-    await accountPC.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await accountPC.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹400.00" && !document.querySelector("#cust-pay-btn").disabled);
+    await accountPC.waitForFunction(() => document.querySelector("#cust-profile-balance").textContent === "₹400.00" && Array.from(document.querySelectorAll(".payment-row .cust-received")).some(el => el.textContent === "₹20.00"), null, { timeout: 6000 });
+    check("payment syncs automatically without refresh or focus", await accountPC.locator("#cust-profile-balance").innerText(), "₹400.00");
     check("phone standalone payment syncs PC dues and history", [(await accountPC.locator("#cust-bills-container").innerText()).includes("20.00"), await accountPC.locator("#cust-edit-phone-input").inputValue(), await accountPC.locator("#cust-pay-amount").inputValue()], [true, "Unsaved contact", "5"]);
+    check("received payments and debt increases have distinct readable colours", await accountPC.evaluate(() => ({
+      received: getComputedStyle(document.querySelector(".payment-row .cust-received")).color,
+      added: getComputedStyle(document.querySelector(".cust-debt-added")).color,
+      label: document.querySelector(".payment-history-label").textContent.includes("Payment received")
+    })), { received: "rgb(22, 101, 52)", added: "rgb(180, 35, 44)", label: true });
+    check("phone history uses financial labels instead of medicine-entry labels", await accountPhone.evaluate(() => [
+      getComputedStyle(document.querySelector(".payment-row td:nth-child(6)"), "::before").content,
+      getComputedStyle(document.querySelector(".payment-row td:nth-child(7)"), "::before").content,
+      document.documentElement.scrollWidth <= innerWidth
+    ]), ['"Received"', '"Net change"', true]);
+    await accountPC.screenshot({path:require("node:os").tmpdir()+"/medicine-customers-colours-desktop.png",fullPage:true});
+    await accountPhone.screenshot({path:require("node:os").tmpdir()+"/medicine-customers-colours-phone.png",fullPage:true});
     await refresh(phone);
     check("Billing refreshes its existing customer cache", (await snapshot(phone)).customers.find(c => c.name === "Alice").balance, 400);
     check("current dues do not rewrite historical previous balance", (await snapshot(phone)).previousBalance, 200);
@@ -217,7 +231,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     check("Billing picks up renamed customer without page reload", (await snapshot(phone)).customers.some(c => c.name === "Alice Renamed" && c.balance === 490), true);
     check("dropdown keeps the stable customer on a historical renamed bill", await phone.locator("#phone-saved-customer").inputValue(), aliceId);
     await fixture.createCustomer("New remote account", 75);
-    await accountPC.waitForFunction(() => document.querySelector("#cust-list").textContent.includes("New remote account"), null, { timeout: 20000 });
+    await accountPC.waitForFunction(() => document.querySelector("#cust-list").textContent.includes("New remote account"), null, { timeout: 6000 });
     check("Customers periodically syncs additions while a profile is open", (await accountPC.locator("#cust-list").innerText()).includes("New remote account"), true);
     await accountPC.evaluate(() => {
       localStorage.setItem("medicineRackTracker.balancesImported.v1", "1");

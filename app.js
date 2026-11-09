@@ -106,7 +106,8 @@ function safeListen(element, eventName, handler) {
 }
 
 function normalizeString(value) {
-  return String(value || "").trim();
+  // Zero is a recorded stock/price value, not an absent field.
+  return String(value === 0 ? 0 : value || "").trim();
 }
 
 function normalizePositiveInteger(value) {

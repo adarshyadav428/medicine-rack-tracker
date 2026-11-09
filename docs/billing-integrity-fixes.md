@@ -1,5 +1,51 @@
 # Billing integrity fixes
 
+## Phone counter workflow and visible price references — 9 November 2026
+
+Phone medicine search exposes MRP, purchase price, inventory selling rate and
+separately labelled customer/overall historical rates before item selection.
+Inventory rows keep their own IDs, supplier, rack, stock and prices even when
+names repeat. History continues to use the existing normalized-name matching
+used by PC; this change does not invent product/SKU associations.
+
+The compact item editor keeps reference prices above quantity and selling rate.
+Optional batch/expiry/markup/MRP editing remains under More details. Add &
+continue returns to the preserved, selected search query; Add & review bill
+returns to the bill. Editing offers Save changes or Cancel. A secondary sales
+history action preserves the current draft. Search/item screens use a compact
+sync indicator instead of the large routine sync notice.
+
+Price-history refreshes are coalesced and scoped to the current customer.
+References may refresh asynchronously, but a typed selling rate is changed only
+by the user. Loading, unavailable and no previous sale remain distinct; missing
+stock is not displayed as zero. These changes use the existing API and schema.
+Numeric zero stock/MRP/prices now survive the shared inventory normalizer, and
+the focused phone input is kept above the action bar when the viewport shrinks
+for the keyboard. The customer test harness awaits initial loading/reconciliation
+instead of relying on an arbitrary number of event-loop turns.
+
+Local verification: npm test passed 594 assertions across 23 files. The new
+phone-pricing browser suite passed 35 real API/PostgreSQL checks, including
+320/390/430-pixel and short keyboard-height layouts. Existing phone flows,
+saved-receipt/ownership/retry and customer payment browser suites also passed.
+Production deployment and physical Safari keyboard smoke testing remain rollout
+checks; no production financial records or schema were changed.
+
+## Faster automatic sync and customer ledger colours — 9 November 2026
+
+Billing and Customers now check automatically every two seconds while visible,
+as well as on focus/reconnect. This replaces the previous 15-second interval;
+network/server latency still affects arrival time. No refresh click is required.
+Only one refresh per page runs at a time. Customer background reads leave
+payment controls usable, keep unchanged list/history markup in place, preserve
+drafts and invalidate late responses when a financial write starts.
+
+Customer history uses green received amounts/payment rows/debt reductions, red
+charges/debt increases, blue credits, and text labels/legend. Payment controls
+use green as well. These styles are scoped to Customers. Phone cards now use
+Received, Net change, Bill total and Date labels instead of the generic medicine
+entry table's Qty/Sell labels. No database migration is required.
+
 ## Phone billing control parity — 9 November 2026
 
 Phone billing now has a labeled native saved-customer dropdown, including phone

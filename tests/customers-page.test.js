@@ -69,7 +69,7 @@ async function page(server,storage=new Map([["medicineRackTracker.balancesImport
  const nodes=new Map(),events=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,new Element(id));return nodes.get(id);};
  const localStorage={getItem(k){return storage.has(k)?storage.get(k):null;},setItem(k,v){storage.set(k,String(v));},removeItem(k){storage.delete(k);}};
  const context={document:{body:{dataset:{page:"customers"}},visibilityState:"visible",getElementById:node,addEventListener(t,f){events.set("document:"+t,f);}},window:{crypto:webcrypto,confirm(){return true;},setInterval(f){events.set("poll",f);},addEventListener(t,f){events.set("window:"+t,f);}},localStorage,TextEncoder,Uint8Array,requestApi:server.request,isAdmin:()=>true,isAuthenticated:()=>true,console,setTimeout,clearTimeout};
- vm.runInNewContext(expose,context,{filename:"customers.js"});context.window.__onCustomersReady();await drain();
+ vm.runInNewContext(expose,context,{filename:"customers.js"});await context.window.__onCustomersReady();await drain();
  return{api:context.customerPage,node,storage,events};
 }
 let assertions=0;
@@ -164,6 +164,15 @@ async function pay(p,amount){p.node("cust-pay-amount").value=String(amount);awai
   const s=backend([]),storage=new Map([["medicineRackTracker.balancesImported.v1","1"],["medicineRackTracker.customers.v1",JSON.stringify([{name:"Old browser customer",balance:0,phone:"123"}])]]),p=await page(s,storage);
   await p.node("cust-review-browser").emit("click");await drain();
   check("explicit review recovers a missing zero-due customer despite old import marker",s.calls.some(c=>c.method==="PUT"&&c.body.customers[0].name==="Old browser customer"&&c.body.customers[0].balance===0),true);
+ }
+ {
+  const s=backend([customer("a","Alice",1000)]),p=await page(s);await select(p,"a");
+  const reached=deferred(),release=deferred();let held=false;
+  s.hook=async(c,phase)=>{if(!held&&phase==="after"&&c.path==="/api/payments"&&c.method==="GET"){held=true;reached.resolve();await release.promise;}};
+  const refreshing=p.events.get("poll")();await reached.promise;
+  check("background sync leaves payment controls enabled",p.node("cust-pay-btn").disabled,false);
+  await pay(p,200);release.resolve();await refreshing;
+  check("late background history cannot undo a just-saved receipt",[p.node("cust-profile-balance").textContent,p.node("cust-bills-container").innerHTML.includes("200.00")],["₹800.00",true]);
  }
  console.log(assertions+" customer-page assertions passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

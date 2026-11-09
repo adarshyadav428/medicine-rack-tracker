@@ -78,11 +78,11 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('#phone-item-qty').fill('5');
   assert.equal(await page.locator('#phone-item-subtotal').textContent(),'₹898.00');
   await page.screenshot({path:path.join(qaDir,'item-entry.png')});
-  await page.locator('#phone-save-new').tap();
+  await page.locator('#phone-save').tap();
   assert.equal(await page.locator('#phone-search-screen').isVisible(),true);
   await page.locator('#phone-item-search').fill('ghrit');
   await page.locator('[data-medicine="ghrit"]').tap();
-  await page.locator('#phone-save').tap();
+  await page.locator('#phone-save-new').tap();
   assert.equal(await page.locator('.phone-billed-item').count(),2);
   assert.equal(await page.locator('#phone-total').textContent(),'₹1076.00');
   assert.equal(await page.locator('#phone-received').inputValue(),'1076');
@@ -128,7 +128,7 @@ const server=http.createServer(async(req,res)=>{
   assert.equal(await page.locator('#phone-received').inputValue(),'0');
   // Cash/credit does not erase a partial amount after an unrelated redraw.
   await page.locator('#phone-customer').fill('Next Customer');await page.locator('#phone-add-items').tap();
-  await page.locator('#phone-item-search').fill('ghrit');await page.locator('[data-medicine="ghrit"]').tap();await page.locator('#phone-save').tap();
+  await page.locator('#phone-item-search').fill('ghrit');await page.locator('[data-medicine="ghrit"]').tap();await page.locator('#phone-save-new').tap();
   await page.locator('[data-payment="credit"]').tap();assert.equal(await page.locator('#phone-received').inputValue(),'0');
   await page.locator('#phone-received').fill('50');
   await page.locator('#phone-tax-input').fill('5');
@@ -138,7 +138,7 @@ const server=http.createServer(async(req,res)=>{
   // Explicit desktop received edits survive a responsive layout transition.
   // The old phone cash lock overwrote 20 with the full total on return.
   await page.locator('#phone-add-items').tap();await page.locator('#phone-item-search').fill('ghrit');
-  await page.locator('[data-medicine="ghrit"]').tap();await page.locator('#phone-save').tap();
+  await page.locator('[data-medicine="ghrit"]').tap();await page.locator('#phone-save-new').tap();
   await page.locator('[data-payment="cash"]').tap();
   await page.setViewportSize({width:1200,height:844});
   await page.waitForFunction(()=>!document.body.classList.contains('phone-billing-active'));

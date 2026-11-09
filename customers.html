@@ -18,6 +18,7 @@
     />
     <link rel="stylesheet" href="styles.css?v=20260605-customers" />
     <link rel="stylesheet" href="mobile.css?v=20261031-compact" />
+    <link rel="stylesheet" href="customers-ledger.css?v=20261109-fast-sync" />
   </head>
   <body data-page="customers">
     <div class="transition-curtain" aria-hidden="true"></div>
@@ -60,8 +61,8 @@
 
       <!-- ── Two-column layout ──────────────────────────────────── -->
       <section class="panel" aria-label="Customer sync">
-        <p id="cust-sync-status" class="status-message" role="status">Customer accounts are shared across devices. Checking for updates every 15 seconds.</p>
-        <button id="cust-sync-refresh" class="btn btn-ghost btn-xs" type="button">Refresh customer accounts</button>
+        <p id="cust-sync-status" class="status-message" role="status">Automatic sync is on. Updates are checked every 2 seconds; no refresh needed.</p>
+        <button id="cust-sync-refresh" class="btn btn-ghost btn-xs" type="button">Check now</button>
         <button id="cust-review-browser" class="btn btn-ghost btn-xs" type="button">Review saved browser records</button>
       </section>
       <div class="customers-layout fade-up delay-1">
@@ -175,6 +176,7 @@
             <!-- Past bills -->
             <div class="cust-bills-section">
               <div class="cust-bills-heading">Bill History</div>
+              <p class="cust-ledger-legend"><span class="cust-received">● Received / debt reduced</span><span class="cust-debt-added">● Bill / debt added</span><span class="cust-account-credit">● Account credit</span></p>
               <div id="cust-bills-container">
                 <p class="cust-empty">Loading…</p>
               </div>
@@ -189,6 +191,6 @@
 
     <script src="sync-config.js"></script>
     <script src="app.js?v=20261108-ledger-integrity"></script>
-    <script src="customers.js?v=20261109-account-sync"></script>
+    <script src="customers.js?v=20261109-fast-sync"></script>
   </body>
 </html>
