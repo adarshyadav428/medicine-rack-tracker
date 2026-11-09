@@ -1,5 +1,29 @@
 # Billing integrity fixes
 
+## Phone billing control parity — 9 November 2026
+
+Phone billing now has a labeled native saved-customer dropdown, including phone
+numbers and current dues/credits, with explicit new-customer selection. Selection
+uses the shared desktop customer-change path and survives list refreshes. The
+phone also exposes Save customer details without issuing an invoice, and batch
+and expiry editing on item entry. Shared commit persists those fields across
+devices. Credit balances are valid in the previous-balance field.
+
+Phone item entry checks supported quantity/price precision before committing;
+bill submission checks received/previous-balance inputs. Raw received input is
+preserved through blur/redraw so invalid negatives cannot silently become zero.
+Phone validation messages persist until corrected or a new saved bill is loaded.
+Authoritative bill loads refresh focused phone fields as well as the shared
+model, while existing dirty-edit guards prevent replacing unsaved work.
+
+Regression browser flows now choose customers through the actual phone dropdown
+and exercise phone controls for batch/expiry, validation, new customer saving,
+and credit selection against the real API and isolated PostgreSQL.
+The dropdown also retains stable account selection on renamed historical bills.
+Phone startup no longer focuses the hidden desktop search or jumps down the
+page. Verified 43 cross-device checks, the existing phone layout/flow suite
+(320–844 pixels), and saved-bill ownership/receipt/retry browser checks locally.
+
 ## Customer account sync — 9 November 2026
 
 The billing refresh now refreshes customer profiles and authoritative current

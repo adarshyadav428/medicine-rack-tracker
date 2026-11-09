@@ -7,6 +7,8 @@
   var screen = "sale", draft = null, paymentMode = "credit", paymentLocked = false;
   var lastBillId = null, started = false, frame = 0, saleScroll = 0, pending = false;
   var updatingCashAmount = false;
+  var refreshFields = false;
+  var saleError = "";
   var root = document.createElement("div");
   root.id = "phone-billing";
   root.dataset.screen = "sale";
@@ -31,11 +33,13 @@
       <div class="phone-invoice-strip"><div><small>Bill number</small><strong id="phone-invoice">New bill</strong></div><div><small>Bill date</small><span id="phone-date"></span></div></div>
       <section class="phone-sale-customer">
         <div class="phone-card-heading"><h2>Customer</h2><div class="phone-party-balance">Previous balance <strong id="phone-party-balance">₹0.00</strong></div></div>
-        <label class="phone-field"><span>Customer / Business Name *</span><input id="phone-customer" autocomplete="off" list="phone-customers" placeholder="Select or enter customer" required /><datalist id="phone-customers"></datalist></label>
+        <label class="phone-field"><span>Choose saved customer</span><select id="phone-saved-customer"><option value="">Loading customers…</option></select></label>
+        <label class="phone-field"><span>Customer / Business Name *</span><input id="phone-customer" autocomplete="off" maxlength="120" placeholder="Or enter a new customer name" required /></label>
         <label class="phone-field"><span>Phone Number</span><input id="phone-customer-phone" type="tel" autocomplete="tel" placeholder="Phone number" /></label>
+        <button id="phone-save-customer" class="phone-history-link" type="button">Save customer details</button>
         <details class="phone-sale-options"><summary>Notes &amp; opening balance</summary>
           <label class="phone-field"><span>Order / Notes</span><input id="phone-notes" maxlength="240" placeholder="Order reference or notes" /></label>
-          <label class="phone-field"><span>Previous balance (₹)</span><input id="phone-opening" type="number" inputmode="decimal" min="0" step="0.01" /></label>
+          <label class="phone-field"><span>Previous balance (₹; negative for credit)</span><input id="phone-opening" type="number" inputmode="decimal" step="0.01" /></label>
         </details>
         <p id="phone-customer-status" class="phone-feedback" role="status"></p>
       </section>
@@ -76,6 +80,10 @@
           <label class="phone-field"><span>Sell price (₹)</span><input id="phone-item-rate" type="number" inputmode="decimal" min="0" step="0.01" /></label>
         </div>
         <p id="phone-item-price-note" class="phone-price-note"></p>
+        <div class="phone-two-fields">
+          <label class="phone-field"><span>Batch number</span><input id="phone-item-batch" maxlength="120" /></label>
+          <label class="phone-field"><span>Expiry (MM/YY)</span><input id="phone-item-expiry" maxlength="60" placeholder="MM/YY" /></label>
+        </div>
         <details class="phone-item-details"><summary>Purchase price, MRP &amp; markup</summary>
           <p>Purchase price: <strong id="phone-item-purchase"></strong></p>
           <div class="phone-two-fields">
@@ -101,7 +109,7 @@
   function text(id, value) { el(id).textContent = value; }
   function field(id, value) {
     // Selecting a customer can auto-fill the phone just as it receives focus.
-    if (document.activeElement !== el(id) || (id === "customer-phone" && !el(id).value && value)) {
+    if (refreshFields || document.activeElement !== el(id) || (id === "customer-phone" && !el(id).value && value)) {
       el(id).value = value == null ? "" : value;
     }
   }
@@ -141,6 +149,7 @@
     text("item-location", draft.location ? "Rack: " + draft.location : "");
     field("item-qty", draft.quantity); field("item-rate", draft.sellPrice);
     field("item-mrp", draft.mrp); field("item-markup", draft.markupPercent);
+    field("item-batch", draft.batchNo || ""); field("item-expiry", draft.expiry || "");
     text("item-purchase", draft.purchasePrice == null ? "Not recorded" : money(draft.purchasePrice));
     text("item-price-note", draft.priceNote || "");
     el("item-markup").disabled = draft.purchasePrice == null;
@@ -166,10 +175,15 @@
     draft.quantity = el("item-qty").value;
     draft.sellPrice = el("item-rate").value;
     draft.mrp = el("item-mrp").value;
+    draft.batchNo = el("item-batch").value;
+    draft.expiry = el("item-expiry").value;
     text("item-subtotal", money(round(Number(draft.quantity) * Number(draft.sellPrice))));
   }
   function saveItem(andNew) {
     updateDraftTotal();
+    if (["item-qty", "item-rate", "item-mrp"].some(function (id) { return !el(id).checkValidity(); })) {
+      text("item-error", "Enter a quantity above zero with up to 3 decimals and non-negative prices with up to 2 decimals."); return;
+    }
     if (!draft.quantity || Number(draft.quantity) <= 0 || !draft.sellPrice || Number(draft.sellPrice) < 0 ||
         (draft.mrp !== "" && (!Number.isFinite(Number(draft.mrp)) || Number(draft.mrp) < 0))) {
       text("item-error", "Enter a quantity above zero and a valid rate and MRP."); return;
@@ -182,13 +196,17 @@
   }
   async function saveSale(andNew, receipt) {
     if (pending) return;
+    saleError = "";
     if (!el("customer").value.trim()) {
-      text("save-status", "Select a customer, or enter their name, before saving.");
+      saleError = "Select a customer, or enter their name, before saving."; draw();
       el("customer").focus(); return;
     }
     if (!el("tax-input").checkValidity()) {
-      text("save-status", "Enter a tax percentage between 0 and 100.");
+      saleError = "Enter a tax percentage between 0 and 100."; draw();
       el("tax-input").focus(); return;
+    }
+    if (!el("received").checkValidity() || !el("opening").checkValidity()) {
+      saleError = "Enter a non-negative amount received and a valid previous balance, with up to 2 decimals."; draw(); return;
     }
     pending = true; draw();
     try {
@@ -212,7 +230,8 @@
     if (!paymentLocked) paymentMode = bill.totalAmount > 0 && bill.received >= bill.totalAmount ? "cash" : "credit";
     field("customer", bill.customerName); field("customer-phone", bill.customerPhone);
     field("notes", bill.notes); field("tax-input", bill.gstPercent);
-    field("received", bill.received); field("opening", bill.previousBalance);
+    field("received", bill.receivedInput == null ? bill.received : bill.receivedInput);
+    field("opening", bill.openingInput == null ? bill.previousBalance : bill.openingInput);
     text("invoice", bill.number); text("date", bill.date);
     text("party-balance", money(bill.previousBalance)); text("item-count", bill.items.length);
     text("total-qty", round(bill.items.reduce(function (sum, item) { return sum + Number(item.quantity); }, 0)));
@@ -224,16 +243,22 @@
     el("sync-reload").hidden = !bill.syncReloadAvailable;
     el("sync-refresh").disabled = pending || bill.saving;
     el("sync-reload").disabled = pending || bill.saving;
-    text("save-status", bill.status); el("save-status").className = "phone-feedback " + bill.statusTone;
+    text("save-status", saleError || bill.status); el("save-status").className = "phone-feedback " + (saleError ? "is-warn" : bill.statusTone);
     text("edit-message", "Editing " + bill.number + ". Save updates this bill; use Save & New to start the next sale.");
     el("edit-message").hidden = !bill.id;
-    var customerOptions = bill.customers.map(function (customer) { return '<option value="' + esc(customer.name) + '">' + esc(customer.phone || "") + '</option>'; }).join("");
-    if (el("customers").innerHTML !== customerOptions) el("customers").innerHTML = customerOptions;
+    var customerOptions = '<option value="">' + (bill.customers.length ? 'New customer / enter name below' : 'No saved customers — enter a name below') + '</option>' + bill.customers.map(function (customer) {
+      return '<option value="' + esc(customer.id || customer.name) + '">' + esc(customer.name) +
+        (customer.phone ? ' · ' + esc(customer.phone) : '') + (customer.balance < 0 ? ' · Credit ' : ' · Due ') + esc(money(Math.abs(customer.balance))) + '</option>';
+    }).join("");
+    if (el("saved-customer").innerHTML !== customerOptions) el("saved-customer").innerHTML = customerOptions;
+    var selectedCustomer = bill.customers.find(function (customer) { return customer.name.toLowerCase() === bill.customerName.trim().toLowerCase(); }) ||
+      (bill.id && bill.customerName === bill.issuedCustomerName && bill.customers.find(function (customer) { return customer.id === bill.customerId; }));
+    el("saved-customer").value = selectedCustomer ? selectedCustomer.id || selectedCustomer.name : "";
     el("billed-items").innerHTML = bill.items.length ? bill.items.map(function (item, index) {
       return '<button class="phone-billed-item" data-row="' + esc(item._rowId) + '" type="button" aria-label="Edit ' + esc(item.medicineName) + '"><span class="phone-item-title"><span><small>' + (index + 1) + '</small> ' + esc(item.medicineName) + '</span><strong>' + esc(money(round(item.quantity * item.sellPrice))) + '</strong></span><span class="phone-item-calculation"><span>' + esc(item.quantity) + ' × ' + esc(money(item.sellPrice)) + '</span><span class="phone-edit-hint">Edit →</span></span></button>';
     }).join("") : '<p class="phone-empty">Your bill is ready for its first medicine.</p>';
     var busy = pending || bill.saving;
-    root.querySelectorAll("input, [data-payment], [data-row], #phone-new-sale, #phone-add-items, #phone-remove-item").forEach(function (input) {
+    root.querySelectorAll("input, select, #phone-save-customer, [data-payment], [data-row], #phone-new-sale, #phone-add-items, #phone-remove-item").forEach(function (input) {
       input.disabled = busy || (input === el("item-markup") && draft && draft.purchasePrice == null);
     });
     root.querySelectorAll("[data-payment]").forEach(function (button) { button.setAttribute("aria-pressed", String(button.dataset.payment === paymentMode)); });
@@ -241,6 +266,7 @@
     if (screen === "sale") {
       text("save", pending || bill.saving ? "Saving…" : bill.id ? "Update bill" : "Save bill");
     }
+    refreshFields = false;
   }
   function schedule() { if (!frame) frame = requestAnimationFrame(function () { frame = 0; draw(); }); }
   function setReceivedFromPaymentMode(value) {
@@ -256,6 +282,8 @@
     var fieldName = event.detail && event.detail.field;
     var bill = api.snapshot();
     if (fieldName === "newBill" || fieldName === "loadBill" || lastBillId !== bill.id) {
+      refreshFields = true;
+      saleError = "";
       paymentLocked = false;
       lastBillId = bill.id;
     }
@@ -272,12 +300,28 @@
     schedule();
   });
   function bindField(id, key) {
-    el(id).addEventListener("input", function () { api.setField(key, this.value); });
+    el(id).addEventListener("input", function () { saleError = ""; api.setField(key, this.value); });
     el(id).addEventListener("blur", function () { api.setField(key, this.value, "blur"); schedule(); });
   }
   bindField("customer", "customerName"); bindField("customer-phone", "customerPhone");
   bindField("notes", "notes"); bindField("opening", "openingBalance"); bindField("tax-input", "gstPercent");
+  el("saved-customer").addEventListener("change", function () {
+    saleError = "";
+    var chosen = api.snapshot().customers.find(function (customer) { return (customer.id || customer.name) === el("saved-customer").value; });
+    if (chosen) api.setField("savedCustomer", chosen.name, "change");
+    else {
+      api.setField("customerName", ""); api.setField("customerPhone", "");
+      api.setField("savedCustomer", "", "change");
+    }
+    draw();
+  });
+  el("save-customer").addEventListener("click", async function () {
+    if (pending || api.snapshot().saving) return;
+    pending = true; draw();
+    try { await api.saveCustomer(); } finally { pending = false; draw(); }
+  });
   el("received").addEventListener("input", function () {
+    saleError = "";
     paymentLocked = false;
     api.setField("received", this.value); schedule();
   });
