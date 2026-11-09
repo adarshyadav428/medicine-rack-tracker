@@ -13,6 +13,13 @@
   var pendingOperations = new Map();
   var completedOperations = new Set();
   var customerSyncInFlight = false;
+  var accountWriteSequence = 0;
+
+  function beginAccountWrite() {
+    ++accountWriteSequence;
+    ++cState.customerReadSeq;
+    ++cState.historySeq;
+  }
   var cState = {
     initialized: false,
     selectedKey: null,
@@ -223,7 +230,7 @@
           : 'No customers saved yet.<br>Add them from the <a href="billing.html" data-nav>Billing</a> page.') + "</p>";
       return;
     }
-    cEl.listContainer.innerHTML = filtered.map(function (c) {
+    var listHtml = filtered.map(function (c) {
       return '<div class="cust-card' + (isSelected(c) ? " is-active" : "") +
         '" data-key="' + escHtml(customerKey(c)) + '" role="button" tabindex="0">' +
         '<div class="cust-card-main"><span class="cust-card-name">' + escHtml(c.name) +
@@ -232,6 +239,8 @@
         '</div><span class="cust-balance-badge ' + balanceClass(c.balance) + '">' +
         balanceLabel(c.balance) + "</span></div>";
     }).join("");
+    if (cEl.listContainer.innerHTML === listHtml) return;
+    cEl.listContainer.innerHTML = listHtml;
     cEl.listContainer.querySelectorAll(".cust-card").forEach(function (card) {
       card.addEventListener("click", function () { openProfile(card.dataset.key); });
       card.addEventListener("keydown", function (event) {
@@ -256,10 +265,13 @@
     if (!c) return;
     cState.selectedKey = key;
     var seq = ++cState.profileSeq;
+    var writeSequence = accountWriteSequence;
     ++cState.historySeq;
-    cState.historyOwner = null;
-    cState.historyPayments = [];
-    cState.profileLoading = true;
+    if (!background) {
+      cState.historyOwner = null;
+      cState.historyPayments = [];
+      cState.profileLoading = true;
+    }
     if (!preserveForms) {
       hideEditForm();
       if (cEl.payAmount) cEl.payAmount.value = "";
@@ -273,6 +285,7 @@
     try {
       await refreshCustomers();
       if (seq !== cState.profileSeq) return;
+      if (background && writeSequence !== accountWriteSequence) return;
       var fresh = selectedCustomer();
       if (!fresh) {
         closeProfile();
@@ -281,7 +294,10 @@
       }
       renderProfile(fresh);
       renderCustomerList();
-      if (await loadAndRenderBills(fresh, seq, background) === false) throw new Error("Account history could not be verified");
+      if (await loadAndRenderBills(fresh, seq, background) === false) {
+        if (writeSequence !== accountWriteSequence || seq !== cState.profileSeq) return;
+        throw new Error("Account history could not be verified");
+      }
       return true;
     } catch (error) {
       if (seq !== cState.profileSeq) return;
@@ -289,7 +305,7 @@
       if (cEl.billsContainer && !background) cEl.billsContainer.innerHTML = '<p class="status-message is-error">Account freshness could not be confirmed. Reopen the profile to retry.</p>';
       return false;
     } finally {
-      if (seq === cState.profileSeq) {
+      if (seq === cState.profileSeq && !background) {
         cState.profileLoading = false;
         updateButtons();
         if (cState.refreshQueued) {
@@ -334,7 +350,8 @@
       var ok = await refreshSelectedProfile(false, true);
       if (syncStatus) syncStatus.textContent = ok === false
         ? "Could not refresh all account data. Previously loaded history is kept; retry when connected."
-        : "Customer details, dues and history refreshed from the shared database.";
+        : "Automatic sync on · checks every 2 seconds. Last checked " + new Date().toLocaleTimeString("en-IN") + ".";
+      if (syncStatus) syncStatus.className = "status-message " + (ok === false ? "is-warn" : "is-ok");
     } catch (error) {
       if (syncStatus) syncStatus.textContent = "Account sync failed. Your entries are kept; retry when connected.";
     } finally { customerSyncInFlight = false; }
@@ -363,6 +380,7 @@
     }
     var body = { id: draft.customer.id, originalName: draft.customer.name, name: name, phone: phone };
     cState.editInFlight = true;
+    beginAccountWrite();
     setEditStatus("Saving changes…", "is-info");
     updateButtons();
     var op;
@@ -426,9 +444,12 @@
   async function loadAndRenderBills(customer, profileSeq, background) {
     if (!cEl.billsContainer || !isSelected(customer)) return false;
     var requestSeq = ++cState.historySeq;
+    var writeSequence = accountWriteSequence;
     var owner = customerKey(customer);
-    cState.historyOwner = null;
-    cState.historyPayments = [];
+    if (!background) {
+      cState.historyOwner = null;
+      cState.historyPayments = [];
+    }
     if (!background) cEl.billsContainer.innerHTML = '<p class="status-message is-info">Loading history…</p>';
     var params = "customer=" + encodeURIComponent(customer.name);
     if (customer.id) params += "&customerId=" + encodeURIComponent(customer.id);
@@ -438,6 +459,7 @@
         requestApi("/api/payments?" + params, { method: "GET" }),
       ]);
       if (requestSeq !== cState.historySeq || profileSeq !== cState.profileSeq || !isSelected(customer)) return false;
+      if (background && writeSequence !== accountWriteSequence) return false;
       if (!Array.isArray(pair[0].bills) || !Array.isArray(pair[1].payments)) throw new Error("Incomplete account history response");
       var bills = pair[0].bills;
       var payments = pair[1].payments;
@@ -472,24 +494,27 @@
       if (entry.type === "bill") {
         var received = Number(data.amount_received) || 0;
         var total = Number(data.grand_total) || 0;
-        return '<tr><td><span class="bill-history-number">' + escHtml(data.bill_number || "—") +
+        var net = round2(total - received);
+        return '<tr class="cust-invoice-row"><td><span class="bill-history-number">' + escHtml(data.bill_number || "—") +
           "</span></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
           fmtMoney(data.subtotal) + '</td><td class="num-col">' + fmtMoney(data.gst_amount) +
-          '</td><td class="num-col">' + fmtMoney(total) + '</td><td class="num-col">' +
-          fmtMoney(received) + '</td><td class="num-col"><strong>' + fmtMoney(round2(total - received)) +
-          "</strong></td><td></td></tr>";
+          '</td><td class="num-col cust-charge">' + fmtMoney(total) + '</td><td class="num-col ' + (received > 0 ? "cust-received" : "cust-zero") + '">' +
+          fmtMoney(received) + '</td><td class="num-col ' + (net > 0 ? "cust-debt-added" : net < 0 ? "cust-debt-reduced" : "cust-zero") + '"><strong>' + fmtMoney(net) +
+          '</strong><small class="cust-change-label">' + (net > 0 ? "Debt added" : net < 0 ? "Debt reduced" : "No change") + '</small></td><td></td></tr>';
       }
       var amount = Number(data.amount) || 0;
-      return '<tr class="payment-row"><td><span class="payment-history-label">💳 Payment' +
+      return '<tr class="payment-row"><td><span class="payment-history-label">✓ Payment received' +
         (data.note ? " · " + escHtml(data.note) : "") + "</span></td><td>" + fmtDate(data.created_at) +
-        '</td><td>—</td><td>—</td><td>—</td><td class="num-col">' + fmtMoney(amount) +
-        '</td><td class="num-col">−' + fmtMoney(amount) + '</td><td><button class="btn btn-danger btn-xs" data-del-payment="' +
+        '</td><td>—</td><td>—</td><td>—</td><td class="num-col cust-received">' + fmtMoney(amount) +
+        '</td><td class="num-col cust-debt-reduced">−' + fmtMoney(amount) + '<small class="cust-change-label">Debt reduced</small></td><td><button class="btn btn-danger btn-xs" data-del-payment="' +
         escHtml(data.id) + '" data-amount="' + escHtml(String(amount)) +
         '" title="Delete this payment" type="button"' + (customer.archived ? " disabled" : "") + '>🗑️</button></td></tr>';
     }).join("");
-    cEl.billsContainer.innerHTML = '<div class="bill-table-scroll"><table class="bill-items-table"><thead><tr>' +
+    var historyHtml = '<div class="bill-table-scroll"><table class="bill-items-table"><thead><tr>' +
       "<th>Bill / Payment</th><th>Date</th><th>Subtotal</th><th>GST</th><th>Bill total</th><th>Received</th><th>Net change</th><th></th>" +
       "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+    if (cEl.billsContainer.innerHTML === historyHtml) return;
+    cEl.billsContainer.innerHTML = historyHtml;
     cEl.billsContainer.querySelectorAll("[data-del-payment]").forEach(function (button) {
       button.addEventListener("click", function () { deletePayment(button.dataset.delPayment, button.dataset.amount, customer); });
     });
@@ -518,6 +543,7 @@
     if (c.id) body.customer_id = c.id;
     else { body.customer_name = c.name; body.customer_phone = c.phone; }
     cState.paymentInFlight = true;
+    beginAccountWrite();
     updateButtons();
     var result, op;
     try {
@@ -563,6 +589,7 @@
         cState.historyOwner !== customerKey(customer) || !cState.historyPayments.some(function (p) { return p.id === id; })) return;
     if (!window.confirm("Delete this payment of " + fmtMoney(amountLabel) + "? The customer's balance will increase by that amount.")) return;
     cState.deleteInFlight = true;
+    beginAccountWrite();
     updateButtons();
     var op, result, profileSeq = cState.profileSeq;
     try {
@@ -601,6 +628,7 @@
     if (c.archived) return restoreCustomer(c);
     if (!window.confirm('Archive customer "' + c.name + '"? Their balance, bills and payments will be kept.')) return;
     cState.deleteInFlight = true;
+    beginAccountWrite();
     updateButtons();
     var op;
     try {
@@ -630,6 +658,7 @@
   async function restoreCustomer(customer) {
     if (!window.confirm('Restore customer "' + customer.name + '" for billing and payments? Their balance and history will be unchanged.')) return;
     cState.deleteInFlight = true;
+    beginAccountWrite();
     updateButtons();
     var body = { id: customer.id, originalName: customer.name, name: customer.name,
       phone: customer.phone, restore: true };
@@ -729,6 +758,7 @@
     try {
       op = await operationId("legacy-balances", body);
       body.operationId = op;
+      beginAccountWrite();
       var result = await requestApi("/api/customers", { method: "PUT", body: body });
       finishOperation("legacy-balances", op);
       if (!invalid) { try { localStorage.setItem(IMPORT_DONE_KEY, "1"); } catch (_) {} }
@@ -776,7 +806,7 @@
     if (syncButton) syncButton.addEventListener("click", syncCustomerAccounts);
     var legacyButton = document.getElementById("cust-review-browser");
     if (legacyButton) legacyButton.addEventListener("click", function () { return offerLocalImport(true); });
-    window.setInterval(syncCustomerAccounts, 15000);
+    window.setInterval(syncCustomerAccounts, 2000);
     window.addEventListener("focus", syncCustomerAccounts);
     window.addEventListener("online", syncCustomerAccounts);
     document.addEventListener("visibilitychange", function () {

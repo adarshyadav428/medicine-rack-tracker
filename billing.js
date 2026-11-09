@@ -3466,7 +3466,7 @@
     if (syncReload) syncReload.addEventListener("click", function () {
       if (bState.currentBillId) loadBillForEdit(bState.currentBillId);
     });
-    setInterval(syncSavedBills, 15000);
+    setInterval(syncSavedBills, 2000);
     window.addEventListener("focus", syncSavedBills);
     window.addEventListener("online", syncSavedBills);
     document.addEventListener("visibilitychange", function () { if (!document.hidden) syncSavedBills(); });

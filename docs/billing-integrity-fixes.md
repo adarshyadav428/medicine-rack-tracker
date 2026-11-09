@@ -1,5 +1,20 @@
 # Billing integrity fixes
 
+## Faster automatic sync and customer ledger colours — 9 November 2026
+
+Billing and Customers now check automatically every two seconds while visible,
+as well as on focus/reconnect. This replaces the previous 15-second interval;
+network/server latency still affects arrival time. No refresh click is required.
+Only one refresh per page runs at a time. Customer background reads leave
+payment controls usable, keep unchanged list/history markup in place, preserve
+drafts and invalidate late responses when a financial write starts.
+
+Customer history uses green received amounts/payment rows/debt reductions, red
+charges/debt increases, blue credits, and text labels/legend. Payment controls
+use green as well. These styles are scoped to Customers. Phone cards now use
+Received, Net change, Bill total and Date labels instead of the generic medicine
+entry table's Qty/Sell labels. No database migration is required.
+
 ## Phone billing control parity — 9 November 2026
 
 Phone billing now has a labeled native saved-customer dropdown, including phone

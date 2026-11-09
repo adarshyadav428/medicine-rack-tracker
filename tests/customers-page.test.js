@@ -165,5 +165,14 @@ async function pay(p,amount){p.node("cust-pay-amount").value=String(amount);awai
   await p.node("cust-review-browser").emit("click");await drain();
   check("explicit review recovers a missing zero-due customer despite old import marker",s.calls.some(c=>c.method==="PUT"&&c.body.customers[0].name==="Old browser customer"&&c.body.customers[0].balance===0),true);
  }
+ {
+  const s=backend([customer("a","Alice",1000)]),p=await page(s);await select(p,"a");
+  const reached=deferred(),release=deferred();let held=false;
+  s.hook=async(c,phase)=>{if(!held&&phase==="after"&&c.path==="/api/payments"&&c.method==="GET"){held=true;reached.resolve();await release.promise;}};
+  const refreshing=p.events.get("poll")();await reached.promise;
+  check("background sync leaves payment controls enabled",p.node("cust-pay-btn").disabled,false);
+  await pay(p,200);release.resolve();await refreshing;
+  check("late background history cannot undo a just-saved receipt",[p.node("cust-profile-balance").textContent,p.node("cust-bills-container").innerHTML.includes("200.00")],["₹800.00",true]);
+ }
  console.log(assertions+" customer-page assertions passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});
