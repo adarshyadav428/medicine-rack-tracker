@@ -3473,7 +3473,9 @@
 
     // A bill always starts with a medicine, so start with the cursor there.
     setTimeout(function () {
-      if (bEl.search && !document.body.classList.contains("phone-billing-active")) bEl.search.focus();
+      // The phone adapter may not have rendered its body class yet. Never
+      // focus the hidden desktop search and scroll a newly opened phone page.
+      if (bEl.search && !window.matchMedia("(max-width: 980px) and (pointer: coarse)").matches) bEl.search.focus();
     }, 0);
   }
 
@@ -3583,10 +3585,14 @@
         number: bState.currentBillNumber || "New bill",
         date: bEl.billDateValue ? bEl.billDateValue.textContent : "",
         customerName: bEl.customerName.value,
+        customerId: billCustomerId,
+        issuedCustomerName: billIssuedName,
         customerPhone: bEl.customerPhone.value,
         notes: bEl.notes.value,
         gstPercent: bEl.gstPercent.value,
         received: receivedAmountValue(),
+        receivedInput: bEl.receivedAmount.value,
+        openingInput: bEl.openingBalance.value,
         previousBalance: bState.currentCustomerBalance || 0,
         subtotal: bEl.subtotal.textContent,
         tax: bEl.gstAmount.textContent,
@@ -3642,12 +3648,15 @@
       item.sellPrice = Number(draft.sellPrice);
       item.mrp = draft.mrp === "" || draft.mrp == null ? null : Number(draft.mrp);
       item.markupPercent = computeMarkup(item.purchasePrice, item.sellPrice);
+      if (draft.batchNo !== undefined) item.batchNo = String(draft.batchNo || "");
+      if (draft.expiry !== undefined) item.expiry = normalizeExpiry(draft.expiry);
       renderLineItems();
       recalcTotals();
       return true;
     },
     remove: function(id) { if (!billSaveInFlight) removeLineItem(id); },
     editBill: loadBillForEdit,
+    saveCustomer: saveCurrentCustomer,
     refreshSavedBills: syncSavedBills,
     reloadBill: function () { return bState.currentBillId ? loadBillForEdit(bState.currentBillId) : Promise.resolve(false); },
     newBill: newBill,

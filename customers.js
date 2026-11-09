@@ -775,7 +775,7 @@
     var syncButton = document.getElementById("cust-sync-refresh");
     if (syncButton) syncButton.addEventListener("click", syncCustomerAccounts);
     var legacyButton = document.getElementById("cust-review-browser");
-    if (legacyButton) legacyButton.addEventListener("click", function () { offerLocalImport(true); });
+    if (legacyButton) legacyButton.addEventListener("click", function () { return offerLocalImport(true); });
     window.setInterval(syncCustomerAccounts, 15000);
     window.addEventListener("focus", syncCustomerAccounts);
     window.addEventListener("online", syncCustomerAccounts);

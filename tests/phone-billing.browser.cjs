@@ -57,11 +57,14 @@ const server=http.createServer(async(req,res)=>{
   await page.route('https://**/*',route=>/fonts\.(googleapis|gstatic)\.com/.test(route.request().url())?route.continue():route.abort());
   await page.goto(base+'/billing.html');
   await page.waitForFunction(()=>document.body.classList.contains('phone-billing-active'));
+  assert.equal(await page.evaluate(()=>window.scrollY),0,'phone opens at the top without focusing hidden desktop search');
   assert.equal(await page.locator('main.page-shell').isVisible(),false);
-  await page.locator('#phone-customer').fill('Ankit Gupta');
-  await page.locator('#phone-customer-phone').tap();
+  await page.locator('#phone-saved-customer').selectOption('ankit');
+  assert.match(await page.locator('#phone-saved-customer option:checked').innerText(),/Ankit Gupta.*125/);
   await page.waitForFunction(()=>document.querySelector('#phone-party-balance').textContent==='₹125.00');
   assert.equal(await page.locator('#phone-customer-phone').inputValue(),'9876543210');
+  await page.locator('#phone-saved-customer').scrollIntoViewIfNeeded();
+  await page.screenshot({path:path.join(qaDir,'customer-selection.png')});
   await page.locator('[data-payment="cash"]').tap();
   await page.locator('#phone-add-items').tap();
   await page.locator('#phone-item-search').fill('u');

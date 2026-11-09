@@ -15,7 +15,7 @@
   body.phone-billing-active > .bg-layer,
   body.phone-billing-active > .transition-curtain { display: none; }
   body.phone-billing-active #phone-billing { display: block; min-height: 100dvh; }
-  #phone-billing button, #phone-billing input { font: inherit; }
+  #phone-billing button, #phone-billing input, #phone-billing select { font: inherit; }
   #phone-billing button { cursor: pointer; touch-action: manipulation; }
   #phone-billing button:disabled { cursor: default; opacity: 0.5; }
   #phone-billing button:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
@@ -61,8 +61,8 @@
   .phone-party-balance strong { font-size: 0.75rem; font-family: var(--font-mono); font-weight: 700; color: var(--brand-strong); }
   #phone-billing .phone-field { display: block; margin: 12px 0; width: 100%; min-width: 0; border: 0; font-weight: 400; text-transform: none; letter-spacing: normal; }
   #phone-billing .phone-field > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.75rem; font-weight: 600; line-height: 1.45; }
-  #phone-billing .phone-field input { display: block; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; width: 100%; max-width: 100%; min-height: 48px; font-size: 16px; color: var(--ink); background: var(--surface); box-shadow: none; outline: none; }
-  #phone-billing .phone-field input:focus { border-color: #62a99f; box-shadow: var(--ring); }
+  #phone-billing .phone-field input, #phone-billing .phone-field select { display: block; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; width: 100%; max-width: 100%; min-height: 48px; font-size: 16px; color: var(--ink); background: var(--surface); box-shadow: none; outline: none; }
+  #phone-billing .phone-field input:focus, #phone-billing .phone-field select:focus { border-color: #62a99f; box-shadow: var(--ring); }
   #phone-billing .phone-field input::placeholder { color: #88999f; font-size: 0.82rem; }
   #phone-billing .phone-field input:disabled { background: var(--bg); color: var(--muted); }
   .phone-sale-options, .phone-item-details { font-size: 0.73rem; color: var(--muted); }

@@ -60,6 +60,11 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
   try {
     await fixture.createCustomer("Alice", 200);
     const pc = await open(false), phone = await open(true);
+    const aliceId = (await snapshot(phone)).customers.find(c => c.name === "Alice").id;
+    await phone.locator("#phone-saved-customer").selectOption(aliceId);
+    await phone.waitForFunction(() => window.MedicineBilling.snapshot().previousBalance === 200);
+    check("visible phone dropdown selects the existing account and due", [(await snapshot(phone)).customerName, await phone.locator("#phone-saved-customer").inputValue()], ["Alice", aliceId]);
+    await phone.evaluate(() => window.MedicineBilling.newBill(true));
     await pc.locator("#bill-saved-customer-select").selectOption("Alice");
     await pc.evaluate(id => {
       const b = window.MedicineBilling;
@@ -77,6 +82,14 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     // Edit through the actual phone item and payment controls.
     await phone.locator("#phone-billed-items [data-row]").first().click();
     await phone.locator("#phone-item-qty").fill("3"); await phone.locator("#phone-save").click();
+    await phone.locator("#phone-billed-items [data-row]").first().click();
+    await phone.locator("#phone-item-qty").fill("0.0001"); await phone.locator("#phone-save").click();
+    check("phone rejects unsupported item precision before adding", [await phone.locator("#phone-billing").getAttribute("data-screen"), (await snapshot(phone)).items[0].quantity], ["item", 3]);
+    await phone.locator("#phone-item-qty").fill("3");
+    await phone.locator("#phone-item-batch").fill("PHONE-B123"); await phone.locator("#phone-item-expiry").fill("11/27");
+    await phone.locator("#phone-save").click();
+    await phone.locator("#phone-received").fill("-5"); await phone.locator("#phone-save").click();
+    check("phone rejects negative received before it can become zero", [(await fixture.request("bills", "GET", { query: { id: billId } })).json.bill.amount_received, (await phone.locator("#phone-save-status").innerText()).includes("non-negative")], [20, true]);
     await phone.locator("#phone-received").fill("50");
     await phone.locator(".phone-sale-options summary").click();
     await phone.locator("#phone-notes").fill("Updated on phone");
@@ -85,6 +98,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await pc.waitForFunction(() => window.MedicineBilling.snapshot().notes === "Updated on phone");
     s = await snapshot(pc);
     check("returning to PC loads clean editor from phone", [s.id, s.received, s.items[0].quantity, s.totalAmount], [billId, 50, 3, 300]);
+    check("phone batch and expiry edits sync to PC", [s.items[0].batchNo, s.items[0].expiry], ["PHONE-B123", "11/27"]);
     check("shared ledger counts edits once", Number((await fixture.customer("Alice")).balance), 450);
 
     await pc.locator("#bill-notes").fill("Unsaved PC edit");
@@ -155,9 +169,11 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     await phone.waitForFunction(() => window.MedicineBilling.snapshot().notes === "Periodic remote update");
     await phone.locator('[data-payment="cash"]').click();
     check("phone saves Paid in full against the latest version", await phone.evaluate(() => window.MedicineBilling.save(false)), true);
+    await phone.locator("#phone-received").focus();
     await fixture.updateBill(billId, { amountReceived: 80 });
     await refresh(phone);
     check("remote partial payment replaces a previous Paid in full mode exactly", (await snapshot(phone)).received, 80);
+    check("saved remote changes update a focused untouched phone field", await phone.locator("#phone-received").inputValue(), "80");
 
     // Existing accounts and their full histories must refresh on Customers too.
     const accountPC = await open(false), accountPhone = await open(true);
@@ -199,6 +215,7 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     check("renamed account stays selected with synchronized contact and history", [await accountPC.locator("#cust-profile-phone").innerText(), (await accountPC.locator("#cust-bills-container").innerText()).includes(original.number), await accountPC.locator("#cust-edit-phone-input").inputValue()], ["1234567890", true, "Unsaved contact"]);
     await refresh(phone);
     check("Billing picks up renamed customer without page reload", (await snapshot(phone)).customers.some(c => c.name === "Alice Renamed" && c.balance === 490), true);
+    check("dropdown keeps the stable customer on a historical renamed bill", await phone.locator("#phone-saved-customer").inputValue(), aliceId);
     await fixture.createCustomer("New remote account", 75);
     await accountPC.waitForFunction(() => document.querySelector("#cust-list").textContent.includes("New remote account"), null, { timeout: 20000 });
     check("Customers periodically syncs additions while a profile is open", (await accountPC.locator("#cust-list").innerText()).includes("New remote account"), true);
@@ -211,6 +228,19 @@ const MEDICINE_ID = "00000000-0000-4000-8000-000000000001";
     check("review publishes an old browser-only zero-due profile through real RPC", Number((await fixture.customer("Legacy zero account")).balance), 0);
     await refresh(phone);
     check("recovered browser profile becomes available on the other device", (await snapshot(phone)).customers.some(c => c.name === "Legacy zero account"), true);
+    await phone.locator("#phone-saved-customer").selectOption("");
+    check("New customer option clears the old party", [(await snapshot(phone)).customerName, (await snapshot(phone)).customerPhone], ["", ""]);
+    await phone.locator("#phone-customer").fill("Created from phone picker");
+    await phone.locator("#phone-customer-phone").fill("5555555555");
+    await phone.locator("#phone-save-customer").click();
+    await phone.waitForFunction(() => window.MedicineBilling.snapshot().customers.some(c => c.name === "Created from phone picker"));
+    check("phone can save a customer without issuing a bill", [(await fixture.customer("Created from phone picker")).phone, (await fixture.pg.query("SELECT count(*)::int n FROM public.bills")).rows[0].n], ["5555555555", 2]);
+    await fixture.createCustomer("Credit account", -25); await refresh(phone);
+    const creditId = (await snapshot(phone)).customers.find(c => c.name === "Credit account").id;
+    await phone.evaluate(() => window.MedicineBilling.newBill(true));
+    await phone.locator("#phone-saved-customer").selectOption(creditId);
+    await phone.waitForFunction(() => window.MedicineBilling.snapshot().previousBalance === -25);
+    check("customer dropdown preserves credit balances", [await phone.locator("#phone-opening").inputValue(), await phone.locator("#phone-opening").evaluate(el => el.checkValidity())], ["-25", true]);
     check("no uncaught browser errors", errors, []);
     console.log(checks + " device sync browser/API/PostgreSQL assertions passed");
   } finally {
