@@ -23,6 +23,7 @@
       <button id="phone-history" type="button">Bill history</button>
       <button id="phone-new-sale" type="button">New bill</button>
       <a href="dashboard.html">Medicine database</a><a href="customers.html">Customers</a>
+      <a id="phone-profit-link" href="profit.html" hidden>Profit</a>
     </nav>
     <p id="phone-global-error" class="phone-feedback is-error" role="alert"></p>
     <aside class="phone-sync" aria-label="Device sync">
@@ -302,6 +303,7 @@
       paymentMode = bill.totalAmount > 0 && bill.received >= bill.totalAmount ? "cash" : "credit";
       lastBillId = bill.id;
     }
+    el("profit-link").hidden = !bill.canViewProfit;
     if (!paymentLocked) paymentMode = bill.totalAmount > 0 && bill.received >= bill.totalAmount ? "cash" : "credit";
     field("customer", bill.customerName); field("customer-phone", bill.customerPhone);
     field("notes", bill.notes); field("tax-input", bill.gstPercent);

@@ -1,3 +1,4 @@
+const {canAccessProfit} = require("../lib/profit-access");
 /**
  * api/auth.js — Consolidated auth router (replaces api/auth/*.js)
  *
@@ -80,6 +81,7 @@ async function handleLogin(req, res, config) {
         id: session.user.id,
         email: normalizeEmail(session.user.email),
         role: roleInfo.role,
+        canViewProfit: canAccessProfit({email:session.user.email,role:roleInfo.role}),
       },
     });
   } catch (error) {
@@ -122,6 +124,7 @@ async function handleMe(req, res, config) {
         id: session.user.id,
         email: normalizeEmail(session.user.email),
         role: roleInfo.role,
+        canViewProfit: canAccessProfit({email:session.user.email,role:roleInfo.role}),
       },
     });
   } catch (error) {
@@ -217,6 +220,7 @@ async function handleSession(req, res, config) {
         id: user.id,
         email: normalizeEmail(user.email),
         role: roleInfo.role,
+        canViewProfit: canAccessProfit({email:user.email,role:roleInfo.role}),
       },
     });
   } catch (error) {
@@ -259,6 +263,7 @@ async function handleSignup(req, res, config) {
           id: payload.user.id,
           email: normalizeEmail(payload.user.email),
           role: roleInfo.role,
+          canViewProfit: canAccessProfit({email:payload.user.email,role:roleInfo.role}),
         },
       });
       return;
@@ -370,6 +375,7 @@ async function handleVerify(req, res, config) {
         id: payload.user.id,
         email: normalizeEmail(payload.user.email),
         role: roleInfo.role,
+        canViewProfit: canAccessProfit({email:payload.user.email,role:roleInfo.role}),
       },
     });
   } catch (error) {

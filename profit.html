@@ -117,7 +117,7 @@
     }
 
     .profit-topbar-actions {
-      display: flex; align-items: center; gap: 0.7rem;
+      display: flex; align-items: center; gap: 0.7rem; flex-wrap:wrap;
     }
 
     .lock-btn {
@@ -125,7 +125,7 @@
       color: #fff;
       border: 1px solid rgba(255,255,255,.3);
       border-radius: 0.5rem;
-      padding: 0.4rem 0.9rem;
+      padding: 0.6rem 0.9rem; min-height:44px; box-sizing:border-box; display:inline-flex; align-items:center;
       font-size: 0.82rem;
       font-weight: 600;
       cursor: pointer;
@@ -136,12 +136,12 @@
     /* Period tabs */
     .period-bar {
       display: flex; gap: 0.4rem;
-      padding: 1rem 2rem 0;
+      padding: 1rem 2rem;
       flex-wrap: wrap;
     }
 
     .period-btn {
-      padding: 0.38rem 0.9rem;
+      padding: 0.5rem 0.9rem; min-height:44px;
       border: 2px solid #e2e8f0;
       border-radius: 999px;
       background: #fff;
@@ -304,20 +304,33 @@
     }
     .profit-empty.hidden { display: none; }
 
+    .profit-range { display:flex; align-items:end; flex-wrap:wrap; gap:0.8rem; margin:0 2rem 1.2rem; padding:1rem; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:0.8rem; }
+    .profit-range label { display:grid; gap:0.35rem; color:#065f46; font-size:0.85rem; font-weight:600; }
+    .profit-range input { min-height:44px; min-width:150px; padding:0.5rem; border:1px solid #a7f3d0; border-radius:0.5rem; background:#fff; color:#0f172a; font:inherit; }
+    .profit-range button { min-height:44px; padding:0.6rem 1.2rem; border:0; border-radius:0.5rem; background:#047857; color:#fff; font-weight:700; cursor:pointer; }
+    .profit-range small { flex-basis:100%; color:#475569; }
+    .profit-range :focus-visible { outline:3px solid #0d9488; outline-offset:2px; }
     @media (max-width: 640px) {
+      .profit-range { margin-left:1rem; margin-right:1rem; }
+      .profit-range label { flex:1; min-width:0; }
+      .profit-range input { min-width:0; width:100%; box-sizing:border-box; }
+      .profit-range button { flex-basis:100%; }
       .profit-topbar, .period-bar, .profit-cards, .profit-section { padding-left: 1rem; padding-right: 1rem; }
       .profit-card-value { font-size: 1.2rem; }
     }
+    @media (max-width: 360px) {
+      .profit-range label { flex-basis:100%; }
+    }
   </style>
 </head>
-<body style="margin:0;background:#f8fafc;min-height:100vh;">
+<body style="margin:0;background:#f8fafc;min-height:100vh;font-family:Manrope,system-ui,sans-serif;">
 
   <!-- ── Lock screen ─────────────────────────────────────────────────────── -->
   <div id="lock-screen">
     <div class="lock-card">
       <div class="lock-icon">🔒</div>
       <h1 id="pin-title">Profit Dashboard</h1>
-      <p>Enter your PIN to continue</p>
+      <p id="pin-description">Owner access · Enter your PIN to continue</p>
 
       <div class="lock-field">
         <label for="pin-input">PIN</label>
@@ -335,6 +348,7 @@
         style="background:none;border:none;font-size:0.78rem;color:#94a3b8;cursor:pointer;text-decoration:underline;padding:0;">
         Forgot PIN?
       </button>
+      <a href="billing.html">Back to billing</a>
     </div>
   </div>
 
@@ -348,23 +362,31 @@
         <div class="profit-topbar-sub">Adarsh Medicals — Confidential</div>
       </div>
       <div class="profit-topbar-actions">
+        <a class="lock-btn" href="billing.html">Back to billing</a>
         <button id="change-pin-btn" class="lock-btn">Change PIN</button>
-        <button class="lock-btn" onclick="sessionStorage.removeItem('am.profitOk'); location.reload();">Lock</button>
+        <button id="profit-lock-btn" class="lock-btn">Lock</button>
       </div>
     </div>
 
     <!-- Period selector -->
     <div class="period-bar">
       <button class="period-btn" data-period="today">Today</button>
-      <button class="period-btn" data-period="week">This Week</button>
+      <button class="period-btn" data-period="week">Last 7 days</button>
       <button class="period-btn active" data-period="month">This Month</button>
       <button class="period-btn" data-period="year">This Year</button>
       <button class="period-btn" data-period="all">All Time</button>
     </div>
 
+    <form id="profit-range-form" class="profit-range">
+      <label for="profit-from">From<input id="profit-from" type="date" required /></label>
+      <label for="profit-to">To<input id="profit-to" type="date" required /></label>
+      <button type="submit">Apply dates</button>
+      <small>Includes both dates, in India time (IST). Uses the bill creation date.</small>
+    </form>
+
     <!-- Loading / error -->
     <div id="dashboard-loading">Loading data…</div>
-    <div id="dashboard-error" class="hidden"></div>
+    <div id="dashboard-error" class="hidden" role="alert"></div>
 
     <!-- Summary cards -->
     <div class="profit-cards">
@@ -461,6 +483,6 @@
 
   </div><!-- /dashboard -->
 
-  <script src="profit.js?v=20260728-serverpin"></script>
+  <script src="profit.js?v=20261109-owner-range"></script>
 </body>
 </html>

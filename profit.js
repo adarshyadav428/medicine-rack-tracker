@@ -26,7 +26,10 @@
     if (text) { try { payload = JSON.parse(text); } catch (_) { payload = {}; } }
 
     if (!response.ok) {
-      throw new Error(payload.error || "Request failed (" + response.status + ").");
+      var error = new Error(payload.error || "Request failed (" + response.status + ").");
+      error.status = response.status;
+      error.code = payload.code;
+      throw error;
     }
     return payload;
   }
@@ -47,6 +50,10 @@
   var pinConfirm   = document.getElementById("pin-confirm");
   var changeBtn    = document.getElementById("change-pin-btn");
   var resetBtn     = document.getElementById("pin-reset-btn");
+  var lockBtn      = document.getElementById("profit-lock-btn");
+  var rangeForm    = document.getElementById("profit-range-form");
+  var fromInput    = document.getElementById("profit-from");
+  var toInput      = document.getElementById("profit-to");
 
   // Period tabs
   var periodBtns   = document.querySelectorAll(".period-btn");
@@ -85,9 +92,20 @@
   }
 
   var currentPeriod = "month";
+  var currentRange = null;
+  var requestSeq = 0;
+  var restricted = false;
+  var locking = false;
+  var today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  function todayPart(type) { return today.find(function (part) { return part.type === type; }).value; }
+  var todayDate = todayPart("year") + "-" + todayPart("month") + "-" + todayPart("day");
+  fromInput.value = todayDate.slice(0, 8) + "01";
+  toInput.value = todayDate;
 
   // ── Lock screen logic ────────────────────────────────────────────────────
   function showLock(isSetup) {
+    requestSeq++;
+    clearTables();
     lockScreen.classList.remove("hidden");
     dashboard.classList.add("hidden");
     if (isSetup) {
@@ -107,6 +125,16 @@
     pinInput.focus();
   }
 
+  function showRestricted(error) {
+    restricted = true;
+    showLock(false);
+    pinTitle.textContent = "Owner access only";
+    document.getElementById("pin-description").textContent = "Sign in with the business owner's account to view profit.";
+    pinInput.disabled = pinConfirm.disabled = pinSubmit.disabled = true;
+    resetBtn.style.display = "none";
+    pinMsg.textContent = error.message;
+  }
+
   function showDashboard() {
     lockScreen.classList.add("hidden");
     dashboard.classList.remove("hidden");
@@ -114,6 +142,7 @@
   }
 
   async function handlePinSubmit() {
+    if (restricted || locking || pinSubmit.disabled) return;
     var pin = pinInput.value.trim();
     if (!pin || pin.length < 4) {
       pinMsg.textContent = "PIN must be at least 4 digits.";
@@ -152,11 +181,12 @@
       pinMsg.textContent = "";
       showDashboard();
     } catch (error) {
+      if (error.status === 403 && error.code === "PROFIT_OWNER_REQUIRED") { showRestricted(error); return; }
       pinMsg.textContent = error.message || "Could not verify the PIN.";
       pinInput.value = "";
       pinInput.focus();
     } finally {
-      pinSubmit.disabled = false;
+      pinSubmit.disabled = restricted || locking;
     }
   }
 
@@ -182,6 +212,26 @@
     });
   }
 
+  lockBtn.addEventListener("click", async function () {
+    if (locking) return;
+    locking = true;
+    changingPin = false;
+    currentPinForChange = "";
+    pinState.unlocked = false;
+    showLock(false);
+    pinSubmit.disabled = true;
+    pinMsg.textContent = "Locking…";
+    try {
+      await requestApi("/api/profit-pin", { method: "DELETE" });
+      pinMsg.textContent = "Locked. Enter your PIN to continue.";
+    } catch (error) {
+      pinMsg.textContent = "Could not lock the server session: " + error.message;
+    } finally {
+      locking = false;
+      pinSubmit.disabled = restricted;
+    }
+  });
+
   if (resetBtn) {
     // This used to wipe the saved PIN and offer to set a fresh one, which let
     // anyone at the lock screen walk straight past it.
@@ -200,6 +250,7 @@
     try {
       await fetchPinState();
     } catch (error) {
+      if (error.status === 401 || error.code === "PROFIT_OWNER_REQUIRED") { showRestricted(error); return; }
       showLock(false);
       pinMsg.textContent = error.message || "Could not reach the server.";
       return;
@@ -224,20 +275,43 @@
       periodBtns.forEach(function (b) { b.classList.remove("active"); });
       btn.classList.add("active");
       currentPeriod = btn.dataset.period;
+      currentRange = null;
       loadData(currentPeriod);
     });
   });
 
+  rangeForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (!rangeForm.reportValidity()) return;
+    if (fromInput.value > toInput.value) {
+      errorEl.textContent = "From date must not be after To date.";
+      errorEl.classList.remove("hidden");
+      return;
+    }
+    currentRange = { from: fromInput.value, to: toInput.value };
+    currentPeriod = "custom";
+    periodBtns.forEach(function (btn) { btn.classList.remove("active"); });
+    loadData(currentPeriod);
+  });
+
   // ── API ───────────────────────────────────────────────────────────────────
   async function loadData(period) {
+    var seq = ++requestSeq;
+    var range = currentRange;
+    var label = period === "custom" ? formatDay(range.from) + " – " + formatDay(range.to) + " (IST)" : PERIOD_LABELS[period];
     if (loadingEl) loadingEl.classList.remove("hidden");
     if (errorEl)   errorEl.classList.add("hidden");
     clearTables();
 
     try {
-      var res = await fetch("/api/profit?period=" + period, { credentials: "include" });
+      var query = "period=" + encodeURIComponent(period);
+      if (period === "custom") query += "&from=" + encodeURIComponent(range.from) + "&to=" + encodeURIComponent(range.to);
+      var res = await fetch("/api/profit?" + query, { credentials: "include", cache: "no-store" });
+      if (seq !== requestSeq) return;
       if (!res.ok) {
         var err = await res.json().catch(function () { return {}; });
+        if (seq !== requestSeq) return;
+        if (res.status === 401 || err.code === "PROFIT_OWNER_REQUIRED") { showRestricted(new Error(err.error || "Sign in to continue.")); return; }
         // The unlock expires on its own, so a dashboard left open overnight
         // returns here rather than showing a stale error.
         if (err.pinRequired) {
@@ -250,25 +324,31 @@
         throw new Error(err.error || "Request failed (" + res.status + ")");
       }
       var data = await res.json();
-      render(data, period);
+      if (seq !== requestSeq) return;
+      render(data, label);
     } catch (e) {
+      if (seq !== requestSeq) return;
       if (errorEl) {
         errorEl.textContent = "Failed to load data: " + e.message;
         errorEl.classList.remove("hidden");
       }
     } finally {
-      if (loadingEl) loadingEl.classList.add("hidden");
+      if (loadingEl && seq === requestSeq) loadingEl.classList.add("hidden");
     }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
   var PERIOD_LABELS = {
     today: "Today",
-    week:  "This Week",
+    week:  "Last 7 days",
     month: "This Month",
     year:  "This Year",
     all:   "All Time",
   };
+
+  function formatDay(day) {
+    return new Date(day + "T00:00:00+05:30").toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
+  }
 
   function fmt(n) {
     return "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -293,13 +373,13 @@
     if (elMargin)  elMargin.textContent  = "—";
   }
 
-  function render(data, period) {
+  function render(data, label) {
     var s = data.summary || {};
     if (elRevenue) elRevenue.textContent = fmt(s.revenue);
     if (elCost)    elCost.textContent    = fmt(s.cost);
     if (elProfit)  elProfit.textContent  = fmt(s.profit);
     if (elMargin)  elMargin.textContent  = pct(s.margin);
-    if (elBillLabel) elBillLabel.textContent = PERIOD_LABELS[period] || "Selected Period";
+    if (elBillLabel) elBillLabel.textContent = label || "Selected Period";
 
     // Profit card color
     var profitCard = document.getElementById("card-profit");
@@ -375,7 +455,7 @@
       }
 
       bills.forEach(function (b) {
-        var dateStr = b.date ? new Date(b.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+        var dateStr = b.date ? new Date(b.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" }) : "—";
         var tr = document.createElement("tr");
         tr.innerHTML =
           "<td><strong>" + escHtml(b.billNumber || "—") + "</strong></td>" +

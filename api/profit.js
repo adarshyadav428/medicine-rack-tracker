@@ -18,28 +18,11 @@ const ITEMS_TABLE = "bill_items";
 const PAGE_SIZE = 1000;
 // Keep the bill_id=in.(...) filter well inside URL length limits.
 const BILL_ID_CHUNK = 200;
+const {requireProfitOwner} = require("../lib/profit-access");
+const {profitPeriod} = require("../lib/profit-period");
 
 function round2(n) {
   return Math.round(n * 100) / 100;
-}
-
-function getPeriodStart(period) {
-  const now = new Date();
-  switch (period) {
-    case "today":
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    case "week": {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 6);
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
-    }
-    case "month":
-      return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    case "year":
-      return new Date(now.getFullYear(), 0, 1).toISOString();
-    default:
-      return null;
-  }
 }
 
 function aggregate(bills, items) {
@@ -151,6 +134,8 @@ module.exports = async (req, res) => {
   try {
     const authContext = await requireAuthContext(req, res, config, { adminOnly: true });
     if (!authContext) return;
+    if (!requireProfitOwner(authContext,res)) return;
+    res.setHeader("Cache-Control","no-store");
 
     // The PIN has to gate the figures, not just the page. Checking it only in
     // the browser left this endpoint answering anyone who was logged in.
@@ -164,8 +149,10 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const period = (req.query?.period || "all").toLowerCase();
-    const start  = getPeriodStart(period);
+    let range;
+    try { range=profitPeriod(req.query || {}); }
+    catch(error) { return sendJson(res,400,{error:error.message}); }
+    const start=range.from;
 
     // Step 1: fetch bills in the period.
     // Paged rather than capped: a fixed limit silently drops the oldest bills
@@ -178,6 +165,7 @@ module.exports = async (req, res) => {
         `${BILLS_TABLE}?select=id,bill_number,customer_name,grand_total,created_at` +
         `&order=created_at.desc&limit=${PAGE_SIZE}&offset=${billOffset}`;
       if (start) billsQuery += `&created_at=gte.${encodeURIComponent(start)}`;
+      if (range.to) billsQuery += `&created_at=lt.${encodeURIComponent(range.to)}`;
 
       const page = await callSupabaseRest(config, billsQuery, { method: "GET" });
       const batch = Array.isArray(page) ? page : [];

@@ -11,7 +11,7 @@ Medicine Rack Tracker is a web app built for Adarsh Medicals. It started with a 
 - **Inventory:** Search by medicine name or rack, check stock and expiry dates, and import inventory from Excel, CSV, or JSON.
 - **Billing:** Add medicines from search, reuse the last selling price, adjust quantities and rates, and print receipts. Desktop shortcuts cover common billing actions.
 - **Customer balances:** Record credit sales and partial payments. The amount due is calculated from the customer's opening balance, bills, and payments, so edits or deletions are reflected in the balance.
-- **Staff access and reporting:** Admins can manage access and view profit reports. Employees can look up medicines.
+- **Staff access and reporting:** Admins can manage access. Only the business owner can open PIN-protected profit reports, with presets and an inclusive From/To date range in India time. Employees can look up medicines.
 
 ## How it works
 
