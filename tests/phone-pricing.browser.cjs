@@ -74,16 +74,27 @@ async function bounded(promise, label) {
     await fixture.createBill("Bob", [{ medicineId: FIRST, medicineName: "ENTERO QUINOL", mrp:61, quantity: 1, sellPrice: 52 }]);
     await fixture.createBill("Alice", [{medicineId:SECOND,medicineName:"ENTERO QUINOL",mrp:56,quantity:1,sellPrice:45}]);
     const p = await page(), alice = (await snap(p)).customers.find(c => c.name === "Alice"), bob = (await snap(p)).customers.find(c => c.name === "Bob");
+    await p.locator("#phone-add-items").click();await p.locator("#phone-item-search").fill("entero");
+    await p.waitForFunction(id=>document.querySelector('[data-medicine="'+id+'"] .phone-result-latest-rate').textContent.includes("52.00"),FIRST);
+    check("unselected customer is explained once instead of on every medicine",[await p.locator(".phone-result-customer-rate").count(),await p.locator("#phone-search-customer").isVisible()],[0,true]);
+    await p.screenshot({path:path.join(ARTIFACTS,"search-no-customer-390.png")});
+    await p.locator("#phone-search-customer").click();
+    check("customer shortcut returns to the actual saved-customer picker",await p.locator("#phone-saved-customer").isVisible(),true);
     await p.locator("#phone-saved-customer").selectOption(alice.id);
     await p.locator("#phone-add-items").click(); await p.locator("#phone-item-search").fill("entero");
     await p.waitForFunction(id => window.MedicineBilling.priceInfo(id).customerStatus === "ready" && window.MedicineBilling.priceInfo(id).globalStatus === "ready", FIRST);
     await p.waitForFunction(id => document.querySelector('[data-medicine="' + id + '"] .phone-result-latest-rate').textContent.includes("52.00"), FIRST);
     check("duplicate inventory entries remain separate search choices", await p.locator(".phone-search-item").count(), 2);
     check("search exposes MRP and purchase before selection", [(await result(p).locator(".phone-result-mrp").innerText()).includes("61.00"), (await result(p).locator(".phone-result-purchase").innerText()).includes("44.91")], [true, true]);
-    check("search separates inventory, customer and latest overall rates", [(await result(p).locator(".phone-result-selling").innerText()).includes("54.56"), (await result(p).locator(".phone-result-customer-rate").innerText()).includes("48.50"), (await result(p).locator(".phone-result-latest-rate").innerText()).includes("52.00")], [true, true, true]);
+    check("search separates customer and latest overall rates", [(await result(p).locator(".phone-result-customer-rate").innerText()).includes("48.50"), (await result(p).locator(".phone-result-latest-rate").innerText()).includes("52.00")], [true, true]);
     check("duplicate row retains its own MRP and purchase", [(await result(p, SECOND).locator(".phone-result-mrp").innerText()).includes("56.00"), (await result(p, SECOND).locator(".phone-result-purchase").innerText()).includes("41.41")], [true, true]);
     check("same name with another MRP has its own last rate", (await result(p, SECOND).locator(".phone-result-customer-rate").innerText()).includes("45.00"), true);
-    check("actual zero stock is not presented as unknown", /Stock:\s*0\b/i.test(await result(p).innerText()), true);
+    check("inventory selling rate and stock are removed from the phone list",[await p.locator(".phone-result-selling").count(),/Stock:|Inventory sell/i.test(await p.locator("#phone-search-results").innerText())],[0,false]);
+    check("MRP purchase and sold prices have distinct purposeful colours",await result(p).evaluate(el=>[
+      getComputedStyle(el.querySelector(".phone-result-mrp")).color,
+      getComputedStyle(el.querySelector(".phone-result-purchase")).color,
+      getComputedStyle(el.querySelector(".phone-result-latest-rate b")).color
+    ]),["rgb(40, 79, 147)","rgb(138, 87, 14)","rgb(17, 113, 72)"]);
     check("normal search does not show a large refresh control", await p.locator("#phone-sync-refresh").isVisible(), false);
     await p.screenshot({ path: path.join(ARTIFACTS, "search-prices-390.png") });
 
@@ -127,7 +138,7 @@ async function bounded(promise, label) {
     check("Cancel editing leaves the stored draft quantity unchanged", (await snap(p)).items[0].quantity, 2);
 
     await p.locator("#phone-add-items").click(); await p.locator("#phone-item-search").fill("unknown");
-    check("unknown stock is explicitly described", /Stock:\s*(Not recorded|Unknown)/i.test(await result(p, UNKNOWN).innerText()), true);
+    check("unknown stock is also omitted instead of adding visual noise", /Stock:/i.test(await result(p, UNKNOWN).innerText()), false);
     check("missing history is not displayed as a zero sale", /no previous|not sold|no sale/i.test(await result(p, UNKNOWN).locator(".phone-result-latest-rate").innerText()), true);
     await p.locator("#phone-item-search").fill("entero");
     await refresh(p);
