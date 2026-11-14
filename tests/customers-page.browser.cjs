@@ -101,6 +101,53 @@ const medicines=[{id:MEDICINE_ID,medicineName:"Test medicine",location:"A1",quan
   check("second browser context reads consolidated1000",await other.evaluate(()=>window.MedicineBilling.snapshot().previousBalance),1000);
   await other.reload();await other.waitForFunction(()=>window.MedicineBilling?.ready()&&window.MedicineBilling.snapshot().customers.some(c=>c.name==="Normative Flow"));await other.locator("#bill-saved-customer-select").selectOption("Normative Flow");await other.waitForFunction(()=>window.MedicineBilling.snapshot().previousBalance===1000);check("reload reads consolidated1000",await other.evaluate(()=>window.MedicineBilling.snapshot().previousBalance),1000);await ctx5.close();await ctx4.close();
 
+  // Open an older invoice from Customers, preview it without writes, then edit
+  // the same saved bill through desktop and phone controls against the real RPC.
+  await fixture.createCustomer("Preview Customer",200);
+  const firstBill=await fixture.createBill("Preview Customer",[{medicineId:MEDICINE_ID,medicineName:"Test medicine",quantity:1,sellPrice:1000,mrp:1000,purchasePrice:100}],{amountReceived:300});
+  assert.equal(firstBill.status,200);
+  const previewId=firstBill.json.bill.id,previewNumber=firstBill.json.bill.bill_number;
+  await fixture.createBill("Preview Customer",[{medicineId:MEDICINE_ID,medicineName:"Test medicine",quantity:1,sellPrice:400,mrp:1000,purchasePrice:100}],{amountReceived:100});
+  for(const mobile of [false,true]){
+   const previewCtx=mobile?await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,timezoneId:"Asia/Kolkata"}):await context();
+   if(mobile)await previewCtx.route("https://**/*",r=>r.abort());
+   const preview=await page(previewCtx);await profile(preview,"Preview Customer");
+   const beforeWrites=writes.length,link=preview.locator('.cust-bill-link[href="billing.html?viewBill='+previewId+'"]');
+   if(mobile)await link.click();else{await link.focus();await link.press("Enter");}
+   await preview.locator("#receipt-modal:not(.hidden)").waitFor();
+   check((mobile?"phone":"desktop")+" history link previews the selected older invoice",[(await preview.locator("#receipt-modal-ref").innerText()).includes(previewNumber),(await preview.locator("#receipt-modal-body").innerText()).includes("Test medicine"),await preview.evaluate(()=>window.MedicineBilling.snapshot().id)],[true,true,null]);
+   check("preview performs no account writes",writes.length,beforeWrites);
+   check("preview and edit action fit viewport",await preview.evaluate(()=>{const b=document.querySelector("#receipt-modal-edit-btn").getBoundingClientRect();return b.left>=0&&b.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth;}),true);
+   if(!mobile){
+    await preview.locator("#receipt-modal-close-btn").focus();await preview.keyboard.press("Tab");
+    check("preview keyboard focus stays inside dialog",await preview.evaluate(()=>document.activeElement.id),"receipt-modal-edit-btn");
+    await preview.keyboard.press("Escape");await preview.locator("#receipt-modal.hidden").waitFor({state:"attached"});
+    await preview.reload();await preview.locator("#receipt-modal:not(.hidden)").waitFor();
+   }
+   await preview.locator("#receipt-modal-edit-btn").click();await preview.locator("#receipt-modal.hidden").waitFor({state:"attached"});
+   check("Edit loads selected bill with its saved receipt and previous balance",await preview.evaluate(()=>{const b=window.MedicineBilling.snapshot();return[b.id,b.previousBalance,b.received,b.items.length];}),[previewId,200,300,1]);
+   if(mobile){
+    await preview.locator(".phone-billed-item").click();await preview.locator("#phone-item-qty").fill("3");await preview.locator("#phone-save").click();
+    await preview.locator("#phone-sale-screen:not([hidden])").waitFor();await preview.locator("#phone-save").click();
+   }else{await preview.locator('#bill-items-tbody [data-col="qty"]').fill("2");await preview.locator("#save-bill-button").click();}
+   await preview.waitForFunction(()=>!document.querySelector("#save-bill-button").disabled&&document.querySelector("#bill-save-status").classList.contains("is-ok"));
+   const saved=await fixture.request("bills","GET",{query:{id:previewId}}),account=await fixture.customer("Preview Customer");
+   check("editing preserves bill identity and receipts while recomputing balance",[saved.json.bill.bill_number,Number(saved.json.items[0].quantity),Number(saved.json.bill.amount_received),Number(account.balance)],[previewNumber,mobile?3:2,300,mobile?3200:2200]);
+   const lastWrite=writes.filter(w=>w.endpoint==="bills").at(-1);
+   check("editor updates original invoice with its version",[lastWrite.method,lastWrite.body.id,Number.isInteger(lastWrite.body.expectedVersion)],["PUT",previewId,true]);
+   await preview.goto(base+"/customers.html");await profile(preview,"Preview Customer");
+   check("customer history refreshes edited balance",await preview.locator("#cust-profile-balance").innerText(),mobile?"₹3200.00":"₹2200.00");
+   await previewCtx.close();
+  }
+  check("edits do not create duplicate invoices",(await fixture.pg.query("SELECT count(*)::int AS n FROM public.bills WHERE customer_id=$1",[(await fixture.customer("Preview Customer")).id])).rows[0].n,2);
+  const missingCtx=await context(),missing=await page(missingCtx);let missingAlert="";
+  missing.removeAllListeners("dialog");missing.on("dialog",async d=>{missingAlert=d.message();await d.accept();});
+  const missingDialog=missing.waitForEvent("dialog");
+  await missing.goto(base+"/billing.html?viewBill=00000000-0000-4000-8000-000000000099");
+  await missingDialog;
+  await missing.waitForFunction(()=>window.MedicineBilling?.ready());
+  check("unavailable invoice shows a clear error without opening an editor",[missingAlert.includes("Could not load bill"),await missing.locator("#receipt-modal").isHidden(),await missing.evaluate(()=>window.MedicineBilling.snapshot().id)],[true,true,null]);
+  await missingCtx.close();
   check("no uncaught browser errors",errors,[]);console.log(checks+" customer browser/RPC assertions passed");
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await fixture.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
