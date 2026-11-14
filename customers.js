@@ -14,6 +14,7 @@
   var completedOperations = new Set();
   var customerSyncInFlight = false;
   var accountWriteSequence = 0;
+  var billPreviewSequence = 0;
 
   function beginAccountWrite() {
     ++accountWriteSequence;
@@ -61,6 +62,11 @@
     payBtn: document.getElementById("cust-pay-btn"),
     payStatus: document.getElementById("cust-pay-status"),
     billsContainer: document.getElementById("cust-bills-container"),
+    billPreview: document.getElementById("cust-bill-preview"),
+    billPreviewTitle: document.getElementById("cust-bill-preview-title"),
+    billPreviewBody: document.getElementById("cust-bill-preview-body"),
+    billPreviewEdit: document.getElementById("cust-bill-preview-edit"),
+    billPreviewClose: document.getElementById("cust-bill-preview-close"),
   };
 
   function nameKey(name) { return String(name || "").trim().toLowerCase(); }
@@ -495,9 +501,9 @@
         var received = Number(data.amount_received) || 0;
         var total = Number(data.grand_total) || 0;
         var net = round2(total - received);
-        return '<tr class="cust-invoice-row"><td><a class="bill-history-number cust-bill-link" href="billing.html?viewBill=' +
-          encodeURIComponent(data.id) + '" aria-label="Preview bill ' + escHtml(data.bill_number || "") + '">' + escHtml(data.bill_number || "—") +
-          "</a></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
+        return '<tr class="cust-invoice-row"><td><button type="button" class="bill-history-number cust-bill-link" data-preview-bill="' +
+          escHtml(data.id) + '" aria-haspopup="dialog" aria-label="Preview bill ' + escHtml(data.bill_number || "") + '">' + escHtml(data.bill_number || "—") +
+          "</button></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
           fmtMoney(data.subtotal) + '</td><td class="num-col">' + fmtMoney(data.gst_amount) +
           '</td><td class="num-col cust-charge">' + fmtMoney(total) + '</td><td class="num-col ' + (received > 0 ? "cust-received" : "cust-zero") + '">' +
           fmtMoney(received) + '</td><td class="num-col ' + (net > 0 ? "cust-debt-added" : net < 0 ? "cust-debt-reduced" : "cust-zero") + '"><strong>' + fmtMoney(net) +
@@ -516,9 +522,51 @@
       "</tr></thead><tbody>" + rows + "</tbody></table></div>";
     if (cEl.billsContainer.innerHTML === historyHtml) return;
     cEl.billsContainer.innerHTML = historyHtml;
+    cEl.billsContainer.querySelectorAll("[data-preview-bill]").forEach(function (button) {
+      button.addEventListener("click", function () { openBillPreview(button.dataset.previewBill); });
+    });
     cEl.billsContainer.querySelectorAll("[data-del-payment]").forEach(function (button) {
       button.addEventListener("click", function () { deletePayment(button.dataset.delPayment, button.dataset.amount, customer); });
     });
+  }
+
+  async function openBillPreview(billId) {
+    var seq = ++billPreviewSequence;
+    cEl.billPreviewTitle.textContent = "Bill preview";
+    cEl.billPreviewEdit.hidden = true;
+    cEl.billPreviewEdit.removeAttribute("href");
+    cEl.billPreviewBody.innerHTML = '<p class="status-message is-info" role="status">Loading bill…</p>';
+    if (!cEl.billPreview.open) cEl.billPreview.showModal();
+    try {
+      var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
+      if (seq !== billPreviewSequence || !cEl.billPreview.open) return;
+      var bill = result.bill;
+      if (!bill || bill.id !== billId || !Array.isArray(result.items)) throw new Error("This bill is unavailable. Refresh the history and try again.");
+      cEl.billPreviewTitle.textContent = "Bill " + bill.bill_number;
+      var rows = result.items.map(function (item) {
+        return "<tr><td>" + escHtml(item.medicine_name) + '</td><td class="num-col">' +
+          (item.mrp == null ? "—" : fmtMoney(item.mrp)) + '</td><td class="num-col">' + escHtml(item.quantity) +
+          '</td><td class="num-col">' + fmtMoney(item.sell_price) + '</td><td class="num-col">' + fmtMoney(item.line_total) + "</td></tr>";
+      }).join("");
+      var totals = [["Subtotal", bill.subtotal], ["GST", bill.gst_amount],
+        ["Round off", round2(Number(bill.grand_total) - Number(bill.subtotal) - Number(bill.gst_amount))],
+        ["Bill total", bill.grand_total], ["Previous balance", bill.previous_balance],
+        ["Amount received", bill.amount_received], ["Balance due on this bill", bill.balance_due]];
+      cEl.billPreviewBody.innerHTML = '<p class="cust-preview-customer"><strong>' + escHtml(bill.customer_name) + "</strong>" +
+        (bill.customer_phone ? "<br>" + escHtml(bill.customer_phone) : "") + '</p><p class="cust-preview-date">' + fmtDate(bill.created_at) +
+        '</p><div class="cust-preview-table-scroll"><table class="cust-preview-table" aria-label="Bill medicines">' +
+        '<thead><tr><th scope="col">Medicine</th><th scope="col">MRP</th><th scope="col">Qty</th><th scope="col">Rate</th><th scope="col">Amount</th></tr></thead><tbody>' + rows +
+        '</tbody></table></div><dl class="cust-preview-totals">' + totals.map(function (row) {
+          return "<div><dt>" + row[0] + "</dt><dd>" + fmtMoney(row[1]) + "</dd></div>";
+        }).join("") + "</dl>" + (bill.notes ? '<p class="cust-preview-notes"><strong>Notes:</strong> ' + escHtml(bill.notes) + "</p>" : "");
+      cEl.billPreviewEdit.href = "billing.html?editBill=" + encodeURIComponent(bill.id);
+      cEl.billPreviewEdit.hidden = false;
+    } catch (error) {
+      if (seq !== billPreviewSequence || !cEl.billPreview.open) return;
+      cEl.billPreviewBody.innerHTML = '<p class="status-message is-error" role="alert">Could not load bill: ' + escHtml(error.message || "Unknown error") +
+        '</p><button type="button" class="btn btn-secondary btn-xs" id="cust-bill-preview-retry">Try again</button>';
+      document.getElementById("cust-bill-preview-retry").addEventListener("click", function () { openBillPreview(billId); });
+    }
   }
 
   async function refreshAfterPayment(customer, result) {
@@ -789,6 +837,21 @@
       renderCustomerList();
     });
     if (cEl.profileClose) cEl.profileClose.addEventListener("click", closeProfile);
+    if (cEl.billPreviewClose) cEl.billPreviewClose.addEventListener("click", function () { cEl.billPreview.close(); });
+    if (cEl.billPreview) {
+      cEl.billPreview.addEventListener("keydown", function (event) {
+        if (event.key !== "Tab") return;
+        var controls = Array.from(cEl.billPreview.querySelectorAll("a[href], button:not(:disabled)")).filter(function (control) { return !control.hidden; });
+        var first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      });
+      cEl.billPreview.addEventListener("click", function (event) {
+        var bounds = cEl.billPreview.getBoundingClientRect();
+        if (event.target === cEl.billPreview && (event.clientX < bounds.left || event.clientX > bounds.right ||
+            event.clientY < bounds.top || event.clientY > bounds.bottom)) cEl.billPreview.close();
+      });
+    }
     if (cEl.editBtn) cEl.editBtn.addEventListener("click", function () {
       if (cEl.editForm && !cEl.editForm.classList.contains("hidden")) hideEditForm();
       else showEditForm();

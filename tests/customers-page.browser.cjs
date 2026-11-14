@@ -112,19 +112,22 @@ const medicines=[{id:MEDICINE_ID,medicineName:"Test medicine",location:"A1",quan
    const previewCtx=mobile?await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,timezoneId:"Asia/Kolkata"}):await context();
    if(mobile)await previewCtx.route("https://**/*",r=>r.abort());
    const preview=await page(previewCtx);await profile(preview,"Preview Customer");
-   const beforeWrites=writes.length,link=preview.locator('.cust-bill-link[href="billing.html?viewBill='+previewId+'"]');
+   const beforeWrites=writes.length,link=preview.locator('[data-preview-bill="'+previewId+'"]');
    if(mobile)await link.click();else{await link.focus();await link.press("Enter");}
-   await preview.locator("#receipt-modal:not(.hidden)").waitFor();
-   check((mobile?"phone":"desktop")+" history link previews the selected older invoice",[(await preview.locator("#receipt-modal-ref").innerText()).includes(previewNumber),(await preview.locator("#receipt-modal-body").innerText()).includes("Test medicine"),await preview.evaluate(()=>window.MedicineBilling.snapshot().id)],[true,true,null]);
+   await preview.locator("#cust-bill-preview-edit:not([hidden])").waitFor();
+   check((mobile?"phone":"desktop")+" previews selected older invoice without leaving Customers",[(await preview.locator("#cust-bill-preview-title").innerText()).includes(previewNumber),(await preview.locator("#cust-bill-preview-body").innerText()).includes("Test medicine"),new URL(preview.url()).pathname,await preview.locator("#cust-profile-name").innerText()],[true,true,"/customers.html","Preview Customer"]);
+   check("preview uses stored bill balance instead of current account balance",await preview.locator(".cust-preview-totals div").last().innerText(),"Balance due on this bill\n₹"+(mobile?"1900.00":"900.00"));
    check("preview performs no account writes",writes.length,beforeWrites);
-   check("preview and edit action fit viewport",await preview.evaluate(()=>{const b=document.querySelector("#receipt-modal-edit-btn").getBoundingClientRect();return b.left>=0&&b.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth;}),true);
+   check("preview and edit action fit viewport",await preview.evaluate(()=>{const b=document.querySelector("#cust-bill-preview-edit").getBoundingClientRect();return b.left>=0&&b.right<=innerWidth&&document.documentElement.scrollWidth<=innerWidth;}),true);
+   await preview.screenshot({path:path.join(require("node:os").tmpdir(),"medicine-customer-preview-"+(mobile?"phone":"desktop")+".png")});
    if(!mobile){
-    await preview.locator("#receipt-modal-close-btn").focus();await preview.keyboard.press("Tab");
-    check("preview keyboard focus stays inside dialog",await preview.evaluate(()=>document.activeElement.id),"receipt-modal-edit-btn");
-    await preview.keyboard.press("Escape");await preview.locator("#receipt-modal.hidden").waitFor({state:"attached"});
-    await preview.reload();await preview.locator("#receipt-modal:not(.hidden)").waitFor();
+    await preview.locator("#cust-bill-preview-close").focus();await preview.keyboard.press("Tab");
+    check("preview keyboard focus stays inside dialog",await preview.evaluate(()=>document.activeElement.id),"cust-bill-preview-edit");
+    await preview.keyboard.press("Escape");await preview.locator("#cust-bill-preview").waitFor({state:"hidden"});
+    check("closing preview restores focused bill and selected profile",[await link.evaluate(e=>e===document.activeElement),await preview.locator("#cust-profile-name").innerText()],[true,"Preview Customer"]);
+    await link.click();await preview.locator("#cust-bill-preview-edit:not([hidden])").waitFor();
    }
-   await preview.locator("#receipt-modal-edit-btn").click();await preview.locator("#receipt-modal.hidden").waitFor({state:"attached"});
+   await preview.locator("#cust-bill-preview-edit").click();await preview.waitForFunction(id=>window.MedicineBilling?.snapshot().id===id,previewId);
    check("Edit loads selected bill with its saved receipt and previous balance",await preview.evaluate(()=>{const b=window.MedicineBilling.snapshot();return[b.id,b.previousBalance,b.received,b.items.length];}),[previewId,200,300,1]);
    if(mobile){
     await preview.locator(".phone-billed-item").click();await preview.locator("#phone-item-qty").fill("3");await preview.locator("#phone-save").click();
@@ -140,6 +143,19 @@ const medicines=[{id:MEDICINE_ID,medicineName:"Test medicine",location:"A1",quan
    await previewCtx.close();
   }
   check("edits do not create duplicate invoices",(await fixture.pg.query("SELECT count(*)::int AS n FROM public.bills WHERE customer_id=$1",[(await fixture.customer("Preview Customer")).id])).rows[0].n,2);
+  const retryCtx=await context(),retryPreview=await page(retryCtx);await profile(retryPreview,"Preview Customer");
+  await retryPreview.route("**/api/bills?id="+previewId,r=>r.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Offline fixture"})}));
+  await retryPreview.locator('[data-preview-bill="'+previewId+'"]').click();await retryPreview.locator("#cust-bill-preview-retry").waitFor();
+  check("failed preview stays on Customers and hides Edit",[new URL(retryPreview.url()).pathname,await retryPreview.locator("#cust-bill-preview-edit").isHidden(),(await retryPreview.locator("#cust-bill-preview-body").innerText()).includes("Offline fixture")],["/customers.html",true,true]);
+  await retryPreview.unroute("**/api/bills?id="+previewId);await retryPreview.locator("#cust-bill-preview-retry").click();await retryPreview.locator("#cust-bill-preview-edit:not([hidden])").waitFor();
+  check("failed preview can retry in place",(await retryPreview.locator("#cust-bill-preview-title").innerText()).includes(previewNumber),true);
+  await retryPreview.locator("#cust-bill-preview-close").click();
+  let releasePreview;const previewGate=new Promise(resolve=>{releasePreview=resolve;});
+  await retryPreview.route("**/api/bills?id="+previewId,async r=>{await previewGate;await r.continue();});
+  await retryPreview.locator('[data-preview-bill="'+previewId+'"]').click();await retryPreview.locator("#cust-bill-preview-close").click();
+  const lateResponse=retryPreview.waitForResponse(r=>r.url().includes("/api/bills?id="+previewId));releasePreview();await lateResponse;
+  check("late preview response cannot reopen a closed dialog",await retryPreview.locator("#cust-bill-preview").isHidden(),true);
+  await retryCtx.close();
   const missingCtx=await context(),missing=await page(missingCtx);let missingAlert="";
   missing.removeAllListeners("dialog");missing.on("dialog",async d=>{missingAlert=d.message();await d.accept();});
   const missingDialog=missing.waitForEvent("dialog");

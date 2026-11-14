@@ -20,9 +20,27 @@ body[data-page="customers"] #cust-pay-status.is-ok,
 body[data-page="customers"] #cust-sync-status.is-ok,
 body[data-page="customers"] .cust-profile-balance-value.is-clear { color: #166534; }
 body[data-page="customers"] .cust-balance-badge.is-clear { background: #dcfce7; color: #166534; }
-body[data-page="customers"] .cust-bill-link { display: inline-block; padding-block: 8px; text-decoration: underline; text-underline-offset: 4px; }
+body[data-page="customers"] .cust-bill-link { display: inline-block; border: 0; border-radius: 0; background: transparent; padding: 8px 0; font-size: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }
 body[data-page="customers"] .cust-bill-link:hover { text-decoration-thickness: 2px; }
 body[data-page="customers"] .cust-bill-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; border-radius: 2px; }
+
+.cust-bill-preview { width: min(780px, calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--surface); color: var(--ink); box-shadow: 0 28px 72px rgba(10, 30, 38, 0.28); }
+.cust-bill-preview::backdrop { background: rgba(10, 30, 38, 0.6); backdrop-filter: blur(3px); }
+.cust-bill-preview .receipt-modal-toolbar { position: sticky; top: 0; background: var(--surface); }
+.cust-bill-preview [hidden] { display: none; }
+.cust-bill-preview-body { padding: 20px; }
+.cust-preview-customer { margin: 0 0 4px; }
+.cust-preview-date { margin: 0 0 20px; color: var(--muted); }
+.cust-preview-table-scroll { overflow-x: auto; }
+.cust-preview-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.cust-preview-table th, .cust-preview-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.cust-preview-table th { color: var(--muted); font-size: 0.75rem; }
+.cust-preview-table .num-col { text-align: right; white-space: nowrap; }
+.cust-preview-totals { margin: 20px 0 0 auto; max-width: 360px; font-size: 0.88rem; }
+.cust-preview-totals div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; }
+.cust-preview-totals dd { margin: 0; font-family: var(--font-mono); white-space: nowrap; }
+.cust-preview-totals div:last-child { border-top: 1px solid var(--line); font-weight: 700; }
+.cust-preview-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* This is account history, not the medicine quantity/price entry table. */
 @media screen and (max-width: 640px) {

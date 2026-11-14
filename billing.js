@@ -3601,8 +3601,11 @@
     loadBillHistory();
     refreshSavedCustomers().catch(function () { /* visible error already displayed */ });
     loadSoldCounts();
-    var linkedBillId = new URLSearchParams(window.location.search).get("viewBill");
-    if (linkedBillId) viewBillInModal(linkedBillId);
+    var billParams = new URLSearchParams(window.location.search);
+    var editBillId = billParams.get("editBill");
+    var linkedBillId = editBillId || billParams.get("viewBill");
+    if (editBillId) loadBillForEdit(editBillId);
+    else if (linkedBillId) viewBillInModal(linkedBillId);
     var syncRefresh = document.getElementById("bill-sync-refresh");
     var syncReload = document.getElementById("bill-sync-reload");
     if (syncRefresh) syncRefresh.addEventListener("click", syncSavedBills);
