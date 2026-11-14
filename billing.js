@@ -98,9 +98,11 @@
     receiptModalClose:     document.getElementById("receipt-modal-close-btn"),
     receiptModalPrint:     document.getElementById("receipt-modal-print-btn"),
     receiptModalShare:     document.getElementById("receipt-modal-share-btn"),
+    receiptModalEdit:      document.getElementById("receipt-modal-edit-btn"),
   };
 
-  var modalBillData = null; // { billNumber, receiptHtml }
+  var modalBillData = null; // { billId, billNumber, receiptHtml }
+  var modalReturnFocus = null;
 
   // -------------------------------------------------------------------------
   // Utility
@@ -2965,12 +2967,15 @@
 
   // ── Receipt modal ────────────────────────────────────────────────────────
 
-  function openReceiptModal(billNumber, receiptHtml) {
-    modalBillData = { billNumber: billNumber, receiptHtml: receiptHtml };
+  function openReceiptModal(billNumber, receiptHtml, billId) {
+    if (!modalBillData) modalReturnFocus = document.activeElement;
+    modalBillData = { billId: billId || null, billNumber: billNumber, receiptHtml: receiptHtml };
+    if (bEl.receiptModalEdit) bEl.receiptModalEdit.disabled = !billId;
     if (bEl.receiptModalRef)  bEl.receiptModalRef.textContent = "Bill " + billNumber;
     if (bEl.receiptModalBody) bEl.receiptModalBody.innerHTML  = receiptHtml;
     if (bEl.receiptModal)     bEl.receiptModal.classList.remove("hidden");
     document.body.style.overflow = "hidden";
+    if (bEl.receiptModalClose) bEl.receiptModalClose.focus();
   }
 
   function closeReceiptModal() {
@@ -2978,6 +2983,19 @@
     if (bEl.receiptModalBody) bEl.receiptModalBody.innerHTML = "";
     document.body.style.overflow = "";
     modalBillData = null;
+    if (modalReturnFocus && modalReturnFocus.isConnected) modalReturnFocus.focus();
+    modalReturnFocus = null;
+  }
+
+  async function editModalBill() {
+    if (!modalBillData || !modalBillData.billId || bEl.receiptModalEdit.disabled) return;
+    var billId = modalBillData.billId;
+    bEl.receiptModalEdit.disabled = true;
+    try {
+      if (await loadBillForEdit(billId)) closeReceiptModal();
+    } finally {
+      if (modalBillData && modalBillData.billId === billId) bEl.receiptModalEdit.disabled = false;
+    }
   }
 
   function printModalBill() {
@@ -3090,6 +3108,7 @@
     try {
       var result = await requestApi("/api/bills?id=" + encodeURIComponent(billId), { method: "GET" });
       var bill   = result.bill;
+      if (!bill || bill.id !== billId || !Array.isArray(result.items)) throw new Error("This bill is unavailable. Refresh the history and try again.");
       noteBillLedger(bill);
       var items  = result.items || [];
       var ledger = await resolveBillLedger(billId, bill);
@@ -3105,7 +3124,7 @@
         prevBalance:   prevBal,
         received:      received,
       });
-      openReceiptModal(bill.bill_number, html);
+      openReceiptModal(bill.bill_number, html, bill.id);
     } catch (err) {
       window.alert("Could not load bill: " + (err.message || "Unknown error"));
     }
@@ -3131,7 +3150,7 @@
         received:      received,
       });
       // Open the modal first so user can also print, then share
-      openReceiptModal(bill.bill_number, html);
+      openReceiptModal(bill.bill_number, html, bill.id);
     } catch (err) {
       window.alert("Could not load bill: " + (err.message || "Unknown error"));
     }
@@ -3559,9 +3578,16 @@
     if (bEl.receiptModalBackdrop) bEl.receiptModalBackdrop.addEventListener("click", closeReceiptModal);
     if (bEl.receiptModalPrint)    bEl.receiptModalPrint.addEventListener("click", printModalBill);
     if (bEl.receiptModalShare)    bEl.receiptModalShare.addEventListener("click", shareModalBill);
+    if (bEl.receiptModalEdit)     bEl.receiptModalEdit.addEventListener("click", editModalBill);
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && bEl.receiptModal && !bEl.receiptModal.classList.contains("hidden")) {
         closeReceiptModal();
+      }
+      if (e.key === "Tab" && bEl.receiptModal && !bEl.receiptModal.classList.contains("hidden")) {
+        var buttons = bEl.receiptModal.querySelectorAll("button:not(:disabled)");
+        var first = buttons[0], last = buttons[buttons.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
     });
 
@@ -3575,6 +3601,8 @@
     loadBillHistory();
     refreshSavedCustomers().catch(function () { /* visible error already displayed */ });
     loadSoldCounts();
+    var linkedBillId = new URLSearchParams(window.location.search).get("viewBill");
+    if (linkedBillId) viewBillInModal(linkedBillId);
     var syncRefresh = document.getElementById("bill-sync-refresh");
     var syncReload = document.getElementById("bill-sync-reload");
     if (syncRefresh) syncRefresh.addEventListener("click", syncSavedBills);
@@ -3596,7 +3624,7 @@
     setTimeout(function () {
       // The phone adapter may not have rendered its body class yet. Never
       // focus the hidden desktop search and scroll a newly opened phone page.
-      if (bEl.search && !window.matchMedia("(max-width: 980px) and (pointer: coarse)").matches) bEl.search.focus();
+      if (!linkedBillId && bEl.search && !window.matchMedia("(max-width: 980px) and (pointer: coarse)").matches) bEl.search.focus();
     }, 0);
   }
 

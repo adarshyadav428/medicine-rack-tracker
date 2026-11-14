@@ -20,6 +20,9 @@ body[data-page="customers"] #cust-pay-status.is-ok,
 body[data-page="customers"] #cust-sync-status.is-ok,
 body[data-page="customers"] .cust-profile-balance-value.is-clear { color: #166534; }
 body[data-page="customers"] .cust-balance-badge.is-clear { background: #dcfce7; color: #166534; }
+body[data-page="customers"] .cust-bill-link { display: inline-block; padding-block: 8px; text-decoration: underline; text-underline-offset: 4px; }
+body[data-page="customers"] .cust-bill-link:hover { text-decoration-thickness: 2px; }
+body[data-page="customers"] .cust-bill-link:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; border-radius: 2px; }
 
 /* This is account history, not the medicine quantity/price entry table. */
 @media screen and (max-width: 640px) {

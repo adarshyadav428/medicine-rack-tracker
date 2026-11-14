@@ -495,8 +495,9 @@
         var received = Number(data.amount_received) || 0;
         var total = Number(data.grand_total) || 0;
         var net = round2(total - received);
-        return '<tr class="cust-invoice-row"><td><span class="bill-history-number">' + escHtml(data.bill_number || "—") +
-          "</span></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
+        return '<tr class="cust-invoice-row"><td><a class="bill-history-number cust-bill-link" href="billing.html?viewBill=' +
+          encodeURIComponent(data.id) + '" aria-label="Preview bill ' + escHtml(data.bill_number || "") + '">' + escHtml(data.bill_number || "—") +
+          "</a></td><td>" + fmtDate(data.created_at) + '</td><td class="num-col">' +
           fmtMoney(data.subtotal) + '</td><td class="num-col">' + fmtMoney(data.gst_amount) +
           '</td><td class="num-col cust-charge">' + fmtMoney(total) + '</td><td class="num-col ' + (received > 0 ? "cust-received" : "cust-zero") + '">' +
           fmtMoney(received) + '</td><td class="num-col ' + (net > 0 ? "cust-debt-added" : net < 0 ? "cust-debt-reduced" : "cust-zero") + '"><strong>' + fmtMoney(net) +
